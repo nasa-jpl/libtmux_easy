@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from libtmux-wrapper!")
+from .tmux_lib import *
