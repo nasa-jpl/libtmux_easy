@@ -1,13 +1,8 @@
-import argparse
-import os
-import tmuxp
-
 import libtmux
 from libtmux.server import Server
 from libtmux.window import Window
 from libtmux.session import Session
 from libtmux.pane import Pane
-from libtmux._internal.query_list import ObjectDoesNotExist
 from libtmux.common import tmux_cmd, exc
 import shlex
 import psutil
@@ -16,9 +11,25 @@ from pprint import pprint as pp
 import logging
 from dataclasses import dataclass
 
-from typing import Optional, Dict, Union
+from typing import Optional, Union
+from packaging import version
+
+libtmux_version = version.parse(libtmux.__version__)
 
 logger = logging.getLogger(__name__)
+
+try:
+    from libtmux.exc import DeprecatedError
+except ImportError:
+    # DeprecatedError doesn't exist in older versions. Create a dummy exception that will never be
+    # raised by older versions
+    class DeprecatedError(Exception):
+        pass
+
+
+"""
+DESCRIPTION: TODO
+"""
 
 """
 TODO
@@ -26,6 +37,28 @@ TODO
 2. Add logic for removing windows/panes
 3. Add options for sending commands (e.g. send to multiple, wait and retrieve output, check on error code, check on status, etc)
 4. Add support for using either the fully qualified pane name or just the pane name?
+"""
+
+"""TODO
+1. Test across different versions
+    - 0.10.1
+    - 0.21.0
+2. Update the construction of TmuxSession
+    - Doesn't work in older 0.10.1 version
+3. Do we want to support reusing an old session? What would the use case for that be? This lib is
+all about generating a session. Maybe for updating a session? But that would also probably involve
+deleting window/panes and generating new ones. And maybe moving them around. Which I don't support
+yet.
+    - How about we mark it as future functionality
+    - If we did reuse an old session, we would have to manually repopulate the state of TmuxSession
+4. Code in ability to retrieve the pane title from libtmux
+
+    window.list_panes() # To force a refresh
+    # For libtmux >= 0.21.0
+    pane_title = pane.item.get("pane_title")
+    # For older versions
+    pane_title = pane.get("pane_title")
+    
 """
 
 # Global default server object
@@ -38,8 +71,8 @@ _server = libtmux.Server(
 
 
 def set_server(**kwargs):
-    """Set the server object that will be used by the rest of the this library. This is necessary to
-    allow users to specify custom tmux server options (e.g. socket name)"""
+    """Set the server object that will be used by the rest of the this library. This allow users to
+    specify custom tmux server options (e.g. socket name)"""
     global _server
     _server = libtmux.Server(**kwargs)
 
@@ -55,51 +88,51 @@ def tmux_command(cmd: str) -> str:
     return proc.stdout
 
 
-def session_exists(server: Server, session_name: str) -> bool:
+def session_exists(session_name: str) -> bool:
     """Returns True if tmux session already exists."""
-    # TODO - clean up
     assert isinstance(session_name, str)
     exists = _server.has_session(session_name)
-    if not exists:
-        return exists
-
-    try:
-        _server.sessions.get(session_name=session_name)
-    except ObjectDoesNotExist:
-        return False
-    return True
+    return exists
 
 
 def _set_pane_title(pane: Pane, pane_name: str):
     """Set the title of a tmux pane. This is done by sending a tmux command to select the pane and
     set its title."""
     tmux_command(f"select-pane -T {pane_name} -t {pane.id}")
-    # pane.cmd("select-pane", "-T", pane_name)
 
 
 def _create_session(
-    session_name, window_name="unnamed", pane_name="unnamed", kill_existing=True
+    session_name,
+    window_name="unnamed",
+    pane_name="unnamed",
+    kill_existing=True,
+    **kwargs,
 ):
     """Create a new tmux session with the given name. If a session with the same name already
-    exists, it will can be killed and replaced with a new session. Returns the created session, window,
+    exists, it can be killed and replaced with a new session. Returns the created session, window,
     and pane objects."""
 
     global _server
+    # TODO - just use kill_session option in new_session()
 
-    if session_exists(_server, session_name):
-        session = _server.sessions.get(session_name=session_name)
+    if session_exists(session_name):
+        session = [
+            session for session in _server.sessions if session.name == session_name
+        ][0]
         if kill_existing:
             logger.info(
                 f"Session {session_name} exists. Killing and creating new session."
             )
-            # breakpoint()
-            session.kill_session()
+            try:
+                session.kill_session()
+            except DeprecatedError:  # kill_session() deprecated in >0.30.0
+                session.kill()
             session = _server.new_session(
-                session_name=session_name, start_directory=None
+                session_name=session_name,
             )
     else:
         logger.info(f"Creating new session named {session_name}")
-        session = _server.new_session(session_name=session_name, start_directory=None)
+        session = _server.new_session(session_name=session_name, **kwargs)
 
     window = session.windows[0]
     pane = window.panes[0]
@@ -113,7 +146,11 @@ def _create_session(
     return session, window, window.panes[0]
 
 
-@dataclass
+# =================================================================================
+# -------------------------------  TmuxSession Class  -----------------------------
+# =================================================================================
+
+
 class TmuxSession(Session):
     """Helper class that streamlines the creation of a tmux session. It is "stateful" in that it
     will act on the most recent context. Sort of similar to matplotlib. (e.g. new_pane will create a
@@ -146,38 +183,39 @@ class TmuxSession(Session):
     fully qualified pane name (i.e. 'window_name:pane_name').
     """
 
-    current_window: Window = None
-    current_pane: Pane = None
-
     @classmethod
-    def create(cls, session_name: str, kill_existing: bool = True, **kwargs):
+    def create(
+        cls, session_name: str, kill_existing: bool = True, **kwargs
+    ) -> "TmuxSession":
         """
         The primary entry point to create a managed TmuxSession.
         """
         session, window, pane = _create_session(
             session_name, kill_existing=kill_existing, **kwargs
         )
+        session.windows
+        session.__class__ = cls
+        session.session_name = session_name
+        session.__post_init__(window, pane)
+        return session
 
-        instance = cls(server=session.server, session_id=session.session_id)
-
+    def __post_init__(self, window, pane):
         # Set internal state
-        instance.current_window = window
-        instance.current_pane = pane
-        instance.set_default_options()
+        self.current_window = window
+        self.current_pane = pane
 
-        return instance
+        # Set default options
+        self.set_option("renumber-windows", "on")
+        try:
+            self.set_option("pane-border-status", "top", _global=True)
+        except:  # global arg name changed in newer versions of libtmux
+            self.set_option("pane-border-status", "top", global_=True)
 
-    def __post_init__(self):
         self.unnamed_window = True
         self.unnamed_pane = True
 
         self.pane_names = {}  # Mapping of pane_name -> Pane object
         self.commands = {}
-
-    def set_default_options(self):
-        """Options for setting window/pane titles"""
-        self.set_option("renumber-windows", "on")
-        self.set_option("pane-border-status", "top", _global=True)
 
     def new_window(self, name: str, **kwargs) -> Window:
         """Create a new window with the given name. Due to the nature of tmux, this will by also
@@ -286,24 +324,26 @@ class TmuxSession(Session):
     def split_and_tile(self, window: Window, pane_name=None):
         """Add a new pane and reset layout to 'tiled'."""
         pane = window.panes[-1]
-        pane = window.split_window(target=pane.id, vertical=True)
+        try:
+            pane = window.split_window(target=pane.id, vertical=True)
+        except DeprecatedError:  # Window.split_window() was deprecated in 0.33.0
+            pane = window.split(target=pane.id)
         window.select_layout(layout="tiled")
         self.set_pane_title(pane, pane_name)
         return pane
 
-    def __repr__(self) -> str:
+    def print(self):
         """Print layout of the session, including windows and panes."""
         rep = f"Session: {self.session_name}\n"
         tab = "    "
         for window in self.windows:
             rep += f"{tab}Window: {window.name}\n"
-            for pane in self.panes:
-                if pane in window.panes:
-                    pane_name = self.get_pane_name(pane)
-                    rep += f"{tab*2}Pane: {pane_name.split(':')[1]}\n"
-                    for cmd in self.commands[pane_name]:
-                        rep += f"{tab*3}{cmd}\n"
-        return rep
+            for pane in window.panes:
+                pane_name = self.get_pane_name(pane)
+                rep += f"{tab*2}Pane: {pane_name.split(':')[1]}\n"
+                for cmd in self.commands.get(pane_name, []):
+                    rep += f"{tab*3}{cmd}\n"
+        print(rep)
 
     def select_window(self, target_window: Union[Window, str]):
         """Select the given window. 'target_window' can be either the name of the window, the id of
@@ -324,6 +364,13 @@ class TmuxSession(Session):
             .select_window(self.windows[0].id)
             .select_pane(self.windows[0].panes[0].id)
         )
+
+    def attach(self) -> Session:
+        """Attach to the tmux session"""
+        try:
+            return self.attach_session()
+        except DeprecatedError:  # attach_session() deprecated in 0.30.0
+            return super().attach()
 
     # --------- Getters ---------
     def get_pane_name(self, pane: Pane) -> Optional[str]:
@@ -387,7 +434,10 @@ class TmuxSession(Session):
 
     def _check_pane_membership(self, pane: Pane):
         """Check if the given pane is part of this session. Raises an exception if not."""
-        if pane not in self.panes:
+        panes = []
+        for window in self.windows:
+            panes.extend(window.panes)
+        if pane not in panes:
             raise ValueError(f"Pane {pane} not found in this session.")
 
     def _check_window_membership(self, window: Window):
@@ -412,33 +462,6 @@ class TmuxSession(Session):
 #     if pane_name:
 #         set_pane_title(pane, pane_name)
 #     return window, pane
-
-
-def get_child_pids(parent_pid: int, recursive=False):
-    """
-    Finds the PIDs of all child processes of a given parent PID.
-
-    :param parent_pid: The PID of the parent process.
-    :param recursive: If True, includes children of children, and so on.
-    :return: A list of child PIDs (integers).
-    """
-    try:
-        # Get the Process object for the parent PID
-        parent = psutil.Process(parent_pid)
-
-        # Get the children. Pass recursive=True to include the entire process tree.
-        children = parent.children(recursive=recursive)
-
-        # Extract and return the PIDs
-        child_pids = [p.pid for p in children]
-        return child_pids
-
-    except psutil.NoSuchProcess:
-        print(f"Error: Process with PID {parent_pid} does not exist.")
-        return []
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return []
 
 
 def get_session_pids(session: Session):
@@ -481,9 +504,9 @@ def get_session_pids(session: Session):
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(levelname)s:  %(message)s",
         handlers=[logging.StreamHandler()],
     )
 
-    get_tmux_session("my_sesh")
+    TmuxSession.create("my_sesh")

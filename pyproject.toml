@@ -1,17 +1,22 @@
 [project]
-name = "libtmux-wrapper"
+name = "libtmux-easy"
 version = "0.1.0"
-description = "Add your description here"
+description = "Wrapper around libtmux to make generating a tmux session easier"
 readme = "README.md"
 authors = [
     { name = "Spencer Diehl", email = "spencer.diehl@jpl.nasa.gov" }
 ]
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.8"
+dependencies = [
+    "libtmux"
+]
 
-[project.scripts]
-libtmux-wrapper = "libtmux_wrapper:main"
+# [project.scripts]
+# libtmux-wrapper = "libtmux_wrapper:main"
 
 [build-system]
 requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
+
+# [project.urls]
+# "Homepage" = "https://github.com/username/my-package-name"

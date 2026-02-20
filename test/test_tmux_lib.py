@@ -1,4 +1,4 @@
-from libtmux_wrapper import TmuxSession
+from libtmux_easy import TmuxSession
 
 
 session = TmuxSession.create("My Session")
@@ -17,5 +17,6 @@ session.send_keys("ls -la", target_pane="window2:pane1")
 # session.select_window("window1")
 session.select_first()
 
-print(session)
-session.attach_session()
+session.print()
+
+session.attach()
