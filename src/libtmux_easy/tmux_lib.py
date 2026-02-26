@@ -153,7 +153,7 @@ def _create_session(
 
     window = session.windows[0]
     pane = window.panes[0]
-    
+
     if window_name:
         window.rename_window(window_name)
 
@@ -200,6 +200,11 @@ class TmuxSession(Session):
     fully qualified pane name (i.e. 'window_name:pane_name').
     """
 
+    def __init__(self, **kwargs):
+        raise NotImplementedError(
+            "TmuxSession cannot be directly instantiated. Use TmuxSession.create() instead."
+        )
+
     @classmethod
     def create(
         cls, session_name: str, kill_existing: bool = True, **kwargs
@@ -210,7 +215,6 @@ class TmuxSession(Session):
         session, window, pane = _create_session(
             session_name, kill_existing=kill_existing, **kwargs
         )
-        session.windows
         session.__class__ = cls
         session.session_name = session_name
         session.__post_init__(window, pane)
@@ -229,12 +233,15 @@ class TmuxSession(Session):
             self.set_option("pane-border-status", "top", global_=True)
 
         self.unnamed_window = True
-        self.unnamed_pane = True
+        self.unnamed_pane = {self.current_window.id: True}
 
         self.pane_names = {}  # Mapping of pane_name -> Pane object
         self.commands = {}
+        self.command_before = {"all": None}
 
-    def new_window(self, name: str, layout: Union[None, str] = "tiled", **window_kwargs) -> Window:
+    def new_window(
+        self, name: str, layout: Union[None, str] = "tiled", **window_kwargs
+    ) -> Window:
         """Create a new window with the given name. Due to the nature of tmux, this will by also
         create a default, unnamed pane. The next call to new_pane will reuse and rename this pane
         instead of actually creating a new pane."""
@@ -248,33 +255,58 @@ class TmuxSession(Session):
                 raise ValueError(f"Window name {name} already exists.")
 
             window = super().new_window(name, **window_kwargs)
-            
+
             if layout:
-                window.layout = layout
-                
+                window.layout_str = (
+                    layout  # 'layout' is an attribute already used by libtmux
+                )
+
             self.current_window = window
             self.current_pane = window.panes[0]
-            self.unnamed_pane = True
+            self.unnamed_pane[self.current_window.id] = True
 
         return window
 
-    def new_pane(self, name: str, command: str, enter: bool = True, **pane_kwargs) -> Pane:
+
+    def send_command_before(self, command: str, window: Union[str, Window] = None):
+        """Helper function to send a command before sending the actual command to a new pane. This
+        is useful for setting up the context for the command (e.g. changing directories, setting env
+        vars, etc.)
+        
+        If 'window' is provided, the command will be sent to all the new panes for that window.
+        Otherwise, the command will be sent to all new panes for the entire session.
+        
+        NOTE - a window command_before will override a session command_before.
+        """
+        if window:
+            window = self.resolve_target_window(window)
+            self.command_before[window.id] = command
+        else:
+            self.command_before["all"] = command
+        
+    def new_pane(
+        self,
+        name: str,
+        command: str,
+        enter: bool = True,
+        **pane_kwargs,
+    ) -> Pane:
         """Create a new pane with the given name and send the provided command. Due to the nature of
         tmux, the first call to new_pane after creating a new window will reuse the default unnamed
         pane created by tmux. The next call to new_pane will actually create a new pane as
         normal.
 
         If 'enter' is False, the command will be sent to the pane but not executed (i.e. no 'Enter'
-        key will be sent)."""
-        # TODO - add more options for how to split and arrange.
+        key will be sent).
+        """
 
         if self.unnamed_window:
             raise ValueError("Cannot create a new pane before creating a new window.")
 
-        if self.unnamed_pane:
+        if self.unnamed_pane[self.current_window.id]:
             pane = self.current_window.panes[0]
             self.set_pane_title(pane, name)
-            self.unnamed_pane = False
+            self.unnamed_pane[self.current_window.id] = False
         else:
             full_name = self._full_pane_name(self.current_window, name)
             if full_name in self.pane_names:
@@ -283,33 +315,38 @@ class TmuxSession(Session):
                 )
             pane = self.split_window(self.current_window, name, **pane_kwargs)
 
+        if self.command_before.get(self.current_window.id, None):
+            pane.send_keys(self.command_before[self.current_window.id], enter=True)
+        elif self.command_before["all"]:
+            pane.send_keys(self.command_before["all"], enter=True)
+            
         pane.send_keys(command, enter)
         self.commands[self.get_pane_name(pane)] = [command]
         self.current_pane = pane
 
         return pane
-    
-    # TODO - specify layout when creating the window. If 'None', then don't select layout. O
+
+    # TODO - specify layout when creating the window. If 'None', then don't select layout.
     def split_window(self, window: Window, pane_name=None, **pane_kwargs) -> Pane:
         """Add a new pane to the given window"""
         # Splitting with layouts that aren't 'tiled' can run into issues. Switch to tiled, split,
         # and then back to the target layout.
-        if hasattr(window, "layout"):
-            window.select_layout("tiled")         
-        
+        if hasattr(window, "layout_str"):
+            window.select_layout("tiled")
+
         if "target" in pane_kwargs:
             pane_kwargs["target"] = self.resolve_target_pane(pane_kwargs["target"]).id
         else:
             pane_kwargs["target"] = window.panes[-1].id
-            
+
         try:
             pane = window.split_window(**pane_kwargs)
         except DeprecatedError:  # Window.split_window() was deprecated in 0.33.0
             pane = window.split(**pane_kwargs)
         self.set_pane_title(pane, pane_name)
 
-        if hasattr(window, "layout"):
-            window.select_layout(window.layout)
+        if hasattr(window, "layout_str"):
+            window.select_layout(window.layout_str)
         return pane
 
     def send_keys(
@@ -320,7 +357,7 @@ class TmuxSession(Session):
         'target_pane' should either be a pane name, pane id, or a Pane object. If None, the command
         will be sent to the most recently created pane.
         """
-        if self.unnamed_window or self.unnamed_pane:
+        if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
             raise ValueError("Must create a window and pane before sending commands.")
 
         logger.debug(f"Sending: {command}")
@@ -378,20 +415,31 @@ class TmuxSession(Session):
                     rep += f"{tab*3}{cmd}\n"
         print(rep)
 
-    def select_window(self, target_window: Union[Window, str]):
+    def select_window(self, target_window: Union[Window, str]) -> Window:
         """Select the given window. 'target_window' can be either the name of the window, the id of
-        the window, or the Window object itself. Returns the Window object"""
+        the window, or the Window object itself. Returns the Window object. Note that selecting a
+        window will also select the most recently created pane in that window."""
         window = self.resolve_target_window(target_window)
-        return super().select_window(window.id)
-
-    def select_pane(self, target_pane: Union[Pane, str]):
-        """Select the given window. 'target_window' can be either the name of the window, the id of
-        the window, or the Window object itself. Returns the Window object"""
+        self.current_window = window
+        self.current_pane = window.panes[-1]
+        window = super().select_window(window.id)
+        window.select_pane(self.current_pane.id)
+        return window
+    
+    def select_pane(self, target_pane: Union[Pane, str]) -> Pane:
+        """Select the given pane. 'target_pane' can be either the name of the pane, the id of
+        the pane, or the Pane object itself. Returns the Pane object"""
         pane = self.resolve_target_pane(target_pane)
-        return super().select_pane(pane.id)
+        self.current_pane = pane
+        self.current_window = pane.window
+        self.select_window(pane.window)
+        pane = pane.window.select_pane(pane.id)
+        return pane
 
     def select_first(self):
         """Select the the first pane in the first window."""
+        self.current_window = self.windows[0]
+        self.current_pane = self.windows[0].panes[0]
         return (
             super()
             .select_window(self.windows[0].id)
@@ -424,31 +472,20 @@ class TmuxSession(Session):
         """Return the Pane object associated with the given 'identifier' which can either be the
         fully qualified pane name or the pane id. Return None if no pane is found."""
         if identifier[0] == "%":
-            pane_id = identifier
-            try:
-                pane = self.panes.get(id=pane_id)
-            except:
-                pane = None
+            ids = {p.id: p for p in self.panes}
+            return ids.get(identifier, None)
         else:
-            pane = self.pane_names.get(identifier, None)
-        return pane
+            return self.pane_names.get(identifier, None)
 
     def get_window(self, identifier: str) -> Optional[Window]:
         """Return the Window object associated with the given 'identifier' which can either be the
         window name or the window id. Return None if no window is found."""
         if identifier[0] == "@":
-            try:
-                window = self.windows.get(id=identifier)
-                return window
-            except:
-                return None
+            ids = {w.id: w for w in self.windows}
+            return ids.get(identifier, None)
         else:
-            try:
-                window = self.windows.get(window_name=identifier)
-                return window
-            except:
-                return None
-            return None
+            names = {w.name: w for w in self.windows}
+            return names.get(identifier, None)
 
     # =============== Private ===============
     def _full_pane_name(self, context: Union[Window, Pane], name):
