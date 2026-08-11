@@ -1,14 +1,35 @@
 [project]
 name = "libtmux-easy"
 version = "0.1.0"
-description = "Wrapper around libtmux to make generating a tmux session easier"
+description = "Declarative Python wrapper around libtmux for tmux session configuration"
 readme = "README.md"
+license = {text = "MIT"}
 authors = [
-    { name = "Spencer Diehl", email = "spencer.diehl@jpl.nasa.gov" }
+    { name = "Spencer Diehl", email = "docdiehl@gmail.com" }
+]
+keywords = ["tmux", "terminal", "multiplexer", "session"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Shells",
+    "Topic :: Terminals",
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "libtmux"
+    "libtmux>=0.10.1",
+    "psutil",
+    "packaging",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
 ]
 
 # [project.scripts]
@@ -18,5 +39,7 @@ dependencies = [
 requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
-# [project.urls]
-# "Homepage" = "https://github.com/username/my-package-name"
+[project.urls]
+"Homepage" = "https://github.com/bigdiehl/libtmux_easy"
+"Bug Tracker" = "https://github.com/bigdiehl/libtmux_easy/issues"
+"Repository" = "https://github.com/bigdiehl/libtmux_easy"
