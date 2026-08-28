@@ -250,6 +250,9 @@ class TmuxSession(Session):
             window = self.windows[0]
             window.rename_window(name)
             self.unnamed_window = False
+            # Update current_window to the renamed window
+            self.current_window = window
+            self.current_pane = window.panes[0]
         else:
             if name in [w.name for w in self.windows]:
                 raise ValueError(f"Window name {name} already exists.")
