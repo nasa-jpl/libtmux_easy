@@ -136,20 +136,23 @@ def _create_session(
     # TODO - just use kill_session option in new_session()
 
     if session_exists(session_name):
+        if not kill_existing:
+            raise ValueError(
+                f"Session {session_name} already exists and kill_existing is False."
+            )
         session = [
             session for session in _server.sessions if session.name == session_name
         ][0]
-        if kill_existing:
-            logger.info(
-                f"Session {session_name} exists. Killing and creating new session."
-            )
-            try:
-                session.kill_session()
-            except DeprecatedError:  # kill_session() deprecated in >0.30.0
-                session.kill()
-            session = _server.new_session(
-                session_name=session_name,
-            )
+        logger.info(
+            f"Session {session_name} exists. Killing and creating new session."
+        )
+        try:
+            session.kill_session()
+        except DeprecatedError:  # kill_session() deprecated in >0.30.0
+            session.kill()
+        session = _server.new_session(
+            session_name=session_name,
+        )
     else:
         logger.info(f"Creating new session named {session_name}")
         session = _server.new_session(session_name=session_name, **kwargs)

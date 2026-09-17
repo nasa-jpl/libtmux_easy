@@ -40,6 +40,19 @@ class TestSessionCreation:
         except:
             session2.kill()
 
+    def test_create_raises_if_existing_and_not_kill_existing(self):
+        """Test that create with kill_existing=False raises if the session already exists"""
+        session1 = TmuxSession.create("test-session-3", kill_existing=True)
+
+        with pytest.raises(ValueError, match="already exists"):
+            TmuxSession.create("test-session-3", kill_existing=False)
+
+        # Cleanup
+        try:
+            session1.kill_session()
+        except:
+            session1.kill()
+
 
 class TestWindows:
     @pytest.fixture
