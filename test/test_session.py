@@ -4,8 +4,11 @@ Automated tests for libtmux_easy.
 These tests create actual tmux sessions and verify behavior.
 They clean up after themselves by killing test sessions.
 """
+import time
+
 import pytest
 from libtmux_easy import TmuxSession, session_exists
+from libtmux_easy.proc import pane_child_processes
 import libtmux
 
 
@@ -207,6 +210,61 @@ class TestVersionCompatibility:
 
         assert libtmux_version is not None
         assert libtmux_version >= version.parse("0.10.1")
+
+
+class TestTeardown:
+    @pytest.fixture
+    def session(self):
+        """Create a test session with a window"""
+        sess = TmuxSession.create("test-teardown", kill_existing=True)
+        sess.new_window("main")
+        yield sess
+        try:
+            sess.kill_session()
+        except:
+            sess.kill()
+
+    def test_stop_pane_sigint_cleanly_stops(self, session):
+        """Test that stop_pane SIGINTs a well-behaved process and returns True"""
+        pane = session.new_pane("sleeper", "sleep 100")
+        time.sleep(0.5)  # let the process actually start
+
+        clean = session.stop_pane(pane, sigint_timeout=5.0)
+
+        assert clean is True
+
+    def test_stop_pane_already_idle(self, session):
+        """Test that stop_pane returns True immediately for an idle pane"""
+        pane = session.new_pane("shell", "# ready")
+        time.sleep(0.2)
+
+        clean = session.stop_pane(pane, sigint_timeout=5.0)
+
+        assert clean is True
+
+    def test_wait_for_pane_idle_timeout(self, session):
+        """Test that wait_for_pane_idle returns False if the pane still has a running
+        process when the timeout elapses (it only polls -- it never sends any signal)"""
+        pane = session.new_pane("sleeper", "sleep 100")
+        time.sleep(0.5)
+
+        idle = session.wait_for_pane_idle(pane, timeout=1.0, poll_interval=0.1)
+
+        assert idle is False
+
+        # Cleanup
+        for proc in pane_child_processes(session.resolve_target_pane(pane)):
+            proc.terminate()
+
+    def test_stop_pane_escalates_past_sigint(self, session):
+        """Test that stop_pane escalates to SIGTERM when a process ignores SIGINT,
+        and still ends up stopping it"""
+        pane = session.new_pane("trapper", "trap '' INT; sleep 100")
+        time.sleep(0.5)
+
+        clean = session.stop_pane(pane, sigint_timeout=1.0, sigterm_timeout=5.0)
+
+        assert clean is True
 
 
 class TestIntegration:

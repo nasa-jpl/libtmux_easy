@@ -6,6 +6,9 @@ from libtmux.pane import Pane
 from libtmux.common import tmux_cmd, exc
 import shlex
 import psutil
+import time
+
+from .proc import pane_child_processes, get_session_pids
 
 from pprint import pprint as pp
 import logging
@@ -456,6 +459,83 @@ class TmuxSession(Session):
         except DeprecatedError:  # attach_session() deprecated in 0.30.0
             return super().attach()
 
+    def wait_for_pane_idle(
+        self,
+        target_pane: Union[Pane, str],
+        timeout: float = 10.0,
+        poll_interval: float = 0.2,
+    ) -> bool:
+        """Poll the given pane's running child processes until none remain, or until
+        'timeout' seconds have elapsed. Returns True if the pane became idle, False if
+        it timed out."""
+        pane = self.resolve_target_pane(target_pane)
+        end_time = time.time() + timeout
+        while pane_child_processes(pane):
+            if time.time() >= end_time:
+                return False
+            time.sleep(poll_interval)
+        return True
+
+    def stop_pane(
+        self,
+        target_pane: Union[Pane, str],
+        sigint_timeout: float = 10.0,
+        sigterm_timeout: float = 5.0,
+        sigkill_timeout: float = 2.0,
+        poll_interval: float = 0.2,
+    ) -> bool:
+        """Gracefully stop whatever is running in a pane. Follow a SIGINT ->
+        SIGTERM -> SIGKILL escalation. Returns True if the pane ended up idle, False if
+        processes survived even SIGKILL (should be rare, but is possible for e.g.
+        zombie/defunct processes).
+
+        A caller escalating past SIGINT should treat that as a signal that whatever was
+        running did not shut down cleanly (e.g. a bag recorder likely failed to finalize
+        its metadata).
+
+        Caveat: "idle" is judged by walking pane_pid's current descendant tree, so a
+        grandchild orphaned (reparented) before its parent dies could go undetected."""
+        pane = self.resolve_target_pane(target_pane)
+        pane_name = self.get_pane_name(pane) or pane.id
+
+        if not pane_child_processes(pane):
+            return True
+
+        # Step 1: SIGINT (Ctrl-C). Delivered to the pane's foreground process group,
+        # same as a user hitting Ctrl-C in a real terminal. Catchable -- gives the
+        # process a chance to run its normal graceful-shutdown path.
+        pane.send_keys("C-c", enter=False)
+        if self.wait_for_pane_idle(pane, timeout=sigint_timeout, poll_interval=poll_interval):
+            return True
+
+        logger.warning(
+            f"Pane {pane_name} still running after SIGINT ({sigint_timeout}s). Escalating to SIGTERM."
+        )
+        # Step 2: SIGTERM. Still catchable, but a firmer "terminate now" request sent
+        # directly to each surviving descendant process (bypasses the pane entirely).
+        for proc in pane_child_processes(pane):
+            try:
+                proc.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        if self.wait_for_pane_idle(pane, timeout=sigterm_timeout, poll_interval=poll_interval):
+            return True
+
+        logger.warning(
+            f"Pane {pane_name} still running after SIGTERM ({sigterm_timeout}s). Escalating to SIGKILL."
+        )
+        # Step 3: SIGKILL. Un-catchable, un-ignorable -- the kernel kills the process
+        # immediately with no cleanup. Last resort.
+        for proc in pane_child_processes(pane):
+            try:
+                proc.kill()
+            except psutil.NoSuchProcess:
+                pass
+        stopped = self.wait_for_pane_idle(pane, timeout=sigkill_timeout, poll_interval=poll_interval)
+        if not stopped:
+            logger.warning(f"Pane {pane_name} still running after SIGKILL ({sigkill_timeout}s).")
+        return stopped
+
     # =============== Getters ===============
     def get_pane_name(self, pane: Pane) -> Optional[str]:
         """Return the fully qualified name of the given pane (i.e. 'window_name:pane_name'), or None
@@ -517,62 +597,6 @@ class TmuxSession(Session):
         """Check if the given window is part of this session. Raises an exception if not."""
         if window not in self.windows:
             raise ValueError(f"Window {window} not found in this session.")
-
-
-# from contextlib import contextmanager
-# @contextmanager
-# def create_tmux_session(session_name, create_tui=True):
-#     session = TmuxSession(session_name)
-#     try:
-#         yield session
-#     finally:
-#         session.close()
-
-
-# def new_window(session: Session, window_name, pane_name=None):
-#     window = session.new_window(window_name)
-#     pane = window.panes[0]
-#     if pane_name:
-#         set_pane_title(pane, pane_name)
-#     return window, pane
-
-
-def get_session_pids(session: Session):
-    """Return a tree containing all of the currently running process pids in a tmux session.
-    Each pane is running a 'bash' process, and commands entered into the pane will start a subprocess.
-    It is that subprocess (and any children) that is reported here.
-
-    The output is a dictionary:
-
-        window_i: {
-            pane_i: {
-                child1: (
-                    child1,
-                    {
-                        child2:
-                    }
-                    child3
-                )
-            }
-            ...
-            pane_j: ...
-        }
-        ...
-        window_j: ...
-    }
-
-    window_<window_name> --> dict containing panes with subprocesses.
-    pane_<pane_name> --> dict with
-    """
-
-    for window in session.windows:
-        for pane in window.panes:
-            parent = pane.pane_pid
-            children = get_child_pids(int(parent))
-            if children:
-                print(
-                    f"parent: {parent}, found children {children} in {window.name}:{pane.id}"
-                )
 
 
 if __name__ == "__main__":
