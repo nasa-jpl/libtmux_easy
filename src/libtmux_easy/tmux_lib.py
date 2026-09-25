@@ -364,20 +364,24 @@ class TmuxSession(Session):
         """Send the provided command string to the last created pane, or to the target_pane.
 
         'target_pane' should either be a pane name, pane id, or a Pane object. If None, the command
-        will be sent to the most recently created pane.
+        will be sent to the most recently created pane. Raises ValueError if the resolved pane isn't
+        a pane tracked/named by this session (i.e. not created via new_pane()).
         """
         if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
             raise ValueError("Must create a window and pane before sending commands.")
 
-        logger.debug(f"Sending: {command}")
         if target_pane:
             pane = self.resolve_target_pane(target_pane)
         else:
             pane = self.current_pane
 
-        pane.send_keys(command, enter)
         pane_name = self.get_pane_name(pane)
-        self.commands.get(pane_name, []).append(command)
+        if pane_name is None:
+            raise ValueError(f"Pane {pane} is not a named pane tracked by this session.")
+
+        logger.debug(f"Sending: {command}")
+        pane.send_keys(command, enter)
+        self.commands.setdefault(pane_name, []).append(command)
 
     def resolve_target_pane(self, identifier: Union[Pane, str]) -> Pane:
         """Helper function to retrieve a Pane object from either a pane name, pane id, or a Pane
