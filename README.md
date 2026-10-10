@@ -22,9 +22,33 @@ session.attach()
 
 ## Installation
 
+| platform | method | installs |
+|---|---|---|
+| Ubuntu / Debian | `.deb` (below) | library for the system Python, `/usr/bin/lte-run` |
+| other, in a venv | `pip install libtmux-easy` | library and `lte-run`, inside the venv |
+| other, `lte-run` on PATH | `pipx install libtmux-easy` | `~/.local/bin/lte-run` only |
+| from a checkout | `PYTHONPATH=src` | everything; the library calls `src/.../wrap.py` directly |
+
+### Debian package (Ubuntu 24.04)
+
 ```bash
-pip install libtmux-easy
+sudo apt install build-essential debhelper dh-python python3-all \
+                 python3-setuptools pybuild-plugin-pyproject
+dpkg-buildpackage -us -uc -b
+sudo apt install ../python3-libtmux-easy_0.1.0_all.deb
 ```
+
+`apt install ./file.deb` (not `dpkg -i`) pulls in `python3-libtmux`,
+`python3-psutil`, `python3-packaging` and `tmux`. The `.deb` lands in the
+parent directory. A venv sees it only if created with `--system-site-packages`.
+Bump the version in both `pyproject.toml` and `debian/changelog`.
+
+### Venvs and `lte-run`
+
+Wrap-mode panes type the bare `lte-run`, so it must be on the PATH of each
+pane's shell. A venv's `bin/` usually is not: activate it there
+(`send_command_before("source .venv/bin/activate")`), or also
+`pipx install` it.
 
 ## Key Features
 
