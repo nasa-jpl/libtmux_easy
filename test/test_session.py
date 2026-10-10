@@ -7,7 +7,7 @@ They clean up after themselves by killing test sessions.
 import time
 
 import pytest
-from libtmux_easy import TmuxSession, session_exists
+from libtmux_easy import TmuxSession, session_exists, PANE_MODE_EXEC
 from libtmux_easy.proc import pane_child_processes
 import libtmux
 
@@ -197,13 +197,22 @@ class TestLayouts:
 
     def test_window_with_layout(self, session):
         """Test creating window with specific layout"""
-        # First window reuses unnamed window, doesn't set layout_str
+        # The first window reuses the session's initial window; it must get
+        # layout_str too, or split_window() never re-tiles it.
         window = session.new_window("tiled-window", layout="tiled")
+        assert window.layout_str == "tiled"
 
-        # Create second window to test layout_str is actually set
         window2 = session.new_window("second", layout="main-horizontal")
-        assert hasattr(window2, "layout_str")
         assert window2.layout_str == "main-horizontal"
+
+    def test_first_window_fits_many_panes(self, session):
+        """Regression: the first window used to skip re-tiling, so every split
+        halved the previous pane and the 6th failed with 'no space for new
+        pane' even in a default 80x24 window."""
+        session.new_window("many")
+        for i in range(8):
+            session.new_pane(f"p{i}", "sleep 30", target_pid_timeout=0.1)
+        assert len(session.get_window("many").panes) == 8
 
     def test_main_horizontal_layout(self, session):
         """Test main-horizontal layout"""
@@ -278,6 +287,203 @@ class TestTeardown:
         clean = session.stop_pane(pane, sigint_timeout=1.0, sigterm_timeout=5.0)
 
         assert clean is True
+
+
+class TestExitStatusShellMode:
+    @pytest.fixture
+    def session(self):
+        """Create a test session with a window"""
+        sess = TmuxSession.create("test-exit-status-shell", kill_existing=True)
+        sess.new_window("main")
+        yield sess
+        try:
+            sess.kill_session()
+        except:
+            sess.kill()
+
+    def test_self_exit_code_readable(self, session):
+        """A command that exits on its own: '$?' holds its real code."""
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 42'")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        status = session.exit_status(pane)
+
+        assert status.code == 42
+        assert status.signal is None
+        assert status.ok is False
+
+    def test_zero_exit_is_ok(self, session):
+        pane = session.new_pane("x", "sh -c 'exit 0'")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        status = session.exit_status(pane)
+
+        assert status.code == 0
+        assert status.ok is True
+
+    def test_sigint_reported_as_inferred_signal(self, session):
+        """Ctrl-C shows up as 128+2, decoded to signal=2 with inferred=True."""
+        pane = session.new_pane("x", "sh -c 'exec sleep 300'")
+        time.sleep(0.5)
+
+        session.stop_pane(pane, sigint_timeout=5.0)
+        status = session.exit_status(pane)
+
+        assert status.signal == 2
+        assert status.inferred is True
+        assert status.ok is False
+
+    def test_sigint_handler_exit_code_preserved(self, session):
+        """The ros2-launch shape: traps SIGINT and exits 7."""
+        cmd = (
+            "python3 -c "
+            "'import signal, sys, time; "
+            "signal.signal(signal.SIGINT, lambda *a: sys.exit(7)); "
+            "time.sleep(300)'"
+        )
+        pane = session.new_pane("x", cmd)
+        time.sleep(0.5)
+
+        session.stop_pane(pane, sigint_timeout=5.0)
+        status = session.exit_status(pane)
+
+        assert status.code == 7
+
+    def test_status_cached_across_calls(self, session):
+        """Second call must not re-probe -- the first echo clobbered '$?'."""
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 42'")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        first = session.exit_status(pane)
+        second = session.exit_status(pane)
+
+        assert first == second
+        assert second.code == 42
+
+    def test_unknown_while_running(self, session):
+        pane = session.new_pane("x", "sleep 100")
+        time.sleep(0.5)
+
+        status = session.exit_status(pane)
+
+        assert status.known is False
+
+        # Cleanup
+        for proc in pane_child_processes(session.resolve_target_pane(pane)):
+            proc.terminate()
+
+
+class TestExitStatusExecMode:
+    @pytest.fixture
+    def session(self):
+        """Create a test session with a window. Commands below all have a
+        deliberate delay before exiting so remain-on-exit has time to apply
+        before the pane's process ends (see tmux_lib.py note on fact 6)."""
+        sess = TmuxSession.create("test-exit-status-exec", kill_existing=True)
+        sess.new_window("main")
+        yield sess
+        try:
+            sess.kill_session()
+        except:
+            sess.kill()
+
+    def test_exit_code_from_tmux(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 42'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        status = session.exit_status(pane)
+
+        assert status.code == 42
+        assert status.inferred is False
+
+    def test_signal_distinguished_from_code(self, session):
+        """Exec mode separates 'killed by SIGINT' from 'exited 130'."""
+        pane = session.new_pane("x", "sh -c 'exec sleep 300'", mode=PANE_MODE_EXEC)
+        time.sleep(0.5)
+
+        session.stop_pane(pane, sigint_timeout=5.0)
+        status = session.exit_status(pane)
+
+        assert status.signal == 2
+        assert status.code is None
+        assert status.inferred is False
+
+    def test_pane_survives_command_exit(self, session):
+        """remain-on-exit keeps the pane (and its status) after the process ends."""
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 0'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        assert session._pane_fmt(pane, "#{pane_dead}") == "1"
+        assert pane.id in [p.id for p in session.current_window.panes]
+
+    def test_reused_first_pane_runs_command(self, session):
+        """Bug 1: the window's initial pane must actually run the command
+        rather than sit at a bash prompt."""
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 7'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        assert session.exit_status(pane).code == 7
+
+    def test_stop_pane_actually_stops_childless_command(self, session):
+        """Bug 2: 'exec sleep 300' has no descendants, so the old
+        descendants-only liveness check reported a clean stop without
+        signalling anything."""
+        pane = session.new_pane("x", "sh -c 'exec sleep 300'", mode=PANE_MODE_EXEC)
+        time.sleep(0.5)
+
+        assert session.is_running(pane) is True
+        assert session.stop_pane(pane, sigint_timeout=5.0) is True
+        assert session.is_running(pane) is False
+
+    def test_command_before_composes_with_exec(self, session):
+        """send_command_before must still apply, via 'setup && exec cmd', and
+        the status must be the COMMAND's, not the setup shell's."""
+        session.send_command_before("true")
+        pane = session.new_pane("x", "sh -c 'exit 5'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        assert session.exit_status(pane).code == 5
+
+    def test_respawn_pane_reruns_and_clears_status(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 1; exit 11'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert session.exit_status(pane).code == 11
+
+        session.respawn_pane(pane, "sh -c 'exit 22'")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+
+        assert session.exit_status(pane).code == 22
+
+
+class TestIsRunning:
+    @pytest.fixture
+    def session(self):
+        """Create a test session with a window"""
+        sess = TmuxSession.create("test-is-running", kill_existing=True)
+        sess.new_window("main")
+        yield sess
+        try:
+            sess.kill_session()
+        except:
+            sess.kill()
+
+    def test_shell_pane_running_then_idle(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 1'")
+        time.sleep(0.3)
+
+        assert session.is_running(pane) is True
+
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert session.is_running(pane) is False
+
+    def test_exec_pane_running_then_dead(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 1'", mode=PANE_MODE_EXEC)
+        time.sleep(0.3)
+
+        assert session.is_running(pane) is True
+
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert session.is_running(pane) is False
 
 
 class TestIntegration:
