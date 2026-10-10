@@ -1,0 +1,9 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME=libtmux_easy
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+# The tests drive a live tmux server, which a build environment doesn't have.
+override_dh_auto_test:

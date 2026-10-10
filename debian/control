@@ -1,0 +1,25 @@
+Source: libtmux-easy
+Section: python
+Priority: optional
+Maintainer: Spencer Diehl <docdiehl@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-setuptools,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/bigdiehl/libtmux_easy
+
+Package: python3-libtmux-easy
+Architecture: all
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         tmux,
+Description: declarative tmux sessions with exact pane exit status
+ A stateful wrapper around libtmux for building tmux sessions of named
+ windows and panes, with exit status, exit events and stop escalation for
+ the commands running in them.
+ .
+ Includes lte-run, a prefix command that supervises a command typed into a
+ pane and reports its exact exit status to the session.
