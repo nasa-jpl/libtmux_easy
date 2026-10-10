@@ -3,7 +3,7 @@ name = "libtmux-easy"
 version = "0.1.0"
 description = "Declarative Python wrapper around libtmux for tmux session configuration"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     { name = "Spencer Diehl", email = "docdiehl@gmail.com" }
 ]
@@ -11,12 +11,13 @@ keywords = ["tmux", "terminal", "multiplexer", "session"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: System :: Shells",
     "Topic :: Terminals",
 ]
@@ -35,9 +36,14 @@ test = [
 [project.scripts]
 lte-run = "libtmux_easy.wrap:main"
 
+# setuptools rather than a newer backend: it is packaged for Ubuntu 24.04, so
+# the .deb (debian/) builds from this same file with apt-only dependencies.
 [build-system]
-requires = ["uv_build>=0.9.18,<0.10.0"]
-build-backend = "uv_build"
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.urls]
 "Homepage" = "https://github.com/bigdiehl/libtmux_easy"
