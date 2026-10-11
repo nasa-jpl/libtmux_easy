@@ -195,7 +195,7 @@ class TestControl:
 
 @needs_textual
 def test_sidebar_labels():
-    from libtmux_easy.dash_app import describe, describe_long
+    from libtmux_easy.dash.app import describe, describe_long
     exit2 = {"code": None, "signal": 2, "inferred": False}
     assert describe({"running": True}) == ("running", "running")
     assert describe({"exit_status": exit2, "stopped": "SIGINT"}) == ("stopped", "stopped")
@@ -319,7 +319,7 @@ def test_sidebar_survives_status_file_switch(tmp_path):
     """lte-session: each test's TmuxSession.current() writes its own status
     file. The sidebar crashed (KeyError) when the second one replaced the
     first, and missed the first one's final write."""
-    from libtmux_easy.dash_app import DashApp
+    from libtmux_easy.dash.app import DashApp
 
     first, second = tmp_path / "a.json", tmp_path / "b.json"
     first.write_text(json.dumps([entry("%5", "nodes:talker", True)]))
@@ -345,7 +345,7 @@ def test_sidebar_survives_status_file_switch(tmp_path):
 
 @needs_textual
 def test_sidebar_summary_counts():
-    from libtmux_easy.dash_app import DashApp
+    from libtmux_easy.dash.app import DashApp
     from textual.widgets import Static
 
     async def scenario():

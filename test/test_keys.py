@@ -1,5 +1,5 @@
 """
-Tests for lte-key (src/libtmux_easy/keys.py): borrowing a prefix key so that
+Tests for lte-key (src/libtmux_easy/dash/keys.py): borrowing a prefix key so that
 it works where a session option is set and does what it did before anywhere
 else, then giving it back. Each test gets its own tmux server ($TMUX points
 the tmux client at it), so no binding of the user's is touched.
@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from libtmux_easy import keys
+from libtmux_easy.dash import keys
 
 
 @pytest.fixture(autouse=True)

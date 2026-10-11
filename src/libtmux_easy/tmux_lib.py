@@ -24,7 +24,7 @@ from packaging import version
 
 from . import dash
 from ._tmux import option
-from .homelog import _SkipIfTeed, _Tee
+from .dash.homelog import _SkipIfTeed, _Tee
 from .proc import pane_child_processes
 from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _proc_alive, _WrapRun

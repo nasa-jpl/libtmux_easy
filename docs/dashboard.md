@@ -46,13 +46,13 @@ renders everything else.
 - The summary line counts running, stopped, failed (plus ok and unknown when
   nonzero).
 - **Home** shows the script's stdout, stderr and logging via `tee_home()`
-  (`homelog.py`).
+  (`dash/homelog.py`).
 
 **Public**, used by tlaunch: `lte-dash --open`, `dash.open_window()`, the
 status-file fields, the control commands. A non-library launcher keeps the
 status file current and answers the socket.
 
-## Borrowed keys (`keys.py`, `lte-key`)
+## Borrowed keys (`dash/keys.py`, `lte-key`)
 
 `prefix g` (back to the dashboard) must not need `~/.tmux.conf`, and must not
 clobber the user's binding:

@@ -1,4 +1,4 @@
-"""The lte-dash sidebar UI. Requires Textual; see dash.py for the rest."""
+"""The lte-dash sidebar UI. Requires Textual; see the package docstring for the rest."""
 
 import signal
 import time
@@ -10,8 +10,9 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Markdown, Static, Tree
 
-from ._tmux import option
-from .dash import HOME_KIND_OPTION, HOME_STATUS_OPTION, read_status
+from .._tmux import option
+from .control import read_status
+from .options import HOME_KIND_OPTION, HOME_STATUS_OPTION
 
 HOME = "home"  # tree node data for the home entry
 

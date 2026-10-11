@@ -15,7 +15,7 @@ borrowed is not wrapped a second time. If a borrower dies without returning
 the key, the binding stays until the server exits -- harmless, since outside
 OPTION's sessions it still runs the original.
 
-Stdlib only, like wrap.py and dash.py.
+Stdlib only, like wrap.py and dash/.
 """
 
 import argparse
@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 
-from ._tmux import option as _option, tmux as _tmux
+from .._tmux import option as _option, tmux as _tmux
 
 TABLE = "prefix"
 

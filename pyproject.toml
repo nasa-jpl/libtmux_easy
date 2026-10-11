@@ -40,9 +40,9 @@ dash = [
 
 [project.scripts]
 lte-run = "libtmux_easy.wrap:main"
-lte-dash = "libtmux_easy.dash:main"
+lte-dash = "libtmux_easy.dash.cli:main"
 lte-session = "libtmux_easy.launch:main"
-lte-key = "libtmux_easy.keys:main"
+lte-key = "libtmux_easy.dash.keys:main"
 
 # setuptools rather than a newer backend: it is packaged for Ubuntu 24.04, so
 # the .deb (debian/) builds from this same file with apt-only dependencies.

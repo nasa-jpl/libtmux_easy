@@ -8,11 +8,11 @@
 | `status.py` | - | `ExitStatus`, `PaneStatus` |
 | `watcher.py` | psutil | `_PaneWatcher`: one thread per session; pidfds plus the wrap socket |
 | `proc.py` | psutil | process discovery under a pane |
-| `homelog.py` | - | stdout/logging tee behind `tee_home()` |
 | `wrap.py` | stdlib | `lte-run` |
-| `dash.py` | stdlib | `lte-dash`: window setup, `Viewport`, `Control` |
-| `dash_app.py` | Textual | the sidebar UI |
-| `keys.py` | stdlib | `lte-key`: borrow a prefix key |
+| `dash/` | stdlib | `options` (state in tmux options), `window` (`open_window`), `viewport` (`Viewport`), `control` (`Control`, `read_status`), `cli` (`lte-dash`) |
+| `dash/app.py` | Textual | the sidebar UI |
+| `dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
+| `dash/homelog.py` | - | stdout/logging tee behind `tee_home()` |
 | `launch.py` | stdlib | `lte-session` |
 | `testing.py` | pytest | pytest plugin |
 | `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
