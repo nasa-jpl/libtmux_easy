@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo 6: supervising a process that lies about its own health.
+"""Demo 5: supervising a process that lies about its own health.
 
 This is the real-world case the exit-status work was built for. A process
 supervisor -- 'ros2 launch' is the motivating example, stood in for here by
@@ -54,7 +54,7 @@ def main():
     args = parse_args(__doc__)
     log_dir = Path(tempfile.mkdtemp(prefix="lte_demo_launch_"))
 
-    with demo("launch_like", "Demo 6: supervising a lying process", args) as session:
+    with demo("launch_like", "Demo 5: supervising a lying process", args) as session:
         note(f"pane logs: {log_dir}")
 
         # ----------------- the healthy run ----------------- #

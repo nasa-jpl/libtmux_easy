@@ -20,10 +20,8 @@ HERE = Path(__file__).resolve().parent
 
 DEMOS = [
     "demo_layout.py",
-    "demo_pane_modes.py",
-    "demo_wrap_mode.py",
-    "demo_exit_status.py",
-    "demo_exit_events.py",
+    "demo_modes.py",
+    "demo_exit.py",
     "demo_interference.py",
     "demo_launch_like.py",
     "demo_monitor.py",

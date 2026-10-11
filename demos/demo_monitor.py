@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo 7: watching a session's panes from outside.
+"""Demo 6: watching a session's panes from outside.
 
 Starts a handful of panes with staggered lifetimes and then just reports on
 them, which is what a monitoring view wants to do. Three levels of visibility,
@@ -55,7 +55,7 @@ def print_table(statuses):
 def main():
     args = parse_args(__doc__)
 
-    with demo("monitor", "Demo 7: monitoring pane state", args) as session:
+    with demo("monitor", "Demo 6: monitoring pane state", args) as session:
         if args.status_file:
             note(f"status file: {args.status_file}")
         else:
@@ -70,7 +70,7 @@ def main():
         session.new_pane("graceful", graceful_sigint_exit(7), mode=PANE_MODE_EXEC)
 
         note("attach in another terminal to watch the pane borders change:")
-        note(f"  tmux attach -t lte_demo_monitor")
+        note("  tmux attach -t lte_demo_monitor")
 
         step("Reporting until the short-lived panes have all finished")
         transient = ["demo:fast_ok", "demo:fast_fail", "demo:slow_ok"]

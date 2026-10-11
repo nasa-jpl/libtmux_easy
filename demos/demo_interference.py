@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo 5: staying correct when somebody is using the pane.
+"""Demo 4: staying correct when somebody is using the pane.
 
 Shell-mode panes are deliberately left interactive -- that is the whole point
 of them. The cost is that the pane you are measuring is also a pane a person
@@ -34,7 +34,7 @@ from common import (
 def main():
     args = parse_args(__doc__)
 
-    with demo("interference", "Demo 5: surviving pane interference", args) as session:
+    with demo("interference", "Demo 4: surviving pane interference", args) as session:
 
         step("Launch a long-running target and note the pid it spawned")
         target = session.new_pane("target", runs_forever())
