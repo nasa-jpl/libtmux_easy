@@ -32,9 +32,17 @@ dependencies = [
 test = [
     "pytest>=7.0",
 ]
+# lte-dash, the dashboard sidebar. Not in the .deb: Ubuntu's python3-textual
+# is too old, so install it with pipx (or into a venv) alongside.
+dash = [
+    "textual>=1.0",
+]
 
 [project.scripts]
 lte-run = "libtmux_easy.wrap:main"
+lte-dash = "libtmux_easy.dash:main"
+lte-session = "libtmux_easy.launch:main"
+lte-key = "libtmux_easy.keys:main"
 
 # setuptools rather than a newer backend: it is packaged for Ubuntu 24.04, so
 # the .deb (debian/) builds from this same file with apt-only dependencies.
@@ -46,6 +54,6 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [project.urls]
-"Homepage" = "https://github.com/bigdiehl/libtmux_easy"
-"Bug Tracker" = "https://github.com/bigdiehl/libtmux_easy/issues"
-"Repository" = "https://github.com/bigdiehl/libtmux_easy"
+"Homepage" = "https://github.com/nasa-jpl/libtmux_easy"
+"Bug Tracker" = "https://github.com/nasa-jpl/libtmux_easy/issues"
+"Repository" = "https://github.com/nasa-jpl/libtmux_easy"

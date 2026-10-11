@@ -7,3 +7,9 @@ export PYBUILD_NAME=libtmux_easy
 
 # The tests drive a live tmux server, which a build environment doesn't have.
 override_dh_auto_test:
+
+# lte-dash needs a newer Textual than apt has; it comes from pipx instead.
+# Shipping a broken one here would shadow it on PATH.
+override_dh_auto_install:
+	dh_auto_install
+	rm -f debian/python3-libtmux-easy/usr/bin/lte-dash

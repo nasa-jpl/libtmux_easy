@@ -155,7 +155,9 @@ def signal_target(sig, target):
                 pass
 
 
-def main(argv=None):
+def main(argv=None, channel=None):
+    """lte-run. 'channel' replaces the session socket: any object with
+    send(**msg) and messages(), like Channel (lte-session uses this)."""
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["--"]:
         argv = argv[1:]
@@ -163,7 +165,8 @@ def main(argv=None):
         sys.stderr.write(__doc__)
         return 2
 
-    channel = Channel(find_dir())
+    if channel is None:
+        channel = Channel(find_dir())
 
     # Pass the inherited dispositions on to the target. Python installs its
     # own SIGINT handler at startup unless SIGINT was already ignored, so

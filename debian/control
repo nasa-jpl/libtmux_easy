@@ -9,7 +9,7 @@ Build-Depends: debhelper-compat (= 13),
                python3-setuptools,
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
-Homepage: https://github.com/bigdiehl/libtmux_easy
+Homepage: https://github.com/nasa-jpl/libtmux_easy
 
 Package: python3-libtmux-easy
 Architecture: all
@@ -22,4 +22,5 @@ Description: declarative tmux sessions with exact pane exit status
  the commands running in them.
  .
  Includes lte-run, a prefix command that supervises a command typed into a
- pane and reports its exact exit status to the session.
+ pane and reports its exact exit status to the session, and lte-key, which
+ borrows a tmux prefix key for one session without editing ~/.tmux.conf.

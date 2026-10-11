@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: libtmux_easy
-Source: https://github.com/bigdiehl/libtmux_easy
+Source: https://github.com/nasa-jpl/libtmux_easy
 
 Files: *
 Copyright: 2026 California Institute of Technology
