@@ -1,7 +1,7 @@
 """
 Tests for wrap mode: panes whose command runs under lte-run
 (src/libtmux_easy/wrap.py), which reports the exact pid and exit status over
-the session's control socket. See working/PLAN-wrap-mode.md.
+the session's control socket. See docs/wrap-mode.md.
 """
 import logging
 import os
@@ -13,22 +13,10 @@ import time
 import psutil
 import pytest
 
-from libtmux_easy import TmuxSession, PANE_MODE_WRAP, PANE_MODE_SHELL
+from helpers import pane_text as _pane_text, wait_until as _wait_until
+from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
 from libtmux_easy import wrap
 from libtmux_easy.tmux_lib import _wrap_prefix
-
-
-def _wait_until(predicate, timeout=5.0, interval=0.05):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval)
-    return predicate()
-
-
-def _pane_text(pane):
-    return "\n".join(pane.cmd("capture-pane", "-p", "-J").stdout)
 
 
 def test_wrapper_import_stays_light():
@@ -70,16 +58,6 @@ class TestWrapStandalone:
 
 
 class TestWrapMode:
-    @pytest.fixture
-    def session(self):
-        sess = TmuxSession.create("test-wrap-mode", kill_existing=True)
-        sess.new_window("main")
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
     def test_wrap_exact_exit_code(self, session):
         pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 42'", mode=PANE_MODE_WRAP)
 
@@ -234,11 +212,18 @@ class TestWrapMode:
         assert _wait_until(lambda: session.pane_status(pane).target_pids != ())
         assert session.wait_for_exit(pane, timeout=5.0).code == 2
 
-    def test_wrap_teardown(self):
-        sess = TmuxSession.create("test-wrap-teardown", kill_existing=True)
-        directory = sess._wrap_dir
+    def test_wrap_teardown(self, session):
+        directory = session._wrap_dir
         assert os.path.exists(os.path.join(directory, wrap.SOCKET_NAME))
 
-        sess.kill_session()
+        session.kill_session()
 
         assert not os.path.exists(directory)
+
+    def test_wrap_command_with_dash_t(self, session):
+        """A second pane whose command contains '-t' (here '--topic'): its
+        keys used to land in the first pane. See _pane_cmd()."""
+        session.new_pane("first", "sleep 30", mode=PANE_MODE_WRAP)
+        pane = session.new_pane("second", "sh -c 'exit 7' --topic x", mode=PANE_MODE_WRAP)
+
+        assert session.wait_for_exit(pane, timeout=5.0).code == 7

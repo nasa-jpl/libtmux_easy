@@ -9,9 +9,7 @@ import os
 import subprocess
 import time
 
-import pytest
 
-from libtmux_easy import TmuxSession
 from libtmux_easy.proc import get_child_pids, pane_child_processes, get_session_pids
 
 
@@ -72,19 +70,9 @@ class TestGetChildPids:
 
 
 class TestPaneChildProcesses:
-    @pytest.fixture
-    def session(self):
-        sess = TmuxSession.create("test-proc-pane", kill_existing=True)
-        sess.new_window("main")
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
     def test_running_process_found(self, session):
         """
-        session "test-proc-pane"
+        the session
           `-- window "main"
                 `-- pane "sleeper"   (pane.pane_pid, the pane's shell)
                       `-- sleep 100
@@ -101,7 +89,7 @@ class TestPaneChildProcesses:
 
     def test_idle_pane_has_no_children(self, session):
         """
-        session "test-proc-pane"
+        the session
           `-- window "main"
                 `-- pane "shell"   (pane.pane_pid, idle -- no children)
         """
@@ -112,19 +100,9 @@ class TestPaneChildProcesses:
 
 
 class TestGetSessionPids:
-    @pytest.fixture
-    def session(self):
-        sess = TmuxSession.create("test-proc-session", kill_existing=True)
-        sess.new_window("main")
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
     def test_reports_running_pane_by_window_and_pane_id(self, session):
         """
-        session "test-proc-session"
+        the session
           `-- window "main"
                 `-- pane "sleeper"   (pane.pane_pid)
                       `-- sleep 100
@@ -143,7 +121,7 @@ class TestGetSessionPids:
 
     def test_idle_session_reports_no_entries(self, session):
         """
-        session "test-proc-session"
+        the session
           `-- window "main"
                 `-- pane "shell"   (pane.pane_pid, idle -- no children)
         """
@@ -154,7 +132,7 @@ class TestGetSessionPids:
 
     def test_mixed_session_only_reports_running_pane(self, session):
         """
-        session "test-proc-session"
+        the session
           `-- window "main"
                 |-- pane "shell"      (idle -- no children, omitted from result)
                 `-- pane "sleeper"    (busy_pane.pane_pid)
