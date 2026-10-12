@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Run every demo in order and summarize which ones passed.
+"""Run every tour unattended (--auto) and report which ones finished.
 
-    ./run_all.py                 # all demos
-    ./run_all.py --only modes    # just demos whose filename contains 'modes'
-    ./run_all.py --verbose       # show each demo's own output
+    ./run_all.py                 # all tours
+    ./run_all.py --only exit     # tours whose filename contains 'exit'
+    ./run_all.py --verbose       # show each tour's output
 
-Each demo creates and tears down its own tmux session, so they can be run in
-any order, but not concurrently with each other (they would fight over
-session names).
+A smoke test, not a test suite: the tours print, they don't assert. Don't run
+it while a tour is open (they share session names).
 """
 
 import argparse
@@ -17,64 +16,34 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-
-DEMOS = [
-    "demo_layout.py",
-    "demo_modes.py",
-    "demo_exit.py",
-    "demo_interference.py",
-    "demo_launch_like.py",
-    "demo_monitor.py",
-]
+TOURS = sorted(p.name for p in HERE.glob("[0-9][0-9]_*.py"))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--only", default=None,
-                        help="only run demos whose filename contains this substring")
-    parser.add_argument("--verbose", action="store_true",
-                        help="show each demo's output instead of just the verdict")
+    parser.add_argument("--only", help="only tours whose filename contains this")
+    parser.add_argument("--verbose", action="store_true", help="show each tour's output")
     args = parser.parse_args()
 
-    demos = [d for d in DEMOS if args.only is None or args.only in d]
-    if not demos:
-        sys.exit(f"no demos match {args.only!r}; available: {', '.join(DEMOS)}")
+    tours = [t for t in TOURS if not args.only or args.only in t]
+    if not tours:
+        sys.exit(f"no tours match {args.only!r}; available: {', '.join(TOURS)}")
 
-    results = []
-    for name in demos:
-        print(f"\n{'=' * 74}\nRUN  {name}\n{'=' * 74}", flush=True)
+    failed = []
+    for name in tours:
         start = time.monotonic()
-        proc = subprocess.run(
-            [sys.executable, str(HERE / name)],
-            cwd=HERE,
-            capture_output=not args.verbose,
-            text=True,
-        )
-        elapsed = time.monotonic() - start
+        proc = subprocess.run([sys.executable, str(HERE / name), "--auto"], cwd=HERE,
+                              capture_output=not args.verbose, text=True, timeout=300)
         ok = proc.returncode == 0
-        results.append((name, ok, elapsed))
-
-        if args.verbose:
-            pass  # already streamed
-        elif ok:
-            print(f"     passed ({elapsed:.0f}s)")
-        else:
-            print(f"     FAILED ({elapsed:.0f}s), exit code {proc.returncode}")
-            print("     ---- output ----")
-            for line in (proc.stdout or "").splitlines()[-40:]:
-                print(f"     {line}")
-            if proc.stderr:
-                print("     ---- stderr ----")
-                for line in proc.stderr.splitlines()[-20:]:
-                    print(f"     {line}")
-
-    print(f"\n{'=' * 74}")
-    failed = [name for name, ok, _ in results if not ok]
-    for name, ok, elapsed in results:
-        print(f"  {'pass' if ok else 'FAIL'}  {name:<28} {elapsed:>5.0f}s")
-    print(f"{'=' * 74}")
-    print(f"{len(results) - len(failed)}/{len(results)} demos passed")
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name:<26} {time.monotonic() - start:4.0f}s",
+              flush=True)
+        if not ok:
+            failed.append(name)
+            if not args.verbose:
+                print("\n".join(f"        {line}" for line in
+                                (proc.stdout + proc.stderr).splitlines()[-30:]))
+    print(f"{len(tours) - len(failed)}/{len(tours)} tours finished")
     return 1 if failed else 0
 
 

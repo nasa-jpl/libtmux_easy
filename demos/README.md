@@ -1,71 +1,58 @@
-# libtmux_easy demos
+# libtmux_easy tours
 
-Runnable scenarios. Each makes its own tmux session, prints checked results
-and cleans up. They fall back to `../src`, so no install is needed; only tmux.
+Hands-on tours of the library. Each one builds a tmux session, narrates what
+it does, and waits for Enter before anything happens, so you can watch it
+and try things yourself. No install needed (they fall back to `../src`);
+tmux is required, and Textual for the dashboard.
 
 ## Quick start
 
 ```bash
 cd demos
-./demo_modes.py               # one demo
-./demo_modes.py --attach      # ...then attach to look at the panes
-./run_all.py                  # all scripted demos, summarized (--only exit)
+./01_session.py                         # start here
+../.venv/bin/python 02_exit_status.py   # tours 2-5: a Python with Textual gets the dashboard
 ```
 
-| flag | effect |
+| tour | shows |
 |---|---|
-| `--attach` | attach to the session when the demo finishes |
-| `--keep` | leave the session running |
-| `--status-file PATH` | write pane status as JSON on every change |
-
-Exit code 0 only if every check passed, so `run_all.py` is a smoke test.
-
-## The demos
-
-| demo | shows |
-|---|---|
-| `demo_layout.py` | windows, panes, layouts, naming, `print()` / `print_status()` |
-| `demo_modes.py` | shell, exec and wrap mode side by side: exit codes, `exit 130` vs SIGINT, reruns |
-| `demo_exit.py` | exit outcomes, `on_exit` / `wait_for_exit`, `stop_pane` escalation, `stop_all` |
-| `demo_interference.py` | staying correct while someone types in a pane |
-| `demo_launch_like.py` | a supervisor that exits 0 even when a child failed, and how to catch it |
-| `demo_monitor.py` | monitoring from outside: titles, `status()`, the status file |
-| `demo_dashboard.py` | interactive: the dashboard (needs Textual; `--many` for 36 panes) |
+| `01_session.py` | building a session from Python: windows, panes, layouts, names, `send_keys`, `print_status`; then attaches |
+| `02_exit_status.py` | shell, exec and wrap mode; exit codes vs signals; `respawn_pane`; typing `lte-run` yourself |
+| `03_process_control.py` | `on_exit` events, a Ctrl-C you type, `stop_pane` escalation, `stop_all`, `respawn_pane` |
+| `04_dashboard.py` | the sidebar: browse, focus, `x` / `r` actions, `dashboard_pane`, many panes |
+| `05_monitoring.py` | the status file read by another program; a supervisor whose exit status hides failures |
 | `pytest_plugin/` | the pytest plugin in shell, tmux and dash mode (see its docstring) |
 
-The last two are not in `run_all.py`. Start with `demo_modes.py`, then
-`demo_launch_like.py`.
+## How a tour runs
 
-## Watching live
+Tours 2-5 relaunch themselves under `lte-session`: the script runs in the
+dashboard's **home** pane, and the panes it starts appear in the sidebar.
 
-```bash
-./demo_monitor.py --keep &
-tmux attach -t lte_demo_monitor       # borders read [running] -> [exited 42]
+| to | do |
+|---|---|
+| browse panes | `j` / `k` in the sidebar |
+| type into a pane | select it, `Enter` |
+| answer the tour | select `home`, `Enter`, then `Enter` |
+| leave early | `Ctrl-C` in home, or `prefix d` |
 
-./demo_monitor.py --status-file /tmp/panes.json --keep &
-watch -n1 'python3 -m json.tool /tmp/panes.json'
-```
+At the end the tour waits for a last Enter, then stops its panes and closes
+the session. Without Textual, or with `--no-dash`, you get the home pane
+only; switch windows with `prefix n` / `prefix p`.
+
+## Flags
+
+| flag | |
+|---|---|
+| `--auto` | no prompts, no dashboard: run straight through |
+| `--no-dash` | home pane only |
+
+`./run_all.py` runs every tour with `--auto`, as a smoke test.
 
 ## Workloads
 
-`common.py` has the short ones (`exits_after`, `runs_forever`,
-`ignores_sigint`, `graceful_sigint_exit`, ...). They are single-line: in
-shell mode a newline would submit the command early.
-
-`workloads/fake_launch.py` behaves like `ros2 launch`: a child dying is
-logged and the supervisor keeps running; the child's code appears only in
-that line; on SIGINT the supervisor exits 0 regardless.
-`python3 workloads/fake_launch.py --crash-after 2` shows it.
-
-## Rough edges
-
-- **Shell mode guesses the pid.** A shell loop has no stable child, and the
-  snapshot can catch a `.bashrc` process; either makes a running pane look
-  finished. Hence the demos' single long-lived processes, and the occasional
-  `demo_launch_like.py` failure. Wrap mode is told the pid.
-- **Exec mode can lose the status** (tmux; see `docs/KNOWN_ISSUES.md`). The demos
-  print exec results without checking them.
-- **`$?` is one-shot**: captured at exit and cached, since anything run in
-  the pane later overwrites it (`demo_interference.py`).
+| file | |
+|---|---|
+| `common.py` | `Tour` (session, `say`, `pause`), and one-line workloads: `exits_after`, `runs_forever`, `ignores_sigint`, ... |
+| `workloads/fake_launch.py` | behaves like `ros2 launch`: logs a child's death, keeps running, exits 0 on SIGINT |
+| `workloads/status_monitor.py` | prints a status file as a table every second |
 
 Clear strays: `tmux ls | grep '^lte_demo_' | cut -d: -f1 | xargs -r -n1 tmux kill-session -t`

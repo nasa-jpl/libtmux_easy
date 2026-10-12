@@ -20,7 +20,6 @@ Pass --crash-after 0 to have no child crash at all (the healthy case).
 """
 
 import argparse
-import os
 import signal
 import subprocess
 import sys

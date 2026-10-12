@@ -26,3 +26,6 @@ drowns test output and whose exit codes miss node death. Requirements:
 5. pytest on top.
 
 The library itself stays generic: nothing ROS-specific outside the demos.
+
+To see the features run, take the tours in `demos/` (start with
+`demos/01_session.py`).

@@ -1,233 +1,192 @@
-"""Shared scaffolding for the libtmux_easy demos.
+"""Shared scaffolding for the libtmux_easy tours.
 
-Each demo is a standalone script. Run one with no arguments to see its
-printed results; add --attach to drop into the tmux session afterwards and
-poke at the panes yourself, or --keep to leave the session running without
-attaching.
+A tour relaunches itself under lte-session: the script runs in the
+dashboard's home pane, where you read what it says and press Enter to go on,
+and the panes it starts appear in the sidebar. Browse them with j/k; select
+"home" to come back. --auto runs a tour unattended (run_all.py).
 
-Nothing here requires libtmux_easy to be installed -- the import below falls
-back to ../src so the demos work from a bare checkout.
+Works from a bare checkout: falls back to ../src.
 """
 
 import argparse
+import logging
+import os
+import subprocess
 import sys
+import tempfile
+import termios
+import textwrap
 import time
 import traceback
-from contextlib import contextmanager
 from pathlib import Path
 
 try:
-    from libtmux_easy import TmuxSession
-except ImportError:  # not installed -- run straight from the checkout
+    import libtmux_easy
+except ImportError:  # not installed: run from the checkout
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from libtmux_easy import TmuxSession
+    import libtmux_easy
 
-from libtmux_easy import (  # noqa: E402  (re-exported for the demos' convenience)
-    ExitStatus,
-    PANE_MODE_EXEC,
-    PANE_MODE_SHELL,
-    PANE_MODE_WRAP,
-    PaneStatus,
-)
+from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_SHELL, PANE_MODE_WRAP, TmuxSession
+from libtmux_easy.tmux_lib import _wrap_prefix
 
-__all__ = [
-    "TmuxSession",
-    "ExitStatus",
-    "PaneStatus",
-    "PANE_MODE_EXEC",
-    "PANE_MODE_SHELL",
-    "PANE_MODE_WRAP",
-    "demo",
-    "parse_args",
-    "step",
-    "note",
-    "check",
-    "results",
-    "exits_after",
-    "runs_forever",
-    "ignores_sigint",
-    "ignores_sigint_and_sigterm",
-    "graceful_sigint_exit",
-    "fake_launch",
-]
+HERE = Path(__file__).resolve().parent
+MODES = (PANE_MODE_SHELL, PANE_MODE_EXEC, PANE_MODE_WRAP)
+_MARKER = "LTE_DEMO_TOUR"  # set once relaunched under lte-session
+
+BOLD, DIM, RESET = "\x1b[1m", "\x1b[2m", "\x1b[0m"
 
 
-# --------------------------------------------------------------------------- #
-# Output helpers
-# --------------------------------------------------------------------------- #
+class Tour:
+    """One tour: its session, narration and pauses.
 
-_WIDTH = 74
-_checks = []
-
-
-def step(message):
-    """Announce a phase of the demo."""
-    print(f"\n-- {message}")
-
-
-def note(message):
-    """An aside: something worth explaining but not asserted on."""
-    print(f"   note: {message}")
-
-
-def check(label, actual, expected=None):
-    """Print a labelled result. When 'expected' is given, compare against it
-    (as strings, so ExitStatus and friends read naturally) and record a
-    pass/fail for the summary at the end."""
-    actual_s = str(actual)
-    if expected is None:
-        print(f"   {label:.<44} {actual_s}")
-        return True
-
-    ok = actual_s == str(expected)
-    _checks.append((label, ok))
-    marker = "ok  " if ok else "FAIL"
-    suffix = "" if ok else f"   (expected: {expected})"
-    print(f"   [{marker}] {label:.<44} {actual_s}{suffix}")
-    return ok
-
-
-def results():
-    """Print the pass/fail summary. Returns a process exit code."""
-    if not _checks:
-        return 0
-    failed = [label for label, ok in _checks if not ok]
-    print("\n" + "=" * _WIDTH)
-    if failed:
-        print(f"{len(failed)} of {len(_checks)} checks FAILED:")
-        for label in failed:
-            print(f"  - {label}")
-        return 1
-    print(f"all {len(_checks)} checks passed")
-    return 0
-
-
-# --------------------------------------------------------------------------- #
-# Session lifecycle
-# --------------------------------------------------------------------------- #
-
-def parse_args(description):
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--attach", action="store_true",
-                        help="attach to the session when the demo finishes")
-    parser.add_argument("--keep", action="store_true",
-                        help="leave the session running without attaching")
-    parser.add_argument("--status-file", default=None,
-                        help="write pane status as JSON here on every transition")
-    return parser.parse_args()
-
-
-def _resize(session, width, height):
-    """Give a detached session a usable canvas. 'window-size manual' is
-    needed for resize-window to stick on a session with no client attached;
-    both are tmux >= 2.9, so failures are non-fatal."""
-    try:
-        session.set_option("window-size", "manual")
-        session.cmd("resize-window", "-x", str(width), "-y", str(height))
-    except Exception:  # noqa: BLE001 -- older tmux; demos with few panes still work
-        pass
-
-
-@contextmanager
-def demo(name, title, args, window="demo"):
-    """Create a session for one demo, yield it, and clean up afterwards.
-
-    An 'info' pane is created first. It is purely cosmetic -- it labels the
-    session when you attach -- but it also guarantees the window always has
-    one live pane, so a fast-exiting demo pane can never empty the window and
-    take the tmux server down with it.
+        with Tour("exits", __doc__) as tour:
+            tour.step("...")
+            tour.say("...")
+            tour.pause("start the panes")
+            tour.session.new_pane(...)
     """
-    session_name = f"lte_demo_{name}"
-    print("=" * _WIDTH)
-    print(f"{title}")
-    print("=" * _WIDTH)
-    print(f"   tmux session: {session_name}")
 
-    session = TmuxSession.create(session_name, status_file=args.status_file)
-    # A detached session inherits an 80x24 default, which runs out of room
-    # ('no space for new pane') after about four splits. Demos that create
-    # more panes than that need a bigger canvas.
-    _resize(session, 220, 60)
-    session.new_window(window)
-    session.new_pane("info", f"clear; echo '=== libtmux_easy demo: {name} ==='")
-
-    try:
-        yield session
-    except Exception:  # noqa: BLE001 -- report it, then still tear the session down
-        print("\n!! the demo raised an exception:\n")
-        traceback.print_exc()
-        _checks.append(("demo ran without raising", False))
-    finally:
-        code = results()
-        if args.attach:
-            print(f"\nAttaching to '{session_name}'. Detach with Ctrl-b d.")
-            print("Kill it afterwards with: tmux kill-session -t " + session_name)
-            session.attach()
-        elif args.keep:
-            print(f"\nLeaving '{session_name}' running. Inspect with:")
-            print(f"  tmux attach -t {session_name}")
-            print(f"  tmux kill-session -t {session_name}")
+    def __init__(self, name, doc, add_args=None):
+        parser = argparse.ArgumentParser(description=doc,
+                                         formatter_class=argparse.RawDescriptionHelpFormatter)
+        parser.add_argument("--auto", action="store_true",
+                            help="no prompts, no dashboard: run straight through (smoke test)")
+        parser.add_argument("--no-dash", action="store_true",
+                            help="home pane only, no sidebar (also the fallback without Textual)")
+        if add_args:
+            add_args(parser)
+        self.args = parser.parse_args()
+        self.auto = self.args.auto
+        self.name = f"lte_demo_{name}"
+        self.title = doc.strip().splitlines()[0]
+        if not self.auto and not os.environ.get(_MARKER):
+            self._relaunch()
+        logging.basicConfig(level=logging.WARNING, format=f"{DIM}  log: %(message)s{RESET}")
+        if self.auto:
+            status_file = os.path.join(tempfile.mkdtemp(prefix="lte_demo_"), "status.json")
+            self.session = TmuxSession.create(self.name, status_file=status_file)
+            self.session.new_window("home")
         else:
-            session.stop_watching()
-            session.kill_session()
+            self.session = TmuxSession.current()
+        out = subprocess.run(["tmux", "show-options", "-qv", "-t", self.name, "@lte_dash_window"],
+                             capture_output=True, text=True).stdout
+        self.has_dash = bool(out.strip())
+
+    def _relaunch(self):
+        """Run this script again as the home pane of a new dashboard session."""
+        subprocess.run(["tmux", "kill-session", "-t", f"={self.name}"], capture_output=True)
+        src = str(Path(libtmux_easy.__file__).resolve().parents[1])
+        env = dict(os.environ, **{_MARKER: "1"})
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
+        cmd = [sys.executable, "-m", "libtmux_easy.launch", "--name", self.name]
+        if self.args.no_dash:
+            cmd.append("--no-dash")
+        cmd += ["--", sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
+        os.execvpe(cmd[0], cmd, env)
+
+    # ----- narration -----
+
+    def step(self, title):
+        print(f"\n{BOLD}== {title}{RESET}")
+
+    def say(self, text):
+        print(textwrap.indent(textwrap.dedent(text).strip("\n"), "  "))
+
+    def pause(self, action="continue"):
+        """Wait for Enter. --auto: a short beat instead."""
+        if self.auto:
+            time.sleep(0.5)
+            return
+        try:
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)  # drop Enters pressed early
+        except (termios.error, ValueError):
+            pass
+        try:
+            input(f"\n  {BOLD}[Enter]{RESET} {action} ")
+        except EOFError:
+            pass
+
+    def wait(self, pane, timeout=None):
+        """Block until 'pane' exits; print how."""
+        status = self.session.wait_for_exit(pane, timeout=timeout)
+        print(f"  {self.session.get_pane_name(pane)}: {status}")
+        return status
+
+    def event(self, status):
+        """An on_exit callback that announces the exit here, as it happens."""
+        print(f"\n  {BOLD}event:{RESET} {status.name} {status.exit_status}")
+
+    def status(self):
+        print()
+        self.session.print_status()
+
+    # ----- lifecycle -----
+
+    def __enter__(self):
+        print(f"{BOLD}{self.title}{RESET}\n")
+        if not self.auto:
+            self.say(HOW_TO)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        code = 0
+        if exc_type is KeyboardInterrupt:
+            code = 130
+        elif exc_type is not None:
+            traceback.print_exception(exc_type, exc, tb)
+            code = 1
+        if code == 0:
+            self.step("Done")
+            self.say("Explore as long as you like: the panes stay until the tour ends.")
+            self.pause("to end the tour (stops its panes and closes the session)")
+        self.session.stop_all(sigint_timeout=2, sigterm_timeout=2)
+        self.session.kill_session()
+        if not self.auto:
+            # lte-session finishes once nobody is attached.
+            subprocess.run(["tmux", "detach-client", "-s", self.name], capture_output=True)
         sys.exit(code)
 
 
-def settle(seconds=0.5):
-    """Give tmux/psutil a moment to catch up. Demos are timing-sensitive by
-    nature -- they are watching real processes start and stop."""
-    time.sleep(seconds)
+HOW_TO = """
+    You are in the dashboard's home pane. The sidebar on the left lists every
+    pane: j/k to browse (the right side follows), "home" to come back here,
+    Enter to type into the selected pane. Press Enter here to go on.
+"""
+
+
+def lte_run():
+    """How to type lte-run in a pane: the bare name if installed."""
+    return _wrap_prefix()
 
 
 # --------------------------------------------------------------------------- #
-# Workloads
-#
-# All single-line: in shell mode the command is typed into a shell with
-# send_keys, so an embedded newline would submit the line early.
+# Workloads. Single-line: a shell-mode command is typed, and a newline would
+# submit it early.
 # --------------------------------------------------------------------------- #
 
 def exits_after(seconds, code=0):
-    """Runs for 'seconds', then exits with 'code' of its own accord."""
-    return f"sh -c 'sleep {seconds}; exit {code}'"
+    """Prints a countdown, then exits with 'code'."""
+    return (f"sh -c 'for i in $(seq {seconds} -1 1); do echo \"exit {code} in $i\"; sleep 1; done;"
+            f" exit {code}'")
 
 
-def runs_forever():
-    """Runs until signalled.
-
-    'exec' matters: it makes the sleep itself the immediate child of the
-    shell (or the pane process, in exec mode), rather than leaving an 'sh'
-    wrapper in between. That is what the library records as the target pid.
-    """
-    return "sh -c 'exec sleep 86400'"
+def runs_forever(label="working"):
+    """Prints a line a second until signalled."""
+    return (f"python3 -u -c 'import time; "
+            f"[(print(\"{label}\", i), time.sleep(1)) for i in range(10**9)]'")
 
 
 def ignores_sigint():
-    """Ignores SIGINT, so stop_pane() has to escalate to SIGTERM.
-
-    An ignored (SIG_IGN) disposition survives exec, so the sleep that
-    replaces this shell still ignores SIGINT.
-    """
-    return "sh -c 'trap \"\" INT; exec sleep 86400'"
+    """Ignores SIGINT: stop_pane() has to escalate to SIGTERM."""
+    return "sh -c 'trap \"\" INT; echo \"ignoring SIGINT\"; exec sleep 86400'"
 
 
 def ignores_sigint_and_sigterm():
-    """Ignores both, forcing stop_pane() all the way to SIGKILL."""
-    return "sh -c 'trap \"\" INT TERM; exec sleep 86400'"
-
-
-def graceful_sigint_exit(code=7):
-    """Catches SIGINT and exits with 'code' -- the shape 'ros2 launch' has,
-    and the reason a non-zero exit after Ctrl-C is worth distinguishing from
-    a signal death."""
-    return (
-        'python3 -u -c "import signal, sys, time; '
-        f"signal.signal(signal.SIGINT, lambda *a: sys.exit({code})); "
-        "print('up; waiting for SIGINT', flush=True); time.sleep(86400)\""
-    )
+    """Ignores both: stop_pane() has to go all the way to SIGKILL."""
+    return "sh -c 'trap \"\" INT TERM; echo \"ignoring SIGINT and SIGTERM\"; exec sleep 86400'"
 
 
 def fake_launch(*extra):
-    """A stand-in for 'ros2 launch': supervises children, survives one of
-    them dying, and exits 0 on SIGINT. See workloads/fake_launch.py."""
-    script = Path(__file__).resolve().parent / "workloads" / "fake_launch.py"
+    """A stand-in for 'ros2 launch'; see workloads/fake_launch.py."""
+    script = HERE / "workloads" / "fake_launch.py"
     return " ".join(["python3", "-u", str(script), *(str(a) for a in extra)])

@@ -33,13 +33,9 @@
 - `PaneStatus.command` is stale after a rerun typed by hand.
 - `wait_for_exit()` registers a callback per call; they accumulate on the pane.
 
-## Flaky
-
-- `demos/demo_launch_like.py` fails now and then: the shell-mode pid guess.
-
 ## Running tests
 
-- Don't run two suites (or two demos) at once on the default tmux server:
+- Don't run two suites (or two tours) at once on the default tmux server:
   fixed session names collide, and `kill_existing=True` kills the other run's
   sessions.
 - With DEBUG logging, libtmux emits ~400 KB of noise: `grep -v '^DEBUG'`.
