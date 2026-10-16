@@ -141,6 +141,10 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
 - Colors: green running or exit 0, red failed, yellow stopped (by `x`, `X`,
   `stop_pane()`), magenta unknown.
 - Actions reach the script over its socket: they work while it runs.
+- The pane on view is swapped back into its own window when you select
+  another window, so tmux navigation shows every window whole. Previews in
+  `prefix w` are taken before that: the viewed pane's window shows `home`
+  in its slot.
 - `prefix g` is **borrowed** while the sidebar runs (`lte-key`) and returned
   after; nothing goes in `~/.tmux.conf`. `dashboard(key=...)` picks another.
 - Turns on the session's `mouse` (`mouse=False` to skip).

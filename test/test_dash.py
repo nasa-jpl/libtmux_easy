@@ -518,3 +518,71 @@ def test_sidebar_puts_pane_back_when_window_left(tmp_path):
         return list(viewport.shown)
 
     assert _run_app(viewport, str(status), scenario) == ["restore", "%5"]
+
+
+class TestWinHook:
+    def test_signals_on_window_change_in_its_session_only(self, session, make_session):
+        import signal as _signal
+        from libtmux_easy.dash import winhook
+
+        got = []
+        old = _signal.signal(_signal.SIGUSR1, lambda *_: got.append(1))
+        run = session._tmux_run
+        user = "run-shell -b true"
+        run("set-hook", "-g", f"{winhook.HOOK}[0]", user)  # the user's own
+        try:
+            session.new_window("other")
+            index = winhook.install(session.id, os.getpid(), run=run)
+            assert index is not None and index >= winhook.BASE
+
+            other = make_session("lte-test-other")
+            other.new_window("w2")
+            run("select-window", "-t", f"{other.id}:main")
+            time.sleep(0.5)
+            assert not got  # another session's change
+
+            for window in ("other", "main"):  # one of them is a change
+                run("select-window", "-t", f"{session.id}:{window}")
+            assert _wait_until(lambda: got)
+
+            winhook.remove(index, run=run)
+            entries = winhook._entries(run)
+            assert set(entries) == {0} and entries[0] == user
+        finally:
+            run("set-hook", "-gu", winhook.HOOK)
+            _signal.signal(_signal.SIGUSR1, old)
+
+    def test_sweeps_dead_entries(self, session):
+        from libtmux_easy.dash import winhook
+
+        run = session._tmux_run
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        try:
+            winhook.install(session.id, dead.pid, run=run)
+            winhook.install(session.id, os.getpid(), run=run)
+            commands = winhook._entries(run).values()
+            assert [c for c in commands if f"-USR1 {dead.pid} " in c] == []
+            assert [c for c in commands if f"-USR1 {os.getpid()} " in c]
+        finally:
+            run("set-hook", "-gu", winhook.HOOK)
+
+
+@needs_textual
+def test_sidebar_follows_window_on_signal(tmp_path):
+    """SIGUSR1 (from winhook) moves the pane at once, no poll needed."""
+    import signal as _signal
+
+    status = tmp_path / "s.json"
+    status.write_text(json.dumps([entry("%5", "w:one", True)]))
+    viewport = FakeViewport(("%5",), options={dash.INITIAL_OPTION: "%5"})
+
+    async def scenario(app, pilot):
+        await pilot.pause(0.3)
+        viewport.shown.clear()
+        viewport.is_active = False
+        os.kill(os.getpid(), _signal.SIGUSR1)
+        await pilot.pause(0.05)  # well under the poll interval
+        return list(viewport.shown)
+
+    assert _run_app(viewport, str(status), scenario) == ["restore"]

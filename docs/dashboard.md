@@ -34,9 +34,16 @@ renders everything else.
   row (guide + dot + longest name + space + 12 for the longest status, + 2),
   capped at half the window, once, and stores the number for `repair()`.
 - `@lte_dash_initial`: the pane the sidebar selects and shows at start.
-- **Another window selected** (`#{window_active}` of the dash window is 0,
-  polled): the viewed pane goes back to its own window, so that window is
-  whole. Back on the dashboard, the selection is shown again.
+- **Another window selected** (`#{window_active}` of the dash window is 0):
+  the viewed pane goes back to its own window, so that window is whole.
+  Back on the dashboard, the selection is shown again. Only on selecting a
+  window: while `prefix w`'s chooser is open, the viewed pane's own window
+  previews with home in its slot (`working/WINDOW_CHOOSER.md`).
+- Instant: a global `session-window-changed[100+]` hook, guarded to this
+  session, sends the sidebar SIGUSR1 (`dash/winhook.py`). Global and at its
+  own index, since a session-scoped hook shadows the user's global one.
+  Removed on exit; a dead sidebar's entry is swept on the next start. The
+  poll is the fallback.
 - Help zooms the sidebar (`resize-pane -Z` toggles, so it checks
   `#{window_zoomed_flag}` first); closing it unzooms.
 - Details: the command, at most two lines, cut with `...`. `c`

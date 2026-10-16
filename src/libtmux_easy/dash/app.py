@@ -1,5 +1,7 @@
 """The lte-dash sidebar UI. Requires Textual; see the package docstring for the rest."""
 
+import asyncio
+import os
 import signal
 import textwrap
 import time
@@ -12,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Markdown, Static, Tree
 
 from .._tmux import option
+from . import winhook
 from .control import read_status
 from .options import (AUTO, HOME_KIND_OPTION, HOME_STATUS_OPTION, INITIAL_OPTION, MIN_WIDTH,
                       WIDTH_OPTION)
@@ -200,6 +203,7 @@ class DashApp(App):
         self._path = None       # status file read last poll
         self._armed = None  # (action, time) awaiting a confirming press
         self._active = True     # the dashboard window is the current one
+        self._hook = None       # winhook index
 
     def compose(self) -> ComposeResult:
         tree = PaneTree("session", id="panes")
@@ -212,6 +216,7 @@ class DashApp(App):
         yield Footer()
 
     def on_mount(self):
+        self._watch_window()
         self.home_kind = self.viewport.option(HOME_KIND_OPTION)
         self.home_status = ""
         tree = self.query_one(PaneTree)
@@ -289,6 +294,25 @@ class DashApp(App):
                 self.pane_nodes[pane_id] = wnode.add_leaf(name or pane_id, data=pane_id)
         self._relabel()
         self._show_details()
+
+    def _watch_window(self):
+        """React to window changes at once (winhook), not at the next poll.
+        The handler is in place before the hook: SIGUSR1 would kill us."""
+        loop = asyncio.get_running_loop()
+        signal.signal(signal.SIGUSR1,
+                      lambda *_: loop.call_soon_threadsafe(self._follow_window))
+        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
+                                "#{session_id}")
+        session = out[0].strip() if out else ""
+        self._hook = (winhook.install(session, os.getpid(), run=self.viewport.run)
+                      if session.startswith("$") else None)
+
+    def on_unmount(self):
+        if self._hook is not None:
+            winhook.remove(self._hook, run=self.viewport.run)
+            self._hook = None
+        # Not SIG_DFL: a signal already on its way would kill us mid-cleanup.
+        signal.signal(signal.SIGUSR1, signal.SIG_IGN)
 
     def _follow_window(self):
         """Another window selected: put the viewed pane back in its own
