@@ -149,19 +149,27 @@ class TestShellMode:
         assert session.exit_status(pane).code == 7
 
 
+def _exec_status(session, pane):
+    """exit_status() of an exec pane; xfail if tmux lost it. tmux sometimes
+    never records an exec pane's status (docs/KNOWN_ISSUES.md), more often
+    under pytest for a command that sleeps, then exits."""
+    status = session.exit_status(pane)
+    if status.code is None and status.signal is None:
+        pytest.xfail("tmux lost the status (docs/KNOWN_ISSUES.md)")
+    return status
+
+
 class TestExecMode:
-    # tmux sometimes never records an exec pane's status (docs/KNOWN_ISSUES.md).
-    # Under pytest a command that sleeps, then exits, hits it
-    # far more often than one that exits at once.
 
     def test_exit_code_from_tmux(self, session):
         """Also: the window's initial pane runs the command, not a shell."""
         pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 42'", mode=PANE_MODE_EXEC)
         session.wait_for_pane_idle(pane, timeout=5.0)
 
-        assert session.exit_status(pane).code == 42
-        assert session.exit_status(pane).inferred is False
         assert session._pane_fmt(pane, "#{pane_dead}") == "1"  # pane kept
+        status = _exec_status(session, pane)
+        assert status.code == 42
+        assert status.inferred is False
 
     @pytest.mark.xfail(reason="tmux often never records a SIGINT'd exec pane's status "
                               "(docs/KNOWN_ISSUES.md)", strict=False)
@@ -177,11 +185,11 @@ class TestExecMode:
         session.send_command_before("true")
         pane = session.new_pane("x", "sh -c 'exit 5'", mode=PANE_MODE_EXEC)
         session.wait_for_pane_idle(pane, timeout=5.0)
-        assert session.exit_status(pane).code == 5
+        assert _exec_status(session, pane).code == 5
 
         session.respawn_pane(pane, "sh -c 'exit 22'")
         session.wait_for_pane_idle(pane, timeout=5.0)
-        assert session.exit_status(pane).code == 22
+        assert _exec_status(session, pane).code == 22
 
 
 class TestStopping:
@@ -251,4 +259,5 @@ def test_status_file_and_title(make_session, tmp_path):
     session.stop_pane(pane, sigint_timeout=5.0)
 
     assert wait_until(lambda: title(pane) == "x [stopped]")
-    assert dash.read_status(path)[0]["stopped"] == "SIGINT"
+    # The title and the file are updated one after the other: wait for both.
+    assert wait_until(lambda: dash.read_status(path)[0]["stopped"] == "SIGINT")

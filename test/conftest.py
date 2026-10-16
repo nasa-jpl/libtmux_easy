@@ -1,7 +1,31 @@
-"""Shared fixtures. The tests drive a real tmux (the default server)."""
+"""Shared fixtures. The tests drive a real tmux, on a server of their own."""
+import os
+import shutil
+import subprocess
+import tempfile
+
 import pytest
 
 from libtmux_easy import TmuxSession
+
+# A private tmux server per test run, so the tests never touch your sessions
+# and two runs don't collide. TMUX_TMPDIR moves the default socket for every
+# plain 'tmux': the library, libtmux, lte-dash, the tests, child processes.
+# $TMUX would win over it, so forget any tmux pytest was started from.
+_TMPDIR = tempfile.mkdtemp(prefix="lte-tests-")
+os.environ["TMUX_TMPDIR"] = _TMPDIR
+for _var in ("TMUX", "TMUX_PANE", "LTE_DIR", "LTE_RUN_TEE"):
+    os.environ.pop(_var, None)
+
+
+def pytest_report_header():
+    socket = os.path.join(_TMPDIR, f"tmux-{os.getuid()}", "default")
+    return f"tmux server: tmux -S {socket} ls"
+
+
+def pytest_sessionfinish():
+    subprocess.run(["tmux", "kill-server"], capture_output=True)
+    shutil.rmtree(_TMPDIR, ignore_errors=True)
 
 
 @pytest.fixture
