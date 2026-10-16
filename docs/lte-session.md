@@ -29,8 +29,13 @@ goes to `exit.json`. CMD gets your shell's environment, not the tmux server's.
 | inside tmux | `switch-client`, then wait until no client is attached (killing the session would detach you) |
 | no TTY (CI) | follow the transcript |
 
+When CMD ends, every client leaves: the one `switch-client` brought in goes
+back to its session, the rest detach. Not `kill-session`: that would detach
+them all (`detach-on-destroy`). With `--keep` they stay (a message says
+"Detach to finish") and the session is left up afterwards.
+
 After: print `capture-pane -p -e -J -S -` minus tmux's "Pane is dead" line,
-then exit with CMD's status. `--keep` leaves the session up.
+then exit with CMD's status.
 
 ## Scripts inside it
 

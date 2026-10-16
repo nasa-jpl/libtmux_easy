@@ -132,11 +132,11 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
 
 | key | action |
 |---|---|
-| `j` / `k`, `Enter` | browse (the viewport follows); focus the pane |
+| `Up` / `Down`, `Enter` | browse (the viewport follows); focus the pane |
 | `g` | go to the pane in its own window; `prefix g` comes back |
-| `x` / `r` | stop / rerun the pane |
+| `x` / `r` / `c` | stop / rerun the pane / copy its command |
 | `X` / `Q` | stop all / stop all and kill the session (press twice) |
-| `s`, `[` / `]`, `?`, `q` | zoom, resize, help, close |
+| `[` / `]`, `?`, `q` | resize, help, close |
 
 - Colors: green running or exit 0, red failed, yellow stopped (by `x`, `X`,
   `stop_pane()`), magenta unknown.
@@ -182,7 +182,7 @@ errors unless each exited 0 on SIGINT.
 |---|---|---|
 | `shell` | subprocesses; output in the terminal, prefixed `[name]` | stopped |
 | `tmux` | wrap panes in a detached session; only test output in the terminal | closed on success, kept on failure (`--lte-keep`) |
-| `dash` | under `lte-session`: in its session and dashboard | kept until you leave |
+| `dash` | under `lte-session`: in its session and dashboard | kept with `lte-session --keep` |
 
 Default `auto`: dash under lte-session, else tmux, else shell. In every
 mode processes get pytest's environment (tmux modes pass it with `env=`). Override the
@@ -200,15 +200,15 @@ lte-session -- pytest -s tests/
 - The command runs in the dashboard's home pane, a real terminal: `print()`,
   `input()`, pdb and Ctrl-C work. Panes the tests start appear in the sidebar.
 - It gets your shell's environment and cwd, not the tmux server's.
-- On detach (`prefix d`), its scrollback is printed in your terminal, and
-  `lte-session` exits with the command's status. Still running: the output
+- When the command ends (or on detach, `prefix d`), its scrollback is
+  printed in your terminal, and `lte-session` exits with the command's status. Still running: the output
   keeps streaming here. No TTY (CI): streams through. Inside tmux: switches
   your client instead of nesting.
 
 | flag | |
 |---|---|
 | `--name NAME` | session name (default `lte_<command>_<pid>`) |
-| `--keep` | leave the session up |
+| `--keep` | stay after the command ends (to inspect panes); leave the session up |
 | `--width N` | sidebar columns, `N%`, or `auto` (default; no panes yet at start, so its minimum) |
 | `--no-dash` | home pane only (also the fallback without Textual) |
 

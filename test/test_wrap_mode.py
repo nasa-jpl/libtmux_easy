@@ -177,6 +177,10 @@ class TestWrapMode:
         assert session.is_running(pane) is True
         assert not session.exit_status(pane).known
         assert session.wait_for_exit(pane, timeout=5.0).code == 8
+        # The rerun is now the pane's command: shown in the status, rerun by respawn.
+        assert session.pane_status(pane).command == "sh -c 'sleep 0.5; exit 8'"
+        session.respawn_pane(pane)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 8
 
     def test_wrap_upgrades_shell_pane(self, session):
         pane = session.new_pane("x", "true", mode=PANE_MODE_SHELL)

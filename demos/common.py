@@ -2,7 +2,7 @@
 
 A tour relaunches itself under lte-session: the script runs in the
 dashboard's home pane, where you read what it says and press Enter to go on,
-and the panes it starts appear in the sidebar. Browse them with j/k; select
+and the panes it starts appear in the sidebar. Browse them with the arrows; select
 "home" to come back. --auto runs a tour unattended (run_all.py).
 
 Works from a bare checkout: falls back to ../src.
@@ -149,7 +149,7 @@ class Tour:
 
 HOW_TO = """
     You are in the dashboard's home pane. The sidebar on the left lists every
-    pane: j/k to browse (the right side follows), "home" to come back here,
+    pane: arrows to browse (the right side follows), "home" to come back here,
     Enter to type into the selected pane. Press Enter here to go on.
 """
 

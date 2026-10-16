@@ -4,9 +4,10 @@
 
 The command (e.g. pytest) runs in a real terminal -- the dashboard's home
 pane -- so print(), input(), pdb and Ctrl-C all work, while the panes it
-starts through TmuxSession.current() show up in the sidebar. When you detach
-(or with no terminal, as in CI), its output is printed here, and lte-session
-exits with the command's exit status.
+starts through TmuxSession.current() show up in the sidebar. When it ends
+(or you detach, or with no terminal, as in CI), its output is printed here,
+and lte-session exits with the command's exit status. --keep leaves the
+session open after the command ends, until you detach.
 
 Stdlib only. See docs/lte-session.md.
 """
@@ -102,6 +103,7 @@ class Launch:
         _tmux("set-option", "-t", self.session, "history-limit", str(HISTORY_LIMIT))
 
         self.window = self.home = None
+        self.return_to = None  # (client, session) to switch back to, inside tmux
         if dash_on:
             try:
                 self.window, _ = dash.open_window(self.session, None, None, None,
@@ -195,9 +197,10 @@ class Launch:
                 else:
                     time.sleep(0.1)
 
-    def watch_exit(self, notify):
+    def watch_exit(self, notify, keep):
         """When the command ends: publish its state for the sidebar's home
-        entry, and with 'notify' (someone is attached) say so in tmux."""
+        entry. Then send everyone attached back out, so lte-session finishes;
+        with 'keep', stay, and with 'notify' (someone is attached) say so."""
         def watch():
             while not self.finished():
                 time.sleep(0.2)
@@ -205,10 +208,26 @@ class Launch:
                 return
             state = self.describe_exit() if self.exit_msg() else "unknown"
             _tmux("set-option", "-q", "-t", self.session, dash.HOME_STATUS_OPTION, state)
-            if notify:
+            if not keep:
+                self.leave()
+            elif notify:
                 _tmux("display-message", "-d", "10000", "-t", self.home,
                       f"{self.label} {state}. Detach (prefix d) to finish.")
         threading.Thread(target=watch, daemon=True).start()
+
+    def leave(self):
+        """Every client out of the session: the one that came from another
+        session goes back there, the rest detach. Killing the session instead
+        would detach them all (detach-on-destroy)."""
+        for client in _tmux("list-clients", "-t", self.session, "-F", "#{client_name}"):
+            client = client.strip()
+            if self.return_to and client == self.return_to[0]:
+                try:
+                    _tmux("switch-client", "-c", client, "-t", self.return_to[1], check=True)
+                    continue
+                except RuntimeError:
+                    pass  # that session is gone
+            _tmux("detach-client", "-t", client)
 
     def attached(self):
         out = _tmux("display-message", "-p", "-t", self.session, "#{session_attached}")
@@ -241,7 +260,8 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 2)[2])
     parser.add_argument("--name", help="session name (default: lte_<command>_<pid>)")
     parser.add_argument("--keep", action="store_true",
-                        help="leave the session running at the end")
+                        help="stay in the session after the command ends, and leave "
+                             "it running at the end")
     parser.add_argument("--width", default=dash.AUTO,
                         help="sidebar columns, N%%, or auto (fit the panes listed at start)")
     parser.add_argument("--no-dash", action="store_true", help="no sidebar, just the home pane")
@@ -260,7 +280,12 @@ def main(argv=None):
 
     try:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
-        launch.watch_exit(notify=interactive)
+        if interactive and os.environ.get("TMUX"):
+            out = _tmux("display-message", "-p", "-t", os.environ["TMUX_PANE"],
+                        "#{client_name} #{session_id}")
+            if out and len(out[0].split()) == 2:
+                launch.return_to = tuple(out[0].split())
+        launch.watch_exit(notify=interactive, keep=args.keep)
         if interactive and not os.environ.get("TMUX"):
             subprocess.run(["tmux", "attach-session", "-t", launch.session])
             text = launch.capture() if launch.alive() else None
@@ -277,9 +302,8 @@ def main(argv=None):
                     launch.follow(os.path.getsize(launch.transcript))
         else:
             if interactive:  # inside tmux: no nesting, switch this client instead
-                client = _tmux("display-message", "-p", "-t", os.environ["TMUX_PANE"],
-                               "#{client_name}")
-                _tmux("switch-client", *(["-c", client[0].strip()] if client else []),
+                client = launch.return_to[0] if launch.return_to else None
+                _tmux("switch-client", *(["-c", client] if client else []),
                       "-t", launch.session)
                 sys.stderr.write(f"lte-session: switched to {launch.name}. Its output "
                                  f"follows here too.\n")
@@ -287,8 +311,9 @@ def main(argv=None):
             launch.follow(0)
             if interactive and launch.alive() and launch.attached():
                 # Killing it now would detach that client (detach-on-destroy).
-                sys.stderr.write(f"lte-session: {launch.label} {launch.describe_exit()}. "
-                                 f"Finishing once you leave {launch.name}.\n")
+                if args.keep:
+                    sys.stderr.write(f"lte-session: {launch.label} {launch.describe_exit()}. "
+                                     f"Finishing once you leave {launch.name}.\n")
                 while launch.alive() and launch.attached():
                     time.sleep(0.3)
     except KeyboardInterrupt:

@@ -29,7 +29,7 @@ dashboard's **home** pane, and the panes it starts appear in the sidebar.
 
 | to | do |
 |---|---|
-| browse panes | `j` / `k` in the sidebar |
+| browse panes | `Up` / `Down` in the sidebar |
 | type into a pane | select it, `Enter` |
 | answer the tour | select `home`, `Enter`, then `Enter` |
 | leave early | `Ctrl-C` in home, or `prefix d` |

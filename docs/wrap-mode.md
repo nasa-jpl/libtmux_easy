@@ -35,7 +35,7 @@ connection per run:
 
 | case | handling |
 |---|---|
-| `started` for a tracked pane | a new run: reruns typed by hand are tracked |
+| `started` for a tracked pane | a new run: reruns typed by hand are tracked; its `argv` becomes the pane's command (status, `respawn_pane()`); `bash -c X` is shown as X |
 | `started` from a shell pane | upgrades the pane to wrap mode |
 | EOF without `exited` | wrapper died: run is `lost`; a pidfd watch on the target takes over (status unknown) |
 | no listener (script gone) | runs unsupervised; same output and status |

@@ -34,6 +34,14 @@ renders everything else.
   row (guide + dot + longest name + space + 12 for the longest status, + 2),
   capped at half the window, once, and stores the number for `repair()`.
 - `@lte_dash_initial`: the pane the sidebar selects and shows at start.
+- **Another window selected** (`#{window_active}` of the dash window is 0,
+  polled): the viewed pane goes back to its own window, so that window is
+  whole. Back on the dashboard, the selection is shown again.
+- Help zooms the sidebar (`resize-pane -Z` toggles, so it checks
+  `#{window_zoomed_flag}` first); closing it unzooms.
+- Details: the command, at most two lines, cut with `...`. `c`
+  copies it with `set-buffer -w` (tmux buffer, plus the clipboard where
+  `set-clipboard` allows).
 - `open_window()` creates the window with `new-window -b -d -t {session}:^`, so
   the dashboard is always first.
 

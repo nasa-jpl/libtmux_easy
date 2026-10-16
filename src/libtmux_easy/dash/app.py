@@ -1,6 +1,7 @@
 """The lte-dash sidebar UI. Requires Textual; see the package docstring for the rest."""
 
 import signal
+import textwrap
 import time
 
 from rich.text import Text
@@ -25,26 +26,42 @@ type into it, run vim, scroll back.
 
 | key | action |
 |---|---|
-| `j` / `k`, arrows | browse; the viewport follows |
-| | the top line counts all panes; window rows read `running/total`, then stopped and failed |
-| `Enter` / `l` | focus the viewport |
-| `g` | go to the pane in its own window (`prefix g` comes back, see README) |
-| `h` | home: the script's output |
+| `Up` / `Down` | select a pane; the viewport follows |
+| `Enter` / `Right` | focus the viewport |
+| `g` | go to the pane in its own window (`prefix g` comes back) |
+| `h` | select home: the script's output |
+| `c` | copy the pane's command (`prefix ]` pastes it) |
 | `x` | stop the pane (SIGINT, then SIGTERM, SIGKILL) |
 | `r` | rerun the pane's command |
-| `X` | stop **all** panes, same escalation; panes stay up to inspect |
-| `Q` | stop all panes, then kill the session |
-| `s` | zoom the viewport (`prefix z` unzooms) |
+| `X` `X` | stop **all** panes, same escalation; panes stay up to inspect |
+| `Q` `Q` | stop all panes, then kill the session |
 | `[` / `]` | narrow / widen the sidebar |
+| `?` | this help; `Esc` closes it |
 | `q` | quit: put every pane back, close this window |
 
-Back to the sidebar: click it, `prefix Left`, or `prefix g`.
-Colors: green running / exit 0, red failed, yellow stopped by `x` / `X`
-("stopped TERM" or "KILL" if SIGINT was not enough), magenta unknown.
+`X` and `Q` act on the second press, within 3 seconds. Stop, rerun, `X` and
+`Q` need the session's script to still be running. Killing the session any
+other way only sends SIGHUP.
 
-`X` and `Q` ask for a second press. Stop, rerun, `X` and `Q` need the
-session's script to still be running. Killing the session any other way
-only sends SIGHUP.
+The top line counts all panes. Window rows read `running/total`, then
+stopped and failed. Colors: green running / exit 0, red failed, yellow
+stopped by `x` / `X` ("stopped TERM" or "KILL" if SIGINT was not enough),
+magenta unknown.
+
+## tmux tips
+
+| keys | action |
+|---|---|
+| `prefix Left` / `Right`, or click | move between sidebar and viewport |
+| `prefix z` | zoom / unzoom the focused pane |
+| `prefix [` | copy mode: scroll and select; `q` leaves it |
+| `prefix ]` | paste the last copied text |
+| `prefix g` | back to the dashboard from any window |
+| `prefix d` | detach; the session keeps running |
+
+`prefix` is `Ctrl-b` unless your `~/.tmux.conf` changes it. With `mouse on`,
+the wheel scrolls a pane and a drag selects text (hold `Shift` for the
+terminal's own selection).
 """
 
 # Autosize (width AUTO): a pane row is tree guide and dot (4), the name, a
@@ -55,6 +72,21 @@ STATUS_WIDTH = 12
 
 STATUS_COLORS = {"running": "green", "ok": "green", "failed": "red",
                  "stopped": "#e5c847", "unknown": "magenta"}  # hex: the theme maps "yellow" to orange
+
+
+def clip(text, width, lines=2):
+    """'text' wrapped to at most 'lines' lines of 'width' columns, '...'
+    marking a cut. No cut while the width is unknown (0, before the first
+    layout)."""
+    text = " ".join(text.split())
+    if width <= 3:
+        return text
+    wrapped = textwrap.wrap(text, width)
+    if len(wrapped) <= lines:
+        return "\n".join(wrapped)
+    last = wrapped[lines - 1]
+    last = last[:width - 3] if len(last) > width - 3 else last
+    return "\n".join(wrapped[:lines - 1] + [last + "..."])
 
 
 def describe(entry):
@@ -115,16 +147,14 @@ class HelpScreen(ModalScreen):
             yield Markdown(HELP_TEXT)
 
     def action_close(self):
-        self.app.pop_screen()
+        self.dismiss()  # not pop_screen(): that skips the callback that unzooms
 
 
 class PaneTree(Tree):
     """Enter focuses the viewport instead of Tree's select/toggle."""
 
     BINDINGS = [
-        Binding("enter,l,right", "app.focus_view", "Focus", show=False),
-        Binding("j", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False),
+        Binding("enter,right", "app.focus_view", "Focus", show=False),
     ]
 
 
@@ -144,7 +174,7 @@ class DashApp(App):
         Binding("r", "rerun", "Rerun", show=False),
         Binding("X", "stop_all", "Stop all", show=False),
         Binding("Q", "shutdown", "Shutdown", show=False),
-        Binding("s", "zoom", "Zoom", show=False),
+        Binding("c", "copy_command", "Copy", show=False),
         Binding("left_square_bracket", "resize(-4)", "Narrow", show=False),
         Binding("right_square_bracket", "resize(4)", "Widen", show=False),
         Binding("question_mark", "help", "Help"),
@@ -154,7 +184,7 @@ class DashApp(App):
     POLL_INTERVAL = 0.5
     ONLINE_INTERVAL = 2.0
     CONFIRM_WINDOW = 3.0  # seconds to press X / Q a second time
-    SHOW_DELAY = 0.15  # debounce: holding j should not swap every pane in passing
+    SHOW_DELAY = 0.15  # debounce: holding Down should not swap every pane in passing
 
     def __init__(self, viewport, status_path, control):
         super().__init__()
@@ -169,6 +199,7 @@ class DashApp(App):
         self._show_timer = None
         self._path = None       # status file read last poll
         self._armed = None  # (action, time) awaiting a confirming press
+        self._active = True     # the dashboard window is the current one
 
     def compose(self) -> ComposeResult:
         tree = PaneTree("session", id="panes")
@@ -220,6 +251,7 @@ class DashApp(App):
 
     def poll(self):
         self.viewport.repair()
+        self._follow_window()
         self.alive = set(self.viewport.panes())
         path = self.status_path() if callable(self.status_path) else self.status_path
         if path != self._path and self._path:
@@ -257,6 +289,21 @@ class DashApp(App):
                 self.pane_nodes[pane_id] = wnode.add_leaf(name or pane_id, data=pane_id)
         self._relabel()
         self._show_details()
+
+    def _follow_window(self):
+        """Another window selected: put the viewed pane back in its own
+        window, so that window looks whole. Back here: show it again."""
+        active = self.viewport.active()
+        if active == self._active:
+            return
+        self._active = active
+        if active:
+            self._show_selected()
+        else:
+            if self._show_timer is not None:
+                self._show_timer.stop()
+                self._show_timer = None
+            self.viewport.restore()
 
     def check_online(self):
         online = self.control.online()
@@ -355,7 +402,8 @@ class DashApp(App):
         text.append(describe_long(entry) + "\n", style=STATUS_COLORS[kind])
         pids = ",".join(str(p) for p in entry.get("target_pids") or ()) or "-"
         text.append(f"pid {pids}\n", style="dim")
-        text.append(entry.get("command", ""))
+        # Two lines at most: the full command is in the pane, and with c.
+        text.append(clip(entry.get("command", ""), details.content_size.width))
         details.update(text)
 
     # ---------- viewport ----------
@@ -379,7 +427,7 @@ class DashApp(App):
     def _show_selected(self):
         self._show_timer = None
         target = self._target()
-        if target:
+        if target and self._active:
             self.viewport.show(target)
 
     def action_focus_view(self):
@@ -400,20 +448,32 @@ class DashApp(App):
     def action_home(self):
         self.query_one(PaneTree).move_cursor(self.home_node)
 
-    def action_zoom(self):
-        self.action_focus_view()
-        view = self.viewport.view
-        if view:
-            self.viewport.run("resize-pane", "-Z", "-t", view)
+    def action_copy_command(self):
+        entry = self.entries.get(self._selected())
+        if not entry or not entry.get("command"):
+            return
+        # -w: also to the system clipboard, where tmux's set-clipboard allows.
+        self.viewport.run("set-buffer", "-w", "--", entry["command"])
+        self.notify("Copied the command. prefix ] pastes it.")
 
     def action_resize(self, delta):
         self.viewport.run("resize-pane", "-t", self.viewport.sidebar,
                            "-R" if delta > 0 else "-L", str(abs(delta)))
 
+    def _zoomed(self):
+        out = self.viewport.run("display-message", "-p", "-t", self.viewport.sidebar,
+                                "#{window_zoomed_flag}")
+        return bool(out) and out[0].strip() == "1"
+
+    def _unzoom(self, _result=None):
+        # resize-pane -Z toggles: only when zoomed, or it would zoom instead.
+        if self._zoomed():
+            self.viewport.run("resize-pane", "-Z", "-t", self.viewport.sidebar)
+
     def action_help(self):
+        self._unzoom()  # a zoomed viewport: -Z on the sidebar would only unzoom it
         self.viewport.run("resize-pane", "-Z", "-t", self.viewport.sidebar)
-        self.push_screen(HelpScreen(), lambda _: self.viewport.run(
-            "resize-pane", "-Z", "-t", self.viewport.sidebar))
+        self.push_screen(HelpScreen(), self._unzoom)
 
     # ---------- actions ----------
 

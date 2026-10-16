@@ -105,6 +105,12 @@ class TestViewport:
         assert panes[viewport.home] == main  # the new home fills b's slot
 
 
+    def test_active(self, session, viewport):
+        session._tmux_run("select-window", "-t", viewport.window)
+        assert viewport.active() is True
+        session._tmux_run("select-window", "-t", f"{session.id}:main")
+        assert viewport.active() is False
+
     def test_go_to_puts_pane_back_and_selects_it(self, session, viewport):
         a = session.new_pane("a", "sleep 60")
         session.new_pane("b", "sleep 60")
@@ -207,6 +213,17 @@ def test_sidebar_labels():
         "stopped, needed SIGTERM: killed by SIGINT (2)"
 
 
+@needs_textual
+def test_clip():
+    from libtmux_easy.dash.app import clip
+    assert clip("ros2 run pkg node", 40) == "ros2 run pkg node"
+    assert clip("ros2 run pkg node", 10) == "ros2 run\npkg node"
+    assert clip("ros2 run pkg node --ros-args", 10) == "ros2 run\npkg nod..."
+    assert clip("ros2 run pkg node --ros-args", 10, lines=1) == "ros2 ru..."
+    assert clip("a\n  b", 10) == "a b"
+    assert clip("long " * 20, 0) == ("long " * 20).strip()  # width not known yet
+
+
 class TestHomeLog:
     def test_tee_copies_stdout_and_logging(self, session, capsys):
         logger = logging.getLogger("test_dash")
@@ -304,8 +321,13 @@ class FakeViewport:
         self.window_width = window_width
         self.calls = []  # tmux commands run
 
+        self.is_active = True
+        self.shown = []
+
     def repair(self): pass
-    def show(self, pane_id): pass
+    def restore(self): self.shown.append("restore")
+    def show(self, pane_id): self.shown.append(pane_id)
+    def active(self): return self.is_active
     def panes(self): return self._panes
     def option(self, name): return self.options.get(name, "")
 
@@ -420,3 +442,79 @@ def test_sidebar_starts_on_initial_pane(tmp_path):
             return app._selected()
 
     assert asyncio.run(scenario()) == "%6"
+
+
+def _run_app(viewport, status, scenario):
+    """Run DashApp under Textual's test driver; 'scenario(app, pilot)' is awaited."""
+    from libtmux_easy.dash.app import DashApp
+
+    async def main():
+        app = DashApp(viewport, status, dash.Control(None))
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            return await scenario(app, pilot)
+
+    return asyncio.run(main())
+
+
+@needs_textual
+def test_sidebar_help_closes_unzoomed(tmp_path):
+    """The help zooms the sidebar; every way of closing it unzooms."""
+    class Zooming(FakeViewport):
+        zoomed = False
+
+        def run(self, *args):
+            self.calls.append(args)
+            if args[:2] == ("resize-pane", "-Z"):
+                self.zoomed = not self.zoomed
+            if args[0] == "display-message" and args[-1] == "#{window_zoomed_flag}":
+                return ["1" if self.zoomed else "0"]
+            return super().run(*args) if args[0] == "display-message" else []
+
+    viewport = Zooming()
+
+    async def scenario(app, pilot):
+        seen = []
+        for close in ("escape", "q", "question_mark"):
+            await pilot.press("question_mark")
+            await pilot.pause(0.1)
+            seen.append(viewport.zoomed)
+            await pilot.press(close)
+            await pilot.pause(0.1)
+            seen.append(viewport.zoomed)
+        return seen
+
+    assert _run_app(viewport, None, scenario) == [True, False] * 3
+
+
+@needs_textual
+def test_sidebar_copies_command(tmp_path):
+    status = tmp_path / "s.json"
+    status.write_text(json.dumps([dict(entry("%5", "w:one", True), command="ros2 run a b")]))
+    viewport = FakeViewport(("%5",))
+
+    async def scenario(app, pilot):
+        await pilot.press("down", "down", "c")  # home, the window row, the pane
+        await pilot.pause(0.1)
+
+    _run_app(viewport, str(status), scenario)
+    assert ("set-buffer", "-w", "--", "ros2 run a b") in viewport.calls
+
+
+@needs_textual
+def test_sidebar_puts_pane_back_when_window_left(tmp_path):
+    status = tmp_path / "s.json"
+    status.write_text(json.dumps([entry("%5", "w:one", True)]))
+    viewport = FakeViewport(("%5",), options={dash.INITIAL_OPTION: "%5"})
+
+    async def scenario(app, pilot):
+        await pilot.pause(0.3)
+        viewport.shown.clear()
+        viewport.is_active = False
+        app.poll()
+        app.poll()  # once only
+        viewport.is_active = True
+        app.poll()
+        return list(viewport.shown)
+
+    assert _run_app(viewport, str(status), scenario) == ["restore", "%5"]

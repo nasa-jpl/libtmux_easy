@@ -21,8 +21,8 @@ installed, else shell):
   shell  plain subprocesses; output to the terminal, prefixed '[name]'
   tmux   one wrap-mode pane each, in a detached session for the run; only
          test output in the terminal. Kept on failure (--lte-keep)
-  dash   under lte-session: the panes join its session and dashboard, and
-         stay until you leave
+  dash   under lte-session: the panes join its session and dashboard. Kept
+         to inspect with 'lte-session --keep'
 
 Override these fixtures in conftest.py to adapt it:
 

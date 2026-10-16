@@ -10,12 +10,12 @@ import importlib.util
 from common import PANE_MODE_WRAP, Tour, exits_after, runs_forever
 
 KEYS = """
-    j / k      browse; the viewport follows
+    Up / Down  browse; the viewport follows
     Enter      focus the selected pane (type into it); prefix g or a click returns
     g          go to the pane in its own window; prefix g comes back
     x / r      stop / rerun the selected pane
     X / Q      stop all / stop all and close the tour's windows (press twice)
-    s, [ ]     zoom the viewport, resize the sidebar
+    [ ]        resize the sidebar
     ?          help
 """
 
@@ -52,8 +52,8 @@ def main():
         tour.step("Browse")
         tour.say(KEYS)
         tour.say("""
-            Try: j/k through the panes, Enter on tools:shell and type something,
-            g to see a pane in its own window (prefix g back), s to zoom.
+            Try: arrows through the panes, Enter on tools:shell and type something,
+            g to see a pane in its own window (prefix g back), prefix z to zoom.
             The summary at the top counts running, stopped and failed panes.
         """)
         tour.pause("continue (select home first)")
@@ -79,7 +79,7 @@ def main():
             for p in range(6):
                 s.new_pane(f"p{p}", runs_forever(f"bulk{w}.p{p}"), mode=PANE_MODE_WRAP)
         tour.say("""
-            Scroll with j/k. X stops them all (press twice). The tour's end stops
+            Scroll with the arrows. X stops them all (press twice). The tour's end stops
             them too.
         """)
 

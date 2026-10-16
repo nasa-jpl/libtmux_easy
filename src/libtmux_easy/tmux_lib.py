@@ -1290,6 +1290,7 @@ class TmuxSession(Session):
                     conn, msg.get("wrapper_pid"), msg.get("target_pid"), msg.get("argv", []))
                 self.pane_modes[pane_id] = PANE_MODE_WRAP  # also upgrades a shell pane
                 self.pane_targets[pane_id] = targets
+            self._record_run_command(pane_id, msg.get("argv"))
             self._wrap_started.setdefault(pane_id, threading.Event()).set()
             pane = self.get_pane(pane_id)
             if pane is not None:
@@ -1345,6 +1346,20 @@ class TmuxSession(Session):
             self.watch_pane(conn.pane_id)
         except ValueError:
             pass  # the pane itself is gone
+
+    def _record_run_command(self, pane_id, argv):
+        """A run typed by hand (up-arrow and edit, or a new lte-run) becomes
+        the pane's command: what the status shows and respawn_pane() reruns."""
+        name = self._name_for_pane_id(pane_id)
+        if not name or not argv:
+            return
+        # _send_wrapped() wraps shell operators in 'bash -c': unwrap it.
+        if len(argv) == 3 and argv[:2] == ["bash", "-c"]:
+            command = argv[2]
+        else:
+            command = shlex.join(argv)
+        cmds = self.commands.setdefault(name, [command])
+        cmds[0] = command
 
     def _send_wrapped(self, pane, command, enter=True):
         """Type 'command' into a shell pane under lte-run."""

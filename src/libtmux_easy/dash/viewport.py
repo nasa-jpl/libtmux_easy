@@ -43,6 +43,12 @@ class Viewport:
         out = self.run("list-panes", "-s", "-t", self.window, "-F", "#{pane_id} #{window_id}")
         return dict(line.split() for line in out if len(line.split()) == 2)
 
+    def active(self):
+        """False when another window is the session's current one. True if
+        unknown, so a failed query never moves panes."""
+        out = self.run("display-message", "-p", "-t", self.window, "#{window_active}")
+        return not out or out[0].strip() != "0"
+
     def show(self, pane_id):
         """Put 'pane_id' in the viewport. The home pane id shows home."""
         self.repair()

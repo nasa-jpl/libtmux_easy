@@ -20,7 +20,7 @@ to it, and **a process that dies fails the test**.
 |---|---|---|---|
 | `shell` | subprocesses (`_ShellBackend`) | output prefixed `[name]` | stopped |
 | `tmux` | wrap panes in a detached `lte_test_<pid>` | test output only | closed on success, kept on failure (`--lte-keep failure\|always\|never`) |
-| `dash` | wrap panes in lte-session's session | home pane | windows kept until you leave (`--lte-close-windows` to close) |
+| `dash` | wrap panes in lte-session's session | home pane | windows kept while the session is (`lte-session --keep`; `--lte-close-windows` to close) |
 
 `auto` (default): dash under a dashboard session, else tmux if installed,
 else shell. Windows are `<module>/<window>`, so modules share a session.
