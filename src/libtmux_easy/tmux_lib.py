@@ -22,7 +22,8 @@ from libtmux.session import Session
 from libtmux.window import Window
 from packaging import version
 
-from . import dash
+from . import close as _close, dash
+from .dash import keys as _keys
 from ._tmux import env_args, option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
 from .proc import pane_child_processes
@@ -396,6 +397,8 @@ class TmuxSession(Session):
         self._dash_window = None  # window id, see dashboard()
         self._dash_sidebar = None
         self._home_tee = None     # (file, (stdout, stderr), handler), see tee_home()
+        self._on_close = []       # (callable, when), see on_close()
+        self._close_keys = []     # keys borrowed by bind_close_key()
 
     def new_window(
         self, name: str, layout: Union[None, str] = "tiled",
@@ -1312,7 +1315,8 @@ class TmuxSession(Session):
         own: stop_pane() blocks through its escalation timeouts, and the
         watcher has to keep serving the 'exited' messages it waits for."""
         pane_actions = {"stop": self.stop_pane, "respawn": self.respawn_pane}
-        session_actions = {"stop_all": self.stop_all, "shutdown": self._shutdown}
+        session_actions = {"stop_all": self.stop_all, "shutdown": self._shutdown,
+                           "close": self._close_requested}
         if cmd in pane_actions and pane_id in self.pane_modes:
             action = lambda: pane_actions[cmd](pane_id)
         elif cmd in session_actions:
@@ -1413,9 +1417,72 @@ class TmuxSession(Session):
         return results
 
     def _shutdown(self):
-        """lte-dash's 'Q': stop everything properly, then kill the session."""
-        self.stop_all()
+        """The 'shutdown' command (tlaunch's dashboards): close()."""
+        self.close()
+
+    # =============== Closing ===============
+
+    def on_close(self, action, when: str = "after"):
+        """Run 'action' when the session is closed gracefully: lte-close
+        (bind_close_key(), the dashboard's Q Q) or close().
+
+        A callable runs in this process, so only while this script runs. A
+        string is a shell command, kept in a session option: lte-close runs
+        it in its window even after this script has gone. 'when': "before"
+        the panes are stopped, or "after" (default). See docs/session-close.md."""
+        if when not in _close.WHEN:
+            raise ValueError(f"when must be one of {_close.WHEN}, not {when!r}")
+        if callable(action):
+            self._on_close.append((action, when))
+        else:
+            _close.add_action(self.id, action, when, run=self._tmux_run)
+
+    def _run_close_callbacks(self, when):
+        for fn, fn_when in list(self._on_close):
+            if fn_when != when:
+                continue
+            try:
+                fn(self)
+            except Exception:
+                logger.exception(f"on_close callback {fn!r} raised")
+
+    def close(self, **stop_kwargs):
+        """Close gracefully, here in the script: the 'before' actions, stop_all()
+        ('stop_kwargs' go to it), the 'after' actions, then kill_session().
+        Shell actions run with this process's stdout."""
+        shell = _close.actions(self.id, run=self._tmux_run)
+        for when in _close.WHEN:
+            self._run_close_callbacks(when)
+            _close.run_actions(shell, when, out=lambda text: logger.info(f"close: {text}"))
+            if when == "before":
+                self.stop_all(**stop_kwargs)
         self.kill_session()
+
+    def _close_requested(self):
+        """lte-close asks us to stop our panes (it runs the shell actions and
+        kills the session itself). Progress goes through the status file."""
+        if not self.status_file:
+            self.status_file = os.path.join(self._wrap_dir, "status.json")
+            self._publish_status_file()
+        self._set_session_option(_close.STATE_OPTION, "stopping")
+        try:
+            self._run_close_callbacks("before")
+            self.stop_all()
+            self._run_close_callbacks("after")
+        finally:
+            self._write_status_file()
+            self._give_back_close_keys()  # the session is about to go
+            self._set_session_option(_close.STATE_OPTION, "done")
+
+    def bind_close_key(self, key: str = "C-x"):
+        """Bind prefix 'key' to lte-close in this session, so it closes
+        gracefully. Elsewhere the key keeps its binding (e.g. a kill-session
+        from ~/.tmux.conf); it is given back when this script lets go of the
+        session (kill_session(), release())."""
+        self._set_session_option(_close.KEY_OPTION, "1")
+        _keys.borrow(key, _close.KEY_OPTION, _close.key_command(),
+                     message="lte-close: not a libtmux_easy session", run=self._tmux_run)
+        self._close_keys.append(key)
 
     def kill_session(self, *args, **kwargs):
         """Stop the watcher, then kill the session. For an adopted session
@@ -1502,9 +1569,17 @@ class TmuxSession(Session):
         self._close_wrap()
         return None
 
+    def _give_back_close_keys(self):
+        while self._close_keys:
+            try:
+                _keys.give_back(self._close_keys.pop(), run=self._tmux_run)
+            except Exception:
+                logger.exception("giving back the close key failed")
+
     def _close_wrap(self):
         """Close the wrap-mode listener and remove its dir. Idempotent."""
         self._untee_home()
+        self._give_back_close_keys()
         if self._wrap_listener is not None:
             self._wrap_listener.close()
             self._wrap_listener = None

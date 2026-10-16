@@ -14,6 +14,7 @@
 | `dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
 | `dash/homelog.py` | - | stdout/logging tee behind `tee_home()` |
 | `launch.py` | stdlib | `lte-session` |
+| `close.py` | stdlib | `lte-close`: graceful close, close actions |
 | `testing.py` | pytest | pytest plugin |
 | `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
 

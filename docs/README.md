@@ -11,6 +11,7 @@ Linux 6.x); don't re-research them.
 | [wrap-mode.md](wrap-mode.md) | `lte-run`: signals and the wrap protocol (public) |
 | [dashboard.md](dashboard.md) | `lte-dash`: swap-pane viewport, state in tmux options, borrowed keys |
 | [lte-session.md](lte-session.md) | running a command as the dashboard's home pane |
+| [session-close.md](session-close.md) | `lte-close`: close actions, graceful stop, the close key |
 | [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: modes, health checks, hooks |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | tmux bugs, limits, open bugs |
 

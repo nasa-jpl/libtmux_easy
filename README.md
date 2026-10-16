@@ -135,7 +135,7 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
 | `Up` / `Down`, `Enter` | browse (the viewport follows); focus the pane |
 | `g` | go to the pane in its own window; `prefix g` comes back |
 | `x` / `r` / `c` | stop / rerun the pane / copy its command |
-| `X` / `Q` | stop all / stop all and kill the session (press twice) |
+| `X` / `Q` | stop all / close the session with `lte-close` (press twice) |
 | `[` / `]`, `?`, `q` | resize, help, close |
 
 - Colors: green running or exit 0, red failed, yellow stopped (by `x`, `X`,
@@ -194,6 +194,23 @@ mode processes get pytest's environment (tmux modes pass it with `env=`). Overri
 environment), and `lte_output_checks` to fail on deaths only the output
 shows (e.g. a supervisor's children). `tmux_session` gives a test a
 `TmuxSession` of its own.
+
+## Closing a session
+
+tmux has no hook before a session closes, so a graceful close is a command:
+`lte-close` opens a `close` window and shows it run the close actions, stop
+every pane (Ctrl-C, then SIGTERM, SIGKILL), and kill the session.
+
+```python
+sess.on_close("./cleanup.sh")                    # shell: runs even if the script died
+sess.on_close(lambda s: save_logs(s), when="before")  # Python: while the script runs
+sess.bind_close_key("C-x")                        # prefix C-x closes this session gracefully
+sess.close()                                      # or do it all from the script
+```
+
+Without a script: `lte-close add -- ./cleanup.sh`, and in `~/.tmux.conf`
+`bind-key C-x run-shell -b "lte-close -t '#{session_id}'"`. The dashboard's
+`Q` `Q` runs `lte-close` too. See `docs/session-close.md`.
 
 ## lte-session
 

@@ -58,7 +58,8 @@ renders everything else.
 |---|---|
 | status in | the status file (`@lte_status`), polled; entries merged across files under `lte-session` |
 | live order, titles | `list-panes -s -F` |
-| actions out (`x`, `r`, `X`, `Q`) | `{"cmd": "stop" \| "respawn" \| "stop_all" \| "shutdown", "pane": ...}` on `ctl.sock` |
+| actions out (`x`, `r`, `X`) | `{"cmd": "stop" \| "respawn" \| "stop_all", "pane": ...}` on `ctl.sock` |
+| `Q` `Q` | runs `lte-close` ([session-close.md](session-close.md)), which sends `{"cmd": "close"}`; tlaunch sessions still get `"shutdown"` |
 
 - The script runs actions on a thread of their own (`stop_pane` blocks).
 - All dashboard state is in tmux options ([architecture.md](architecture.md)),

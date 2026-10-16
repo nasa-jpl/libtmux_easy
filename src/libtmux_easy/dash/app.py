@@ -2,7 +2,9 @@
 
 import asyncio
 import os
+import shlex
 import signal
+import subprocess
 import textwrap
 import time
 
@@ -13,9 +15,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Markdown, Static, Tree
 
+from .. import close
 from .._tmux import option
 from . import winhook
-from .control import read_status
+from .control import describe, describe_long, read_status
 from .options import (AUTO, HOME_KIND_OPTION, HOME_STATUS_OPTION, INITIAL_OPTION, MIN_WIDTH,
                       WIDTH_OPTION)
 
@@ -37,13 +40,13 @@ type into it, run vim, scroll back.
 | `x` | stop the pane (SIGINT, then SIGTERM, SIGKILL) |
 | `r` | rerun the pane's command |
 | `X` `X` | stop **all** panes, same escalation; panes stay up to inspect |
-| `Q` `Q` | stop all panes, then kill the session |
+| `Q` `Q` | close the session: its close actions, stop all panes, kill it (lte-close) |
 | `[` / `]` | narrow / widen the sidebar |
 | `?` | this help; `Esc` closes it |
 | `q` | quit: put every pane back, close this window |
 
-`X` and `Q` act on the second press, within 3 seconds. Stop, rerun, `X` and
-`Q` need the session's script to still be running. Killing the session any
+`X` and `Q` act on the second press, within 3 seconds. Stop, rerun and `X`
+need the session's script to still be running. Killing the session any
 other way only sends SIGHUP.
 
 The top line counts all panes. Window rows read `running/total`, then
@@ -90,43 +93,6 @@ def clip(text, width, lines=2):
     last = wrapped[lines - 1]
     last = last[:width - 3] if len(last) > width - 3 else last
     return "\n".join(wrapped[:lines - 1] + [last + "..."])
-
-
-def describe(entry):
-    """(short label, color class) for one status-file entry."""
-    if entry.get("running"):
-        return "running", "running"
-    stopped = entry.get("stopped")
-    if stopped:
-        # Escalation past SIGINT is worth seeing: it means no clean shutdown.
-        return ("stopped" if stopped == "SIGINT" else f"stopped {stopped[3:]}"), "stopped"
-    exit_status = entry.get("exit_status") or {}
-    code, sig = exit_status.get("code"), exit_status.get("signal")
-    if sig is not None:
-        try:
-            name = signal.Signals(sig).name
-        except ValueError:
-            name = f"signal {sig}"
-        return name + ("?" if exit_status.get("inferred") else ""), "failed"
-    if code is not None:
-        return f"exit {code}", "ok" if code == 0 else "failed"
-    return "unknown", "unknown"
-
-
-def describe_long(entry):
-    if entry.get("running"):
-        return "running"
-    if entry.get("stopped"):
-        plain = dict(entry, stopped=None)
-        return f"stopped, needed {entry['stopped']}: {describe_long(plain)}"
-    exit_status = entry.get("exit_status") or {}
-    code, sig = exit_status.get("code"), exit_status.get("signal")
-    if sig is not None:
-        text = f"killed by {describe(entry)[0].rstrip('?')} ({sig})"
-        return text + ", inferred from 128+N" if exit_status.get("inferred") else text
-    if code is not None:
-        return f"exited {code}"
-    return "unknown"
 
 
 class HelpScreen(ModalScreen):
@@ -539,5 +505,16 @@ class DashApp(App):
             self._session_action("stop_all", "Stopping all panes: SIGINT, then SIGTERM, SIGKILL.")
 
     def action_shutdown(self):
-        if self._confirmed("shutdown", "Press Q again to stop all panes and kill the session."):
+        if not self._confirmed("shutdown", "Press Q again to stop all panes and kill the session."):
+            return
+        if any(e.get("mode") == "tlaunch" for e in self.entries.values()):
+            # tlaunch answers 'shutdown' with its own sequence.
             self._session_action("shutdown", "Stopping all panes, then killing the session.")
+            return
+        # lte-close: the session's close actions, and a window showing progress.
+        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
+                                "#{session_id}")
+        if out and out[0].strip().startswith("$"):
+            subprocess.Popen(shlex.split(close.self_command()) + ["-t", out[0].strip()],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
