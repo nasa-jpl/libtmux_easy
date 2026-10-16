@@ -57,6 +57,40 @@ class TestWindowsAndPanes:
         assert "before=from_before" in pane_text(pane)
         assert session.commands["main:p"] == ["echo before=$LTE_X", "echo sent_$((6*7))"]
 
+    def test_env_levels(self, make_session):
+        """Session, window and pane env merge, later levels winning; the
+        window's reused first pane gets it too; SKIP_ENV never goes in."""
+        session = make_session(window=None, env={"LTE_A": "session", "LTE_B": "session",
+                                                 "TERM": "bogus", "TMUX_PANE": "%bogus"})
+        session.new_window("w", env={"LTE_B": "window", "LTE_C": "window"})
+        show = "echo a=$LTE_A,b=$LTE_B,c=$LTE_C,term=$TERM,pane=$TMUX_PANE"
+        first = session.new_pane("first", show)
+        second = session.new_pane("second", show, env={"LTE_C": "pane"})
+
+        assert wait_until(lambda: "a=session,b=window,c=window," in pane_text(first))
+        assert wait_until(lambda: "a=session,b=window,c=pane," in pane_text(second))
+        for pane in (first, second):
+            assert "term=bogus" not in pane_text(pane)
+            assert f"pane={pane.id}" in pane_text(pane)
+
+    def test_copy_environment(self, session):
+        """Panes started afterwards get it, with no sourcing step; a hand-made
+        pane too, as it is the session's tmux environment."""
+        session.copy_environment({"LTE_COPIED": "hello"})
+        pane = session.new_pane("p", "echo got=$LTE_COPIED")
+        assert wait_until(lambda: "got=hello" in pane_text(pane))
+        out = session.server.cmd("show-environment", "-t", session.id, "LTE_COPIED").stdout
+        assert out == ["LTE_COPIED=hello"]
+
+    def test_exec_respawn_keeps_env(self, session, tmp_path):
+        out = tmp_path / "v"
+        pane = session.new_pane("p", f"sh -c 'echo $LTE_V > {out}'", mode=PANE_MODE_EXEC,
+                                env={"LTE_V": "kept"})
+        assert wait_until(lambda: out.exists() and out.read_text() == "kept\n")
+        out.unlink()
+        session.respawn_pane(pane)
+        assert wait_until(lambda: out.exists() and out.read_text() == "kept\n")
+
     def test_layouts(self, make_session):
         session = make_session(window=None)
         # The first window must get layout_str too, or splits are never

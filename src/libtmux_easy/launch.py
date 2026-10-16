@@ -1,6 +1,6 @@
 """lte-session: run a command as the home pane of a new dashboard session.
 
-    lte-session [--name NAME] [--keep] [--width N] [--no-dash] -- COMMAND [ARG...]
+    lte-session [--name NAME] [--keep] [--width N|N%|auto] [--no-dash] -- COMMAND [ARG...]
 
 The command (e.g. pytest) runs in a real terminal -- the dashboard's home
 pane -- so print(), input(), pdb and Ctrl-C all work, while the panes it
@@ -81,7 +81,7 @@ def run(run_dir, argv):
 # ---------- launcher: in your terminal ----------
 
 class Launch:
-    def __init__(self, argv, name=None, width=36, dash_on=True):
+    def __init__(self, argv, name=None, width=dash.AUTO, dash_on=True):
         self.argv = argv
         self.label = Path(argv[0]).name
         self.run_dir = tempfile.mkdtemp(prefix="lte_session_")
@@ -242,7 +242,8 @@ def main(argv=None):
     parser.add_argument("--name", help="session name (default: lte_<command>_<pid>)")
     parser.add_argument("--keep", action="store_true",
                         help="leave the session running at the end")
-    parser.add_argument("--width", type=int, default=36, help="sidebar columns")
+    parser.add_argument("--width", default=dash.AUTO,
+                        help="sidebar columns, N%%, or auto (fit the panes listed at start)")
     parser.add_argument("--no-dash", action="store_true", help="no sidebar, just the home pane")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)

@@ -48,11 +48,12 @@ dpkg-buildpackage -us -uc -b && sudo apt install ../python3-libtmux-easy_0.1.0_a
 
 | method | |
 |---|---|
-| `TmuxSession.create(name, status_file=None)` | new session (replaces one of that name) |
-| `TmuxSession.current()` | adopt the session this process runs in |
-| `new_window(name, layout="tiled")` | new window; the next panes go in it |
-| `new_pane(name, cmd, mode="shell", on_exit=None)` | new pane running `cmd` |
+| `TmuxSession.create(name, status_file=None, env=None)` | new session (replaces one of that name) |
+| `TmuxSession.current(env=None)` | adopt the session this process runs in |
+| `new_window(name, layout="tiled", env=None)` | new window; the next panes go in it |
+| `new_pane(name, cmd, mode="shell", on_exit=None, env=None, tee=None)` | new pane running `cmd`; `tee=` (wrap mode) also writes its output to a file |
 | `send_keys(cmd, target_pane=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
+| `copy_environment(env=None)` | add `env` (default `os.environ`) to the session's; see Environment |
 | `select_window()`, `select_pane()`, `attach()` | |
 | `is_running(pane)`, `exit_status(pane)` | liveness; `ExitStatus` (`.code`, `.signal`, `.ok`, `.known`) |
 | `watch_pane(pane, on_exit)`, `wait_for_exit(pane, timeout)` | exit events |
@@ -68,6 +69,24 @@ Status is also on each pane's border title (`server [exited 3]`), and with
 Kill the session only after `stop_all()`: `kill_session()` alone just sends
 SIGHUP.
 
+## Environment
+
+Panes otherwise get the tmux **server's** environment, which may predate an
+activated venv or a sourced workspace. Pass `env=` (`os.environ`, or any dict)
+at any level; later levels win:
+
+| level | how | reaches |
+|---|---|---|
+| session | `create(env=)`, `copy_environment(env)` | every pane, including ones made by hand (the session's tmux environment) |
+| window | `new_window(name, env=)` | panes `new_pane()` makes in it (tmux has no window environment) |
+| pane | `new_pane(name, cmd, env=)` | that pane |
+
+- Added to the server's environment, not a replacement for it.
+- Never copied: `TMUX`, `TMUX_PANE`, `TERM`, `TERM_PROGRAM*`, `COLUMNS`,
+  `LINES` (tmux sets them per pane) and `LTE_DIR` (it would point `lte-run`
+  at another session).
+- Under `current()`, only this script's panes get it.
+
 ## Pane modes
 
 | `mode=` | how | exit status | interactive |
@@ -80,11 +99,20 @@ Use **wrap** when the status matters. Rerun with `respawn_pane()`; plain
 `send_keys()` restarts the command but the library keeps reporting the old
 run (wrap mode tracks any rerun, even typed by hand).
 
-**`lte-run [--] COMMAND`** works in any pane of a libtmux_easy session: it
-reports the command's pid and exact status over the session's socket.
-Elsewhere it just runs the command, same output and status. Ctrl-C, Ctrl-Z /
-`fg` and stdin work as usual. Shell operators typed by hand (`lte-run a && b`)
-supervise only `a`; `new_pane()` wraps the whole command in `bash -c`. Linux only.
+**`lte-run [--tee FILE [-a] [--raw]] [--] COMMAND`** works in any pane of a
+libtmux_easy session: it reports the command's pid and exact status over the
+session's socket. Elsewhere it just runs the command, same output and status.
+Ctrl-C, Ctrl-Z / `fg` and stdin work as usual. Shell operators typed by hand
+(`lte-run a && b`) supervise only `a`; `new_pane()` wraps the whole command in
+`bash -c`. Linux only.
+
+| tee | |
+|---|---|
+| `--tee FILE` | also copy the output to FILE, like `tee` (stdout and stderr, one stream); `-a` appends |
+| `LTE_RUN_TEE=FILE` | the same, from the environment (`--tee` wins); not passed on to the command |
+| in a tmux pane | the command keeps its terminal: tmux's `pipe-pane` copies the output |
+| elsewhere | the command writes to a pipe, as with `cmd 2>&1 \| tee FILE` |
+| file contents | plain text: escapes dropped, `\r` redraws collapsed (`--raw` keeps them); complete when the exit is reported |
 
 **Exec mode caveat:** tmux occasionally never reaps the pane process, and
 the status is lost (reproduced with raw tmux). `exit_status()` then returns
@@ -116,7 +144,15 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
 - `prefix g` is **borrowed** while the sidebar runs (`lte-key`) and returned
   after; nothing goes in `~/.tmux.conf`. `dashboard(key=...)` picks another.
 - Turns on the session's `mouse` (`mouse=False` to skip).
+- `dashboard(initial=pane)` selects and shows that pane first, instead of `home`.
+- `dashboard(width=)`: `"auto"` (default) sizes the sidebar once, at start,
+  to the longest pane name plus the longest status (at least 36 columns, at
+  most half the window); or columns, or `"25%"`. `[` / `]` resize after.
 - Needs Textual: `pip install textual` in the venv, or `pipx install 'libtmux-easy[dash]'`.
+  Plain `pipx install .` (no extras) still installs `lte-dash` on PATH, but it
+  exits with the install hint instead of opening -- Textual is an extra, not
+  a base dependency, because the same `pyproject.toml` drives the `.deb`
+  build, and apt's Textual is too old/absent (see `debian/rules`).
 - Without a `TmuxSession`: `lte-dash --open SESSION --status FILE --ctl SOCKET
   --home-log FILE` (or `dash.open_window()`), then keep the status file
   current and answer the socket's `stop` / `respawn` / `stop_all` / `shutdown`.
@@ -148,7 +184,8 @@ errors unless each exited 0 on SIGINT.
 | `tmux` | wrap panes in a detached session; only test output in the terminal | closed on success, kept on failure (`--lte-keep`) |
 | `dash` | under `lte-session`: in its session and dashboard | kept until you leave |
 
-Default `auto`: dash under lte-session, else tmux, else shell. Override the
+Default `auto`: dash under lte-session, else tmux, else shell. In every
+mode processes get pytest's environment (tmux modes pass it with `env=`). Override the
 `lte_pane_setup` fixture to run a setup command first (e.g. source an
 environment), and `lte_output_checks` to fail on deaths only the output
 shows (e.g. a supervisor's children). `tmux_session` gives a test a
@@ -172,7 +209,7 @@ lte-session -- pytest -s tests/
 |---|---|
 | `--name NAME` | session name (default `lte_<command>_<pid>`) |
 | `--keep` | leave the session up |
-| `--width N` | sidebar columns |
+| `--width N` | sidebar columns, `N%`, or `auto` (default; no panes yet at start, so its minimum) |
 | `--no-dash` | home pane only (also the fallback without Textual) |
 
 ## Tours

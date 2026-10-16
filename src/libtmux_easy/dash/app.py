@@ -12,7 +12,8 @@ from textual.widgets import Footer, Markdown, Static, Tree
 
 from .._tmux import option
 from .control import read_status
-from .options import HOME_KIND_OPTION, HOME_STATUS_OPTION
+from .options import (AUTO, HOME_KIND_OPTION, HOME_STATUS_OPTION, INITIAL_OPTION, MIN_WIDTH,
+                      WIDTH_OPTION)
 
 HOME = "home"  # tree node data for the home entry
 
@@ -45,6 +46,12 @@ Colors: green running / exit 0, red failed, yellow stopped by `x` / `X`
 session's script to still be running. Killing the session any other way
 only sends SIGHUP.
 """
+
+# Autosize (width AUTO): a pane row is tree guide and dot (4), the name, a
+# space, the status; plus the scrollbar and a spare column. STATUS_WIDTH fits
+# the longest status describe() gives ("stopped TERM", "SIGSEGV?").
+ROW_EXTRA = 4 + 1 + 2
+STATUS_WIDTH = 12
 
 STATUS_COLORS = {"running": "green", "ok": "green", "failed": "red",
                  "stopped": "#e5c847", "unknown": "magenta"}  # hex: the theme maps "yellow" to orange
@@ -182,8 +189,32 @@ class DashApp(App):
         tree.cursor_line = 0
         tree.focus()
         self.poll()
+        self._autosize()
+        initial = self.viewport.option(INITIAL_OPTION)
+        initial_node = self.pane_nodes.get(initial) if initial else None
+        if initial_node is not None:
+            # TreeNode._line is -1 (unset) until Textual rebuilds the tree's
+            # line cache on the next refresh; move_cursor() right now would
+            # read that stale -1 and silently no-op. Defer past the refresh.
+            self.call_after_refresh(tree.move_cursor, initial_node)
         self.set_interval(self.POLL_INTERVAL, self.poll)
         self.set_interval(self.ONLINE_INTERVAL, self.check_online)
+
+    def _autosize(self):
+        """Width AUTO: fit the widest pane row, once. Capped at half the
+        window, so the viewport keeps the larger share."""
+        if self.viewport.option(WIDTH_OPTION) != AUTO:
+            return
+        names = [e["name"].rpartition(":")[2] for e in self.entries.values()]
+        width = ROW_EXTRA + max(map(len, names), default=0) + STATUS_WIDTH
+        window = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
+                                   "#{window_width}")
+        cap = int(window[0]) // 2 if window and window[0].strip().isdigit() else width
+        width = max(MIN_WIDTH, min(width, cap))
+        self.viewport.run("resize-pane", "-t", self.viewport.sidebar, "-x", str(width))
+        # The layout repair (Viewport._fit) restores this from now on.
+        self.viewport.run("set-option", "-wq", "-t", self.viewport.window,
+                          WIDTH_OPTION, str(width))
 
     # ---------- status ----------
 

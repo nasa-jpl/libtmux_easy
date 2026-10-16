@@ -1,7 +1,7 @@
 """The viewport: swapping panes in and out of the dashboard window."""
 
 from .._tmux import option, tmux as _tmux
-from .options import (FROM_OPTION, HOME_CMD_OPTION, HOME_OPTION, SIDEBAR_OPTION,
+from .options import (AUTO, FROM_OPTION, HOME_CMD_OPTION, HOME_OPTION, SIDEBAR_OPTION,
                       VIEW_OPTION, WIDTH_OPTION)
 
 
@@ -128,5 +128,5 @@ class Viewport:
             self.run("select-layout", "-t", self.window, self._layout[1])
             return
         width = self.option(WIDTH_OPTION)
-        if width and self.sidebar:
+        if width and width != AUTO and self.sidebar:
             self.run("resize-pane", "-t", self.sidebar, "-x", width)

@@ -12,7 +12,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional, Union
+from typing import Mapping, Optional, Union
 
 import libtmux
 import psutil
@@ -23,7 +23,7 @@ from libtmux.window import Window
 from packaging import version
 
 from . import dash
-from ._tmux import option
+from ._tmux import env_args, option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
 from .proc import pane_child_processes
 from .status import ExitStatus, PaneStatus
@@ -240,6 +240,7 @@ class TmuxSession(Session):
         kill_existing: bool = True,
         title_status: bool = True,
         status_file: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
         **kwargs,
     ) -> "TmuxSession":
         """
@@ -252,6 +253,10 @@ class TmuxSession(Session):
         'status_file', if given, is a path that gets the output of status()
         written to it as JSON on every pane state transition, so an external
         process can monitor pane state without any libtmux knowledge.
+
+        'env' (e.g. os.environ, or a dict of your own) goes into every pane;
+        see copy_environment(). Without it, panes get the tmux server's
+        environment, which may predate e.g. an activated venv.
         """
         session, window, pane = _create_session(
             session_name, kill_existing=kill_existing, **kwargs
@@ -260,10 +265,13 @@ class TmuxSession(Session):
         session.session_name = session_name
         session._adopted = False
         session.__post_init__(window, pane, title_status=title_status, status_file=status_file)
+        if env:
+            session.copy_environment(env)
         return session
 
     @classmethod
-    def current(cls, title_status: bool = True, status_file: Optional[str] = None) -> "TmuxSession":
+    def current(cls, title_status: bool = True, status_file: Optional[str] = None,
+                env: Optional[Mapping[str, str]] = None) -> "TmuxSession":
         """Adopt the tmux session this process is running in ($TMUX_PANE),
         e.g. a test run by lte-session, or a script run in your own session.
 
@@ -310,6 +318,8 @@ class TmuxSession(Session):
         if status_file is not None:
             session.status_file = status_file
             session._publish_status_file()
+        if env:
+            session.copy_environment(env)
         return session
 
     def _session_option(self, name) -> str:
@@ -349,6 +359,10 @@ class TmuxSession(Session):
         self.command_before = {"all": None}
 
         self.pane_modes = {}      # pane.id -> PANE_MODE_*
+        self._session_env = {}    # see create(env=)
+        self._window_env = {}     # window.id -> env, see new_window(env=)
+        self._pane_env = {}       # pane.id -> the env it was started with
+        self._pane_tee = {}       # pane.id -> lte-run --tee file, see new_pane(tee=)
         self._exit_status = {}    # pane.id -> ExitStatus (cached; see one-shot note)
         self._stopped_by = {}     # pane.id -> last signal stop_pane() sent this run
 
@@ -384,11 +398,16 @@ class TmuxSession(Session):
         self._home_tee = None     # (file, (stdout, stderr), handler), see tee_home()
 
     def new_window(
-        self, name: str, layout: Union[None, str] = "tiled", **window_kwargs
+        self, name: str, layout: Union[None, str] = "tiled",
+        env: Optional[Mapping[str, str]] = None, **window_kwargs
     ) -> Window:
         """Create a new window with the given name. Due to the nature of tmux, this will by also
         create a default, unnamed pane. The next call to new_pane will reuse and rename this pane
-        instead of actually creating a new pane."""
+        instead of actually creating a new pane.
+
+        'env' goes into every pane new_pane() makes in this window, on top of
+        the session's (copy_environment()). tmux has no window environment,
+        so panes made by hand in it don't get it."""
 
         if self.unnamed_window:
             # By id: a dashboard() opened before this is window 0 now.
@@ -408,6 +427,9 @@ class TmuxSession(Session):
             self.current_window = window
             self.current_pane = window.panes[0]
             self.unnamed_pane[self.current_window.id] = True
+
+        if env:
+            self._window_env[window.id] = pane_env(env)
 
         if layout:
             # 'layout' is an attribute already used by libtmux, hence layout_str.
@@ -435,24 +457,49 @@ class TmuxSession(Session):
             self.command_before[window.id] = command
         else:
             self.command_before["all"] = command
-        
-    def _claim_pane(self, name, **split_kwargs):
-        """Return (pane, reused) for the pane 'name' should occupy -- either the
-        window's initial unnamed pane (first call after new_window) or a freshly
-        split one. 'reused' matters to callers that must respawn the pane, since a
-        reused pane is already running its login shell."""
+
+    def copy_environment(self, env: Optional[Mapping[str, str]] = None):
+        """Give every pane started from now on 'env' (os.environ by default),
+        added to and overriding what was copied before. In a session of our
+        own (create()) it is the session's tmux environment, so panes made by
+        hand get it too; in an adopted one (current()), only ours do. For one
+        window or one pane, see new_window(env=) and new_pane(env=).
+
+        An alternative to send_command_before("source ...") for an
+        environment that is already set up (an activated venv, a sourced ROS
+        workspace). _tmux.SKIP_ENV (TMUX, TERM, LTE_DIR, ...) is never copied."""
+        env = pane_env(os.environ if env is None else env)
+        self._session_env.update(env)
+        if not self._adopted:
+            for name, value in env.items():
+                self.server.cmd("set-environment", "-t", self.id, name, value)
+
+    def _claim_pane(self, name, env=None, **split_kwargs):
+        """Return (pane, reused, env) for the pane 'name' should occupy -- either
+        the window's initial unnamed pane (first call after new_window) or a
+        freshly split one. 'reused' matters to callers that must respawn the
+        pane, since a reused pane is already running its login shell. 'env' is
+        the pane's: session, window and 'env' merged. A split pane starts with
+        it; a reused one gets it only when respawned (respawn-pane -e)."""
+        env = {**self._session_env, **self._window_env.get(self.current_window.id, {}),
+               **pane_env(env)}
         if self.unnamed_pane[self.current_window.id]:
             pane = self.current_window.panes[0]
             self.set_pane_title(pane, name)
             self.unnamed_pane[self.current_window.id] = False
-            return pane, True
+            self._pane_env[pane.id] = env
+            return pane, True, env
 
         full_name = self._full_pane_name(self.current_window, name)
         if full_name in self.pane_names:
             raise ValueError(
                 f"Pane name {name} already exists in window {self.current_window.name}."
             )
-        return self.split_window(self.current_window, name, **split_kwargs), False
+        if env:
+            split_kwargs["environment"] = env
+        pane = self.split_window(self.current_window, name, **split_kwargs)
+        self._pane_env[pane.id] = env
+        return pane, False, env
 
     def new_pane(
         self,
@@ -462,6 +509,8 @@ class TmuxSession(Session):
         mode: str = PANE_MODE_SHELL,
         on_exit=None,
         target_pid_timeout: float = 1.0,
+        env: Optional[Mapping[str, str]] = None,
+        tee: Optional[str] = None,
         **pane_kwargs,
     ) -> Pane:
         """Create a new pane named 'name' and run 'command' in it.
@@ -488,6 +537,15 @@ class TmuxSession(Session):
         'enter' applies to shell and wrap mode only (exec mode has no shell to
         submit to).
 
+        'env' (e.g. os.environ, or a dict of your own) is this pane's
+        environment, on top of the window's (new_window(env=)) and the
+        session's (copy_environment()); later levels win. It is added to the
+        tmux server's environment, not a replacement for it.
+
+        'tee' (wrap mode only) is a file that also gets the command's output,
+        as plain text: 'lte-run --tee'. The pane still shows it. Complete by
+        the time on_exit fires; a rerun overwrites it.
+
         'on_exit', if given, is a callback fired with a PaneStatus the moment the
         command exits for any reason (normal exit, crash, or a signal -- including
         a Ctrl-C typed by a user who attached to the session). Equivalent to
@@ -505,6 +563,8 @@ class TmuxSession(Session):
         """
         if mode not in _PANE_MODES:
             raise ValueError(f"mode must be one of {_PANE_MODES}, got {mode!r}")
+        if tee is not None and mode != PANE_MODE_WRAP:
+            raise ValueError("'tee' needs mode=PANE_MODE_WRAP (it is lte-run's --tee)")
         if self.unnamed_window:
             raise ValueError("Cannot create a new pane before creating a new window.")
         if self.current_window is None:
@@ -516,10 +576,12 @@ class TmuxSession(Session):
             or self.command_before["all"]
         )
 
+        if tee is not None:
+            pane_kwargs["_tee"] = os.path.abspath(tee)
         if mode == PANE_MODE_EXEC:
-            pane = self._new_exec_pane(name, command, before, **pane_kwargs)
+            pane = self._new_exec_pane(name, command, before, env, **pane_kwargs)
         else:
-            pane = self._new_shell_pane(name, command, before, enter, mode, **pane_kwargs)
+            pane = self._new_shell_pane(name, command, before, enter, mode, env, **pane_kwargs)
 
         self.pane_modes[pane.id] = mode
         self.commands[self.get_pane_name(pane)] = [command]
@@ -578,9 +640,16 @@ class TmuxSession(Session):
         )
         return ()
 
-    def _new_shell_pane(self, name, command, before, enter, mode, **pane_kwargs):
+    def _new_shell_pane(self, name, command, before, enter, mode, env, _tee=None,
+                        **pane_kwargs):
         """Shell and wrap mode: type 'command' into the pane's shell."""
-        pane, _reused = self._claim_pane(name, **pane_kwargs)
+        pane, reused, env = self._claim_pane(name, env, **pane_kwargs)
+        if _tee is not None:
+            self._pane_tee[pane.id] = _tee
+        if reused and env:
+            # Its shell predates 'env': start a fresh one with it.
+            _pane_cmd(pane, "respawn-pane", "-k", *env_args(env))
+            pane.refresh()
         if before:
             _type(pane, before, enter=True)
             # Let setup finish, so _capture_target_pids() snapshots the target
@@ -593,7 +662,7 @@ class TmuxSession(Session):
             _type(pane, command, enter)
         return pane
 
-    def _new_exec_pane(self, name, command, before, **pane_kwargs):
+    def _new_exec_pane(self, name, command, before, env, **pane_kwargs):
         # A command_before still works here, but it has to run in the same process
         # that then becomes 'command' -- hence 'exec'. Without it the pane process
         # would be the setup shell, and tmux would report ITS status, not the
@@ -609,7 +678,7 @@ class TmuxSession(Session):
         if "shell" in pane_kwargs:
             raise ValueError("'shell' is not accepted in exec mode; pass 'command' instead.")
 
-        pane, reused = self._claim_pane(name, shell=shell_command, **pane_kwargs)
+        pane, reused, env = self._claim_pane(name, env, shell=shell_command, **pane_kwargs)
 
         # Must happen before the command can exit, or a fast-failing command takes
         # its own exit status (and possibly the whole session) down with the pane.
@@ -618,7 +687,7 @@ class TmuxSession(Session):
         if reused:
             # The reused initial pane is still running its login shell -- the
             # 'shell' kwarg above never applied to it. Replace its process.
-            _pane_cmd(pane, "respawn-pane", "-k", shell_command)
+            _pane_cmd(pane, "respawn-pane", "-k", *env_args(env), shell_command)
             # respawn-pane kills the old process and starts a new one under
             # the same pane, but this Pane object's 'pane_pid' field is a
             # cached snapshot from whenever it was first fetched -- it still
@@ -1036,7 +1105,8 @@ class TmuxSession(Session):
 
         if mode == PANE_MODE_EXEC:
             self._stopped_by.pop(pane.id, None)
-            _pane_cmd(pane, "respawn-pane", "-k", command)
+            _pane_cmd(pane, "respawn-pane", "-k", *env_args(self._pane_env.get(pane.id)),
+                      command)
             pane.refresh()  # pane_pid is a cached field; respawn-pane gave it a new one
         else:
             if self.is_running(pane):
@@ -1285,7 +1355,9 @@ class TmuxSession(Session):
         # must be set first too, or 'started' would be ignored as untracked.
         self._wrap_started[pane.id] = threading.Event()
         self.pane_modes[pane.id] = PANE_MODE_WRAP
-        _type(pane, f"{_wrap_prefix()} {target}", enter)
+        tee = self._pane_tee.get(pane.id)
+        options = f"--tee {shlex.quote(tee)} -- " if tee else ""
+        _type(pane, f"{_wrap_prefix()} {options}{target}", enter)
 
     def _wrap_signal(self, pane, sig) -> bool:
         """Ask the pane's lte-run to signal its target. False if there is no
@@ -1433,20 +1505,24 @@ class TmuxSession(Session):
     def dashboard(
         self,
         name: str = "dash",
-        width: int = 36,
+        width: Union[int, str] = dash.AUTO,
         select: bool = True,
         tee: bool = True,
         mouse: bool = True,
         key: str = dash.KEY,
+        initial: Union[Pane, str, None] = None,
     ) -> Window:
         """Open a dashboard window: a status sidebar (lte-dash) on the left, and
         on the right a viewport holding the selected pane -- the real pane,
         swapped in from its window, so it is fully interactive.
 
-        'width' is the sidebar's width in columns. 'select' switches attached
-        clients to it. 'tee' calls tee_home(), so the viewport's home entry
+        'width' is the sidebar's width: columns, a percentage like "25%", or
+        "auto" (default): sized once, at start, to fit the longest pane name
+        and status listed then. 'select' switches attached clients to it. 'tee' calls tee_home(), so the viewport's home entry
         shows this script's output. 'mouse' turns on tmux mouse support for
-        the session (click the sidebar, drag the border to resize).
+        the session (click the sidebar, drag the border to resize). 'initial'
+        (a Pane or pane name) is the pane the sidebar selects and shows first,
+        instead of home.
 
         Customize it with dashboard_pane(), and the returned Window.
 
@@ -1457,6 +1533,7 @@ class TmuxSession(Session):
         run = self._tmux_run
         if self._dash_window is None or self.get_window(self._dash_window) is None:
             launcher = dash.launcher()  # fail before touching the session
+            initial_pane = self.resolve_target_pane(initial) if initial is not None else None
 
             if self.status_file is None:
                 self.status_file = os.path.join(self._wrap_dir, "status.json")
@@ -1473,7 +1550,7 @@ class TmuxSession(Session):
                 self.id, self.status_file, self.home_log,
                 os.path.join(self._wrap_dir, SOCKET_NAME),
                 name=name, width=width, mouse=mouse, run=run, sidebar_cmd=launcher,
-                key=key)
+                key=key, initial=initial_pane.id if initial_pane is not None else None)
             self._dash_window, self._dash_sidebar = window_id, sidebar
 
         if select:

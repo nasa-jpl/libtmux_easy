@@ -7,7 +7,13 @@ HOME_OPTION = "@lte_dash_home"   # pane id of the home/placeholder pane
 VIEW_OPTION = "@lte_dash_view"   # pane id currently in the viewport
 FROM_OPTION = "@lte_dash_from"   # window the viewed pane was swapped out of
 HOME_CMD_OPTION = "@lte_dash_home_cmd"
-WIDTH_OPTION = "@lte_dash_width"  # the sidebar's initial width
+WIDTH_OPTION = "@lte_dash_width"  # the sidebar's width: columns, "N%", or AUTO until sized
+
+# Sidebar width "auto": the app fits it to its widest row once, at start.
+# Until then (and never narrower) MIN_WIDTH, which fits the summary line.
+AUTO = "auto"
+MIN_WIDTH = 36
+INITIAL_OPTION = "@lte_dash_initial"  # pane id to show first, instead of home
 
 # "command" when the home pane runs the user's command (lte-session): then
 # quitting the sidebar must leave the window, and with it the command, alone.

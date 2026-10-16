@@ -7,8 +7,9 @@ import sys
 from pathlib import Path
 
 from .._tmux import tmux as _tmux
-from .options import (HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INSTALL_HINT, KEY,
-                      SIDEBAR_OPTION, VIEW_OPTION, WIDTH_OPTION, WINDOW_OPTION)
+from .options import (AUTO, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INITIAL_OPTION,
+                      INSTALL_HINT, KEY, MIN_WIDTH, SIDEBAR_OPTION, VIEW_OPTION, WIDTH_OPTION,
+                      WINDOW_OPTION)
 
 
 def launcher():
@@ -24,8 +25,9 @@ def launcher():
     raise RuntimeError(INSTALL_HINT)
 
 
-def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=36,
-                mouse=True, run=_tmux, sidebar_cmd=None, home_cmd=None, key=KEY):
+def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=AUTO,
+                mouse=True, run=_tmux, sidebar_cmd=None, home_cmd=None, key=KEY,
+                initial=None):
     """Create a dashboard window in 'session' (an id like '$1', or a name; not
     '=name', which tmux 3.4's set-option rejects as "no such session").
     Returns (window id, sidebar pane id).
@@ -39,7 +41,11 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
     @lte_dir options instead. 'home_cmd' replaces the home pane's tail of
     'home_log' (which may then be None) with a command of the caller's; the
     sidebar then never closes the window (see HOME_KIND_OPTION). 'key': the
-    prefix key the sidebar borrows while it runs (KEY; "" for none)."""
+    prefix key the sidebar borrows while it runs (KEY; "" for none). 'initial'
+    is the pane id the sidebar selects (and shows) first, instead of home.
+
+    'width': columns, a percentage like "25%", or AUTO: the sidebar sizes
+    itself once, at start, to fit its widest row (the panes it lists then)."""
     sidebar_cmd = sidebar_cmd or launcher()
     home_kind = "command" if home_cmd else "log"
     if home_cmd is None:
@@ -53,7 +59,7 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
     window_id, home = out[0].split()
     for opt, value in ((HOME_OPTION, home), (VIEW_OPTION, home),
                        (HOME_CMD_OPTION, home_cmd), (WIDTH_OPTION, str(width)),
-                       (HOME_KIND_OPTION, home_kind)):
+                       (HOME_KIND_OPTION, home_kind), (INITIAL_OPTION, initial or "")):
         run("set-option", "-wq", "-t", window_id, opt, value)
 
     if status_file:
@@ -61,7 +67,8 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
     if ctl:
         sidebar_cmd += f" --ctl {shlex.quote(ctl)}"
     sidebar_cmd += f" --key {shlex.quote(key)}"
-    sidebar = run("split-window", "-h", "-b", "-d", "-l", str(width), "-t", home,
+    start = MIN_WIDTH if width == AUTO else width
+    sidebar = run("split-window", "-h", "-b", "-d", "-l", str(start), "-t", home,
                   "-P", "-F", "#{pane_id}", sidebar_cmd)[0].strip()
     run("select-pane", "-t", home, "-T", "home")
     run("select-pane", "-t", sidebar, "-T", "lte-dash")

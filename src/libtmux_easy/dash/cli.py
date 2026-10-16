@@ -9,7 +9,7 @@ from . import keys
 from .._tmux import option, tmux as _tmux
 from ..wrap import DIR_OPTION, SOCKET_NAME
 from .control import Control
-from .options import HOME_KIND_OPTION, INSTALL_HINT, KEY, KEY_COMMAND, SIDEBAR_OPTION, \
+from .options import AUTO, HOME_KIND_OPTION, INSTALL_HINT, KEY, KEY_COMMAND, SIDEBAR_OPTION, \
     STATUS_OPTION, WINDOW_OPTION
 from .viewport import Viewport
 from .window import open_window
@@ -27,7 +27,8 @@ def main(argv=None):
                         "and sidebar pane ids, and exit (see open_window())")
     parser.add_argument("--home-log", help="with --open: the file the home pane follows")
     parser.add_argument("--name", default="dash", help="with --open: window name")
-    parser.add_argument("--width", type=int, default=36, help="with --open: sidebar columns")
+    parser.add_argument("--width", default=AUTO,
+                        help="with --open: sidebar columns, N%%, or auto (fit the panes, at start)")
     parser.add_argument("--no-mouse", action="store_true",
                         help="with --open: leave the session's mouse option alone")
     parser.add_argument("--key", default=KEY,

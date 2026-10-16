@@ -29,15 +29,17 @@ the status file itself and answers the control socket's commands.
 """
 
 from .control import Control, read_status
-from .options import (FROM_OPTION, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_LOG, HOME_OPTION,
-                      HOME_STATUS_OPTION, INSTALL_HINT, KEY, KEY_COMMAND, RUN_DIR_OPTION,
-                      SIDEBAR_OPTION, STATUS_OPTION, VIEW_OPTION, WIDTH_OPTION, WINDOW_OPTION)
+from .options import (AUTO, FROM_OPTION, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_LOG,
+                      HOME_OPTION, HOME_STATUS_OPTION, INITIAL_OPTION, INSTALL_HINT, KEY,
+                      KEY_COMMAND, MIN_WIDTH, RUN_DIR_OPTION, SIDEBAR_OPTION, STATUS_OPTION,
+                      VIEW_OPTION, WIDTH_OPTION, WINDOW_OPTION)
 from .viewport import Viewport
 from .window import launcher, open_window
 
 __all__ = [
     "Control", "Viewport", "launcher", "open_window", "read_status",
-    "FROM_OPTION", "HOME_CMD_OPTION", "HOME_KIND_OPTION", "HOME_LOG", "HOME_OPTION",
-    "HOME_STATUS_OPTION", "INSTALL_HINT", "KEY", "KEY_COMMAND", "RUN_DIR_OPTION",
-    "SIDEBAR_OPTION", "STATUS_OPTION", "VIEW_OPTION", "WIDTH_OPTION", "WINDOW_OPTION",
+    "AUTO", "FROM_OPTION", "HOME_CMD_OPTION", "HOME_KIND_OPTION", "HOME_LOG", "HOME_OPTION",
+    "HOME_STATUS_OPTION", "INITIAL_OPTION", "INSTALL_HINT", "KEY", "KEY_COMMAND", "MIN_WIDTH",
+    "RUN_DIR_OPTION", "SIDEBAR_OPTION", "STATUS_OPTION", "VIEW_OPTION", "WIDTH_OPTION",
+    "WINDOW_OPTION",
 ]

@@ -29,6 +29,11 @@ renders everything else.
 - Pane ids survive swaps, so tracking, titles and status are unaffected.
 - `repair()` recovers when the viewed pane exits (its slot goes with it) or
   home is killed, and restores the last intact layout.
+- Sidebar width: columns, `"N%"`, or `auto` (`@lte_dash_width`). With `auto`
+  the window opens at `MIN_WIDTH`; the app's first poll fits the widest pane
+  row (guide + dot + longest name + space + 12 for the longest status, + 2),
+  capped at half the window, once, and stores the number for `repair()`.
+- `@lte_dash_initial`: the pane the sidebar selects and shows at start.
 - `open_window()` creates the window with `new-window -b -d -t {session}:^`, so
   the dashboard is always first.
 

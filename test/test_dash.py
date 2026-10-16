@@ -298,13 +298,20 @@ def test_dashboard_without_textual_explains(monkeypatch, session):
 class FakeViewport:
     window, sidebar, home, view = "@0", "%0", "%1", "%1"
 
-    def __init__(self, panes=()):
+    def __init__(self, panes=(), options=None, window_width=200):
         self._panes = {p: "@1" for p in panes}
+        self.options = dict(options or {})
+        self.window_width = window_width
+        self.calls = []  # tmux commands run
 
     def repair(self): pass
     def show(self, pane_id): pass
     def panes(self): return self._panes
-    def option(self, name): return ""
+    def option(self, name): return self.options.get(name, "")
+
+    def run(self, *args):
+        self.calls.append(args)
+        return [str(self.window_width)] if args[0] == "display-message" else []
 
 
 def entry(pane_id, name, running=False, code=None, stopped=None):
@@ -359,3 +366,57 @@ def test_sidebar_summary_counts():
             return str(app.query_one("#summary", Static).render())
 
     assert asyncio.run(scenario()) == "2 running  1 stopped  1 failed"
+
+
+@needs_textual
+@pytest.mark.parametrize("names, width_cap, expect", [
+    (["w:a_rather_long_pane_name_here", "w:x"], 200, 7 + 28 + 12),
+    ([], 200, dash.MIN_WIDTH),                      # nothing listed yet
+    (["w:" + "n" * 80], 100, 50),                   # at most half the window
+])
+def test_sidebar_autosizes_once(tmp_path, names, width_cap, expect):
+    """Width "auto": fit the longest name plus the longest status, at start."""
+    from libtmux_easy.dash.app import DashApp
+
+    status = tmp_path / "s.json"
+    status.write_text(json.dumps([entry(f"%{i + 5}", n, True) for i, n in enumerate(names)]))
+    viewport = FakeViewport(options={dash.WIDTH_OPTION: dash.AUTO}, window_width=width_cap)
+
+    async def scenario():
+        async with DashApp(viewport, str(status), dash.Control(None)).run_test() as pilot:
+            await pilot.pause(0.1)
+
+    asyncio.run(scenario())
+    assert ("resize-pane", "-t", "%0", "-x", str(expect)) in viewport.calls
+    assert ("set-option", "-wq", "-t", "@0", dash.WIDTH_OPTION, str(expect)) in viewport.calls
+
+
+@needs_textual
+def test_sidebar_fixed_width_is_left_alone(tmp_path):
+    from libtmux_easy.dash.app import DashApp
+
+    viewport = FakeViewport(options={dash.WIDTH_OPTION: "30"})
+
+    async def scenario():
+        async with DashApp(viewport, None, dash.Control(None)).run_test() as pilot:
+            await pilot.pause(0.1)
+
+    asyncio.run(scenario())
+    assert not [c for c in viewport.calls if c[0] == "resize-pane"]
+
+
+@needs_textual
+def test_sidebar_starts_on_initial_pane(tmp_path):
+    from libtmux_easy.dash.app import DashApp
+
+    status = tmp_path / "s.json"
+    status.write_text(json.dumps([entry("%5", "w:one", True), entry("%6", "w:two", True)]))
+    viewport = FakeViewport(("%5", "%6"), options={dash.INITIAL_OPTION: "%6"})
+
+    async def scenario():
+        app = DashApp(viewport, str(status), dash.Control(None))
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            return app._selected()
+
+    assert asyncio.run(scenario()) == "%6"

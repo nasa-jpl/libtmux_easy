@@ -24,6 +24,9 @@ to it, and **a process that dies fails the test**.
 
 `auto` (default): dash under a dashboard session, else tmux if installed,
 else shell. Windows are `<module>/<window>`, so modules share a session.
+Every mode gives processes pytest's environment: shell mode inherits it,
+the tmux modes pass `env=os.environ` (the server's may predate a sourced
+workspace).
 A kept session is printed in the summary: `tmux attach -t lte_test_<pid>`.
 
 ## Health

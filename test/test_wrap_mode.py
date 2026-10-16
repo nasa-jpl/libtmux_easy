@@ -56,6 +56,37 @@ class TestWrapStandalone:
         assert proc.returncode == 127
         assert "lte-run: no-such-command-xyz" in proc.stderr
 
+    def test_tee(self, env, tmp_path):
+        """Outside tmux, through a pipe: shown and copied, as plain text."""
+        log = tmp_path / "out.log"
+        cmd = r"echo out; echo err >&2; printf '\033[31mred\033[0m\n'; printf '1\r2\r3\n'; exit 3"
+        proc = self._run(env, "--tee", str(log), "sh", "-c", cmd)
+        assert proc.returncode == 3
+        assert "out" in proc.stdout and "err" in proc.stdout
+        assert log.read_text() == "out\nerr\nred\n3\n"
+
+    def test_tee_append_and_raw(self, env, tmp_path):
+        log = tmp_path / "out.log"
+        log.write_text("before\n")
+        self._run(env, "--tee", str(log), "-a", "--raw", "printf", r"\033[1mx\033[0m\n")
+        assert log.read_text() == "before\n\x1b[1mx\x1b[0m\n"
+
+    def test_tee_from_env(self, env, tmp_path):
+        """LTE_RUN_TEE: like --tee, and not passed on to the command."""
+        log = tmp_path / "out.log"
+        env[wrap.TEE_ENV] = str(log)
+        proc = self._run(env, "sh", "-c", 'echo "seen=[$LTE_RUN_TEE]"')
+        assert log.read_text() == "seen=[]\n"
+        assert proc.returncode == 0
+
+    def test_tee_unwritable_still_runs(self, env, tmp_path):
+        proc = self._run(env, "--tee", str(tmp_path / "no" / "dir.log"), "sh", "-c", "exit 4")
+        assert proc.returncode == 4
+        assert "--tee" in proc.stderr
+
+    def test_bad_option(self, env):
+        assert self._run(env, "--bogus", "true").returncode == 2
+
 
 class TestWrapMode:
     def test_wrap_exact_exit_code(self, session):
@@ -202,6 +233,24 @@ class TestWrapMode:
 
         assert session.pane_status(pane).target_pids != old_pids
         assert session.wait_for_exit(pane, timeout=5.0).code == 6
+
+    def test_wrap_tee(self, session, tmp_path):
+        """In a pane: the command keeps its terminal, tmux copies its output,
+        and the file is complete when the exit is reported."""
+        log = tmp_path / "pane.log"
+        pane = session.new_pane("x", "sh -c 'test -t 1 && echo tty; echo done; exit 5'",
+                                mode=PANE_MODE_WRAP, tee=str(log))
+        assert session.wait_for_exit(pane, timeout=5.0).code == 5
+        assert log.read_text() == "tty\ndone\n"
+        assert _wait_until(lambda: session._pane_fmt(pane, "#{pane_pipe}") == "0")
+
+        session.respawn_pane(pane, "sh -c 'echo rerun; exit 0'")
+        session.wait_for_exit(pane, timeout=5.0)
+        assert log.read_text() == "rerun\n"
+
+    def test_tee_needs_wrap_mode(self, session, tmp_path):
+        with pytest.raises(ValueError, match="tee"):
+            session.new_pane("x", "true", tee=str(tmp_path / "x.log"))
 
     def test_wrap_enter_false_waits_for_enter(self, session):
         pane = session.new_pane("x", "sh -c 'exit 2'", mode=PANE_MODE_WRAP, enter=False)

@@ -40,6 +40,27 @@ connection per run:
 | EOF without `exited` | wrapper died: run is `lost`; a pidfd watch on the target takes over (status unknown) |
 | no listener (script gone) | runs unsupervised; same output and status |
 
+## Tee (`--tee FILE`, `$LTE_RUN_TEE`)
+
+Copies the command's output to FILE, like `tee`, without taking its terminal.
+
+| where | how |
+|---|---|
+| tmux pane | `pipe-pane -O` into a FIFO a thread reads; the command keeps its tty |
+| pane already piped (lte-session's home), or no tmux | the command's stdout and stderr go to a pipe, echoed to ours; not a tty |
+
+- Set up **before** the command starts: no first line is missed (tlaunch-pane
+  needed a gate FIFO for this before).
+- On exit: drain until the copy is quiet for 0.15 s (at most 2 s), close the
+  pipe-pane, **then** send `exited`. Whoever acts on the exit reads a whole file.
+- Plain text by default: escapes stripped, CRLF to LF, a `\r`-redrawn line
+  kept as its last state. `--raw` keeps the bytes.
+- FILE may be a FIFO (tlaunch-pane's): opened non-blocking, so a FIFO with no
+  reader is an error, not a hang. Any open error: the command runs untee'd.
+- `$LTE_RUN_TEE` is removed from the command's environment, so an lte-run
+  inside it doesn't tee again.
+- One pipe-pane per pane: a pane with a captured stream can't be teed twice.
+
 ## Details that matter
 
 - The library sets the pane's mode **before** typing the command, or a fast

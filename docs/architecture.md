@@ -52,6 +52,18 @@
 - `Session.kill` (libtmux >= 0.30) is preferred over `kill_session`; `kill()`
   picks whichever exists.
 
+## Environment
+
+`env=` at three levels: `create()` / `copy_environment()` (session),
+`new_window()`, `new_pane()`; merged in that order in `_claim_pane()`.
+
+- Created session: `set-environment`, so panes made by hand get it too.
+- Every library pane also gets the merged env with `-e` (split, or
+  `respawn-pane -e`). A window's reused first pane already runs a shell, so
+  it is respawned when there is any env. An exec pane's respawn reuses it.
+- `_tmux.SKIP_ENV` is never copied: tmux sets `TMUX*`/`TERM` per pane, and a
+  copied `LTE_DIR` would send `lte-run` to another session's socket.
+
 ## State in tmux options
 
 Anything a second process needs (sidebar, `lte-run`, a restarted script)
@@ -60,7 +72,7 @@ lives in tmux options, so they all agree without extra IPC:
 | scope | options |
 |---|---|
 | session | `@lte_dir` (socket dir), `@lte_status` (status file), `@lte_run_dir`, `@lte_home_status`, `@lte_dash_window`, `@lte_dash_sidebar` |
-| window | `@lte_dash_home/view/from/home_cmd/width/home_kind` |
+| window | `@lte_dash_home/view/from/home_cmd/width/home_kind/initial` |
 
 ## Design smells
 

@@ -95,9 +95,11 @@ def pytest_report_header(config):
 
 
 def _run_session(config):
+    # Processes get pytest's environment, as in shell mode: the tmux server's
+    # may predate an activated venv or a sourced workspace.
     if config.lte_session is None:
-        config.lte_session = (TmuxSession.current() if config.lte_mode == "dash"
-                              else TmuxSession.create(_session_name()))
+        config.lte_session = (TmuxSession.current(env=os.environ) if config.lte_mode == "dash"
+                              else TmuxSession.create(_session_name(), env=os.environ))
     return config.lte_session
 
 
@@ -333,10 +335,10 @@ def pytest_runtest_call(item):
 @pytest.fixture
 def tmux_session(request):
     if os.environ.get("TMUX_PANE"):
-        session = TmuxSession.current()
+        session = TmuxSession.current(env=os.environ)
     else:
         name = re.sub(r"[^A-Za-z0-9_-]", "_", f"lte_test_{request.node.name}")
-        session = TmuxSession.create(name, kill_existing=True)
+        session = TmuxSession.create(name, kill_existing=True, env=os.environ)
     try:
         yield session
     finally:
