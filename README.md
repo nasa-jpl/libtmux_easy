@@ -235,8 +235,8 @@ lte-session -- pytest -s tests/
 
 ## Tours
 
-`demos/`: hands-on tours that narrate each step and wait for you. Start with
-`demos/01_session.py`; tours 2-5 (exit status, process control, dashboard,
+`demos/interactive/`: hands-on tours that narrate each step and wait for you. Start with
+`demos/interactive/01_session.py`; tours 2-5 (exit status, process control, dashboard,
 monitoring) run inside the dashboard. Plus the pytest plugin in all three modes.
 
 ## Design docs

@@ -1,9 +1,9 @@
 """The pytest plugin (libtmux_easy.testing), from the repo root:
 
-    PYTHONPATH=src python3 -m pytest demos/pytest_plugin --lte-mode=shell   # no tmux
-    PYTHONPATH=src python3 -m pytest demos/pytest_plugin --lte-mode=tmux    # detached
+    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin --lte-mode=shell   # no tmux
+    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin --lte-mode=tmux    # detached
     PYTHONPATH=src .venv/bin/python -m libtmux_easy.launch -- \\
-        .venv/bin/python -m pytest -s demos/pytest_plugin                    # dashboard
+        .venv/bin/python -m pytest -s demos/interactive/pytest_plugin                    # dashboard
 
 LTE_DEMO_CRASH=1 makes the ticker die mid-test, which fails the test (and
 in tmux mode keeps the session for 'tmux attach'). Under the dashboard,

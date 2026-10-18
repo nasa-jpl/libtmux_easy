@@ -23,7 +23,7 @@ from pathlib import Path
 try:
     import libtmux_easy
 except ImportError:  # not installed: run from the checkout
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
     import libtmux_easy
 
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_SHELL, PANE_MODE_WRAP, TmuxSession

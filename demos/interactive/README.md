@@ -8,7 +8,7 @@ tmux is required, and Textual for the dashboard.
 ## Quick start
 
 ```bash
-cd demos
+cd demos/interactive
 ./01_session.py                         # start here
 ../.venv/bin/python 02_exit_status.py   # tours 2-5: a Python with Textual gets the dashboard
 ```
