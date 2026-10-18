@@ -10,7 +10,7 @@ tmux is required, and Textual for the dashboard.
 ```bash
 cd demos/interactive
 ./01_session.py                         # start here
-../.venv/bin/python 02_exit_status.py   # tours 2-5: a Python with Textual gets the dashboard
+../../.venv/bin/python 02_exit_status.py   # tours 2-6: a Python with Textual gets the dashboard
 ```
 
 | tour | shows |
@@ -20,11 +20,12 @@ cd demos/interactive
 | `03_process_control.py` | `on_exit` events, a Ctrl-C you type, `stop_pane` escalation, `stop_all`, `respawn_pane` |
 | `04_dashboard.py` | the sidebar: browse, focus, `x` / `r` actions, `dashboard_pane`, many panes |
 | `05_monitoring.py` | the status file read by another program; a supervisor whose exit status hides failures |
+| `06_output.py` | output: `on_output` events, `wait_for_output`, `capture` and `search_output`, `expect`, `lte-run --tee`, a session-wide watch |
 | `pytest_plugin/` | the pytest plugin in shell, tmux and dash mode (see its docstring) |
 
 ## How a tour runs
 
-Tours 2-5 relaunch themselves under `lte-session`: the script runs in the
+Tours 2-6 relaunch themselves under `lte-session`: the script runs in the
 dashboard's **home** pane, and the panes it starts appear in the sidebar.
 
 | to | do |
@@ -33,6 +34,10 @@ dashboard's **home** pane, and the panes it starts appear in the sidebar.
 | type into a pane | select it, `Enter` |
 | answer the tour | select `home`, `Enter`, then `Enter` |
 | leave early | `Ctrl-C` in home, or `prefix d` |
+
+Tours 1 and 6 also show their library calls as they run (`>>> s.new_pane(...)`),
+and each `[Enter]` prompt is a Python prompt: type code with the session and
+the tour's variables in scope; Enter on an empty line goes on.
 
 At the end the tour waits for a last Enter, then stops its panes and closes
 the session. Without Textual, or with `--no-dash`, you get the home pane
@@ -54,5 +59,6 @@ only; switch windows with `prefix n` / `prefix p`.
 | `common.py` | `Tour` (session, `say`, `pause`), and one-line workloads: `exits_after`, `runs_forever`, `ignores_sigint`, ... |
 | `workloads/fake_launch.py` | behaves like `ros2 launch`: logs a child's death, keeps running, exits 0 on SIGINT |
 | `workloads/status_monitor.py` | prints a status file as a table every second |
+| `workloads/fake_server.py` | a colored request log with a ready line and an error every Nth request |
 
 Clear strays: `tmux ls | grep '^lte_demo_' | cut -d: -f1 | xargs -r -n1 tmux kill-session -t`

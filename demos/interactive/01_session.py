@@ -9,45 +9,55 @@ inside the dashboard.
 import argparse
 import os
 import subprocess
+import sys
+import textwrap
 import time
 
-from common import BOLD, RESET, TmuxSession, exits_after, runs_forever
+import common
+from common import BOLD, ECHO_HOW_TO, RESET, Console, Echo, exits_after, runs_forever
+from libtmux_easy import session_exists
 
 NAME = "lte_demo_session"
+
+echo = Echo(__file__)
+TmuxSession = echo.wrap(common.TmuxSession)  # its calls, and the session's, print as >>> lines
+
+
+def say(text):
+    print(textwrap.indent(textwrap.dedent(text).strip("\n"), "  "))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--auto", action="store_true", help="don't attach (smoke test)")
+    parser.add_argument("--auto", action="store_true", help="no prompts, don't attach (smoke test)")
     args = parser.parse_args()
+    console = Console(echo)
+
+    def pause(action):
+        if not args.auto:
+            console.pause(action, sys._getframe(1))  # main's variables at the prompt
 
     print(f"{BOLD}{__doc__.strip().splitlines()[0]}{RESET}\n")
-    print("  session = TmuxSession.create(NAME)")
+    say(ECHO_HOW_TO)
+
+    pause("create the session and a 'work' window")
     session = TmuxSession.create(NAME)
+    session.new_window("work")                                       # panes go in the current window
+    session.new_pane("shell", "echo 'a plain shell: type away'")     # reuses the window's first pane
+    session.new_pane("counter", runs_forever("tick"))                # later panes split it
+    session.new_pane("short", exits_after(10, code=3), mode="wrap")  # exits 3 in 10 s
 
-    print('  session.new_window("work")                        # panes go in the current window')
-    session.new_window("work")
-    print('  session.new_pane("shell", "echo a plain shell")    # reuses the first pane')
-    session.new_pane("shell", "echo 'a plain shell: type away'")
-    print('  session.new_pane("counter", ...)                   # later panes split it')
-    session.new_pane("counter", runs_forever("tick"))
-    print('  session.new_pane("short", ..., mode="wrap")        # exits 3 in 10 s')
-    session.new_pane("short", exits_after(10, code=3), mode="wrap")
-
-    print('  session.new_window("monitor", layout="main-horizontal")')
+    pause("add a 'monitor' window with another layout")
     session.new_window("monitor", layout="main-horizontal")
-    print('  session.new_pane("vmstat", "vmstat 2"); session.new_pane("files", "ls -la")')
     session.new_pane("vmstat", "vmstat 2")
     session.new_pane("files", "ls -la", mode="wrap")
-    print('  session.send_keys("echo sent later", target_pane="monitor:files")')
     session.send_keys("echo 'sent later, by name'", target_pane="monitor:files")
     session.select_first()
-    time.sleep(1)
 
-    print("\n  session.print():")
+    pause("print the layout and each pane's status")
+    time.sleep(1)
     session.print()
-    print("\n  session.print_status():")
     session.print_status()
 
     if args.auto:
@@ -55,22 +65,29 @@ def main():
         session.kill_session()
         return
 
-    print("""
-  Panes are named window:pane ("work:counter"); each border shows its status.
-  Inside tmux: prefix n / p switch windows, prefix o moves between panes,
-  prefix d detaches (prefix is Ctrl-b unless you changed it).
-  Watch "short" turn [exited 3] about 10 s in.""")
-    input(f"\n  {BOLD}[Enter]{RESET} attach ")
+    say("""
+
+        Panes are named window:pane ("work:counter"); each border shows its status.
+        Inside tmux: prefix n / p switch windows, prefix o moves between panes,
+        prefix d detaches (prefix is Ctrl-b unless you changed it).
+        Watch "short" turn [exited 3] about 10 s in.""")
+    pause("attach")
     if os.environ.get("TMUX"):  # already in tmux: switch rather than nest
         subprocess.run(["tmux", "switch-client", "-t", NAME])
         input(f"  Switched to {NAME}. Come back here (prefix s, or prefix L) and press Enter. ")
     else:
         session.attach()
 
-    print("\n  After you left, session.print_status():")
+    print("\n  After you left:")
     session.print_status()
+    if not session_exists(NAME):
+        say("""
+
+            The session is gone (closed from inside: lte-close, prefix C-x, or the
+            last pane exited). Above: how each pane ended, as last seen.""")
+        return
     try:
-        input(f"\n  {BOLD}[Enter]{RESET} stop everything and kill the session (Ctrl-C keeps it) ")
+        pause("stop everything and kill the session (Ctrl-C keeps it)")
     except KeyboardInterrupt:
         print(f"\n  kept: tmux attach -t {NAME}")
         return
