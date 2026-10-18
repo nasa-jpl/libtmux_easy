@@ -1,0 +1,70 @@
+name: Release
+
+# A v* tag publishes to GitHub Releases and PyPI. Running it by hand
+# (Actions -> Release -> Run workflow) is a dry run to TestPyPI.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions match (tag, pyproject.toml, debian/changelog)
+        run: |
+          py=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          deb=$(head -1 debian/changelog | sed -E 's/^[^(]*\(([^)]*)\).*/\1/')
+          echo "pyproject.toml $py, debian/changelog $deb, ref $GITHUB_REF_NAME"
+          test "$py" = "$deb"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then test "$GITHUB_REF_NAME" = "v$py"; fi
+
+  ci:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  github:
+    if: github.event_name == 'push'
+    needs: ci
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* deb/*.deb \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  pypi:
+    if: github.event_name == 'push'
+    needs: github
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing: no API token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: ci
+    runs-on: ubuntu-24.04
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

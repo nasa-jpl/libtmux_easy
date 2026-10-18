@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: System :: Shells",
     "Topic :: Terminals",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.8.1"
 dependencies = [
     "libtmux>=0.10.1",
     "psutil",
@@ -37,6 +37,11 @@ test = [
 dash = [
     "textual>=1.0",
 ]
+
+# 'uv sync' installs this group by default: a development environment with
+# the dashboard and the tests. Not part of the package (pip, the .deb).
+[dependency-groups]
+dev = ["libtmux-easy[dash,test]"]
 
 [project.scripts]
 lte-run = "libtmux_easy.wrap:main"
