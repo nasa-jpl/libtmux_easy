@@ -62,7 +62,8 @@ stopping at the first that works:
 
 Escalating past SIGINT means no graceful cleanup: `PaneStatus.stopped` records
 the last signal sent. `stop_all()` stops every running pane in parallel.
-`respawn_pane()` reruns in place, in any mode.
+`respawn_pane()` reruns in place, in any mode. Closing a whole session, and
+which stop to use when: [session-close.md](session-close.md).
 
 ## Status surfaces
 

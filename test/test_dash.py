@@ -144,6 +144,31 @@ class TestViewport:
         assert _fmt(session, viewport.sidebar, "#{pane_width}") == "30"
         session._dash_window = None
 
+    def test_extra_pane_under_sidebar(self, session, viewport):
+        """A pane split under the sidebar by hand: when the viewed pane exits,
+        home goes back to its slot, not between the sidebar and that pane."""
+        a = session.new_pane("a", "sleep 60")
+        b = session.new_pane("b", "true")
+        session.wait_for_pane_idle(b, timeout=5.0)
+        extra_id = session._tmux_run("split-window", "-d", "-v", "-l", "5", "-t", viewport.sidebar,
+                                     "-P", "-F", "#{pane_id}", "sleep 60")[0].strip()
+        extra = session.get_pane(extra_id)
+        column = "#{pane_left} #{pane_width}"
+        assert _fmt(session, extra.id, column) == _fmt(session, viewport.sidebar, column)
+
+        for pane in (a, b):
+            viewport.show(pane.id)
+            assert viewport.panes()[extra.id] == viewport.window
+        viewport.repair()
+
+        b.send_keys("exit", enter=True)  # the viewport slot goes with it
+        assert _wait_until(lambda: b.id not in viewport.panes())
+        viewport.repair()
+
+        assert viewport.panes()[viewport.home] == viewport.window
+        assert _fmt(session, extra.id, column) == _fmt(session, viewport.sidebar, column)
+        assert _fmt(session, extra.id, "#{pane_height}") == "5"
+
     def test_dashboard_pane_needs_dashboard(self, session):
         with pytest.raises(RuntimeError, match="no dashboard"):
             session.dashboard_pane("true")

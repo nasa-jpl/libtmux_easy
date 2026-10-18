@@ -68,3 +68,61 @@ def test_death_fails_the_test(tmp_path, mode):
     finally:
         if session:
             subprocess.run(["tmux", "kill-session", "-t", session[1]], capture_output=True)
+
+
+# Ready once it says so; later prints a line FAIL_ON catches.
+SERVER = """
+import sys, time
+print("listening on 8080", flush=True)
+time.sleep(0.3)
+print("tick 1", flush=True)
+try:
+    time.sleep(1)
+    print("BOOM", flush=True)
+    time.sleep(60)
+except KeyboardInterrupt:
+    sys.exit(0)
+"""
+
+OUTPUT_TESTS = """
+import sys
+PROCESSES = {"w:srv": f"{sys.executable} srv.py"}
+READY = {"w:srv": %r}
+READY_TIMEOUT = 2
+FAIL_ON = {"*": "BOOM"}
+
+def test_ready(processes):
+    assert "listening on 8080" in processes.output("w:srv")
+    assert processes.wait_for("w:srv", r"tick (\\d)").group(1) == "1"
+
+def test_fail_on(processes):
+    processes.wait_for("w:srv", "BOOM")
+"""
+
+
+def _pytest_output(tmp_path, mode, ready):
+    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
+    (tmp_path / "srv.py").write_text(SERVER)
+    (tmp_path / "test_inner.py").write_text(OUTPUT_TESTS % ready)
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+    env["PYTHONPATH"] = SRC
+    proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+                           f"--lte-mode={mode}", "--lte-keep=never", "test_inner.py"],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+    return proc, proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("mode", ["shell", "tmux"])
+def test_ready_wait_for_and_fail_on(tmp_path, mode):
+    proc, out = _pytest_output(tmp_path, mode, r"listening on \d+")
+    assert proc.returncode == 1, out
+    assert "1 failed, 1 passed" in out
+    assert "FAILED test_inner.py::test_fail_on" in out
+    assert "w:srv printed 'BOOM' (FAIL_ON 'BOOM')" in out
+
+
+@pytest.mark.parametrize("mode", ["shell", "tmux"])
+def test_not_ready(tmp_path, mode):
+    proc, out = _pytest_output(tmp_path, mode, "never printed")
+    assert proc.returncode == 1, out
+    assert "not ready: w:srv printed no line matching 'never printed' within 2s" in out

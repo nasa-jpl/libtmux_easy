@@ -14,7 +14,8 @@ terminal, and the exit code is CMD's.
 2. Set `history-limit`. It applies only to later panes, hence a throwaway
    first window.
 3. Open the dashboard with home running `cat`.
-4. Set `remain-on-exit` and `pipe-pane` to a transcript.
+4. Set `remain-on-exit` and `pipe-pane` to a transcript. Not a library
+   capture: `capture()` skips the home pane, and a watch on it fails.
 5. `respawn-pane -k` home with the runner.
 
 The runner restores env and cwd (keeping the pane's `TMUX`, `TMUX_PANE`,

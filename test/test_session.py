@@ -57,6 +57,21 @@ class TestWindowsAndPanes:
         assert "before=from_before" in pane_text(pane)
         assert session.commands["main:p"] == ["echo before=$LTE_X", "echo sent_$((6*7))"]
 
+    def test_default_mode(self, make_session):
+        session = make_session(mode=PANE_MODE_EXEC)
+        exec_pane = session.new_pane("a", "sleep 30")
+        assert session.set_default_mode(PANE_MODE_WRAP) == PANE_MODE_EXEC
+        wrap_pane = session.new_pane("b", "sleep 30")
+        shell_pane = session.new_pane("c", "sleep 30", mode="shell")  # explicit wins
+
+        assert session.pane_modes[exec_pane.id] == PANE_MODE_EXEC
+        assert session.pane_modes[wrap_pane.id] == PANE_MODE_WRAP
+        assert session.pane_modes[shell_pane.id] == "shell"
+        with pytest.raises(ValueError, match="mode must be one of"):
+            session.set_default_mode("bogus")
+        with pytest.raises(ValueError, match="mode must be one of"):
+            TmuxSession.create("lte-test-bad-mode", mode="bogus")
+
     def test_env_levels(self, make_session):
         """Session, window and pane env merge, later levels winning; the
         window's reused first pane gets it too; SKIP_ENV never goes in."""
@@ -261,3 +276,20 @@ def test_status_file_and_title(make_session, tmp_path):
     assert wait_until(lambda: title(pane) == "x [stopped]")
     # The title and the file are updated one after the other: wait for both.
     assert wait_until(lambda: dash.read_status(path)[0]["stopped"] == "SIGINT")
+
+
+def test_status_after_session_closed(session, caplog):
+    """Closed under us (lte-close, tmux kill-session): exit events don't
+    raise, and status() reports the last known state."""
+    events = []
+    done = session.new_pane("done", "sh -c 'exit 3'", mode=PANE_MODE_WRAP)
+    session.wait_for_exit(done, timeout=5)
+    session.new_pane("busy", "sleep 60", mode=PANE_MODE_WRAP, on_exit=events.append)
+
+    session.server.cmd("kill-session", "-t", session.id)
+
+    assert wait_until(lambda: events)
+    by_name = {s.name: s for s in session.status()}
+    assert by_name["main:done"].exit_status.code == 3
+    assert not by_name["main:busy"].running
+    assert "raised" not in caplog.text

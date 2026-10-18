@@ -47,19 +47,37 @@ Copies the command's output to FILE, like `tee`, without taking its terminal.
 | where | how |
 |---|---|
 | tmux pane | `pipe-pane -O` into a FIFO a thread reads; the command keeps its tty |
-| pane already piped (lte-session's home), or no tmux | the command's stdout and stderr go to a pipe, echoed to ours; not a tty |
+| pane with a library capture (`capture()`, a watch) | the same: the run takes over the pane's one pipe |
+| pane piped by someone else (lte-session's home), or no tmux | the command's stdout and stderr go to a pipe, echoed to ours; not a tty |
+
+FILE is published in pane options, chained into the `pipe-pane` call, so
+the library's watches and `search_output()` follow it
+([output-match.md](output-match.md)):
+
+| option | value |
+|---|---|
+| `@lte_pipe_file` | FILE, absolute (not set for a FIFO) |
+| `@lte_pipe_from` | FILE's size at the start: `-a` runs match only what is new |
+| `@lte_pipe_id` | `lte-run-<pid>`: a rerun overwriting FILE with the same size is still new |
+| `@lte_pipe_tee` | `1` while the run owns the pipe; unset at the end |
 
 - Set up **before** the command starts: no first line is missed (tlaunch-pane
   needed a gate FIFO for this before).
 - On exit: drain until the copy is quiet for 0.15 s (at most 2 s), close the
-  pipe-pane, **then** send `exited`. Whoever acts on the exit reads a whole file.
+  pipe-pane (one tmux call, with unsetting `@lte_pipe_tee`), **then** send
+  `exited`. Whoever acts on the exit reads a whole file. The pane's earlier
+  capture is not restored.
 - Plain text by default: escapes stripped, CRLF to LF, a `\r`-redrawn line
   kept as its last state. `--raw` keeps the bytes.
 - FILE may be a FIFO (tlaunch-pane's): opened non-blocking, so a FIFO with no
   reader is an error, not a hang. Any open error: the command runs untee'd.
 - `$LTE_RUN_TEE` is removed from the command's environment, so an lte-run
   inside it doesn't tee again.
-- One pipe-pane per pane: a pane with a captured stream can't be teed twice.
+- One pipe-pane per pane: a library capture is taken over; a foreign pipe
+  is left alone (the pipe fallback above).
+- tmux runs the pipe command through formats and strftime: `#` and `%` in
+  the FIFO path are escaped.
+- tmux calls: 2 at the start (check the pipe; pipe plus publish), 1 at the end.
 
 ## Details that matter
 

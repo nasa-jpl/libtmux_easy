@@ -21,7 +21,7 @@ class Viewport:
         self.window = window
         self.run = run
         self.sidebar = sidebar or option(window, SIDEBAR_OPTION, run=run) or None
-        self._layout = None  # (pane count, window_layout), last seen intact
+        self._layout = None  # (pane count, window_layout, view's pane_index), last seen intact
 
     def option(self, name):
         """A window option of the dashboard window, or ''."""
@@ -99,9 +99,9 @@ class Viewport:
             # Intact (a missing home is handled by _put_back). Remember the
             # layout, mouse resizes and extra panes included, for _fit().
             count = sum(1 for w in panes.values() if w == self.window)
-            layout = self.run("display-message", "-p", "-t", self.window, "#{window_layout}")
+            layout = self.run("display-message", "-p", "-t", view, "#{window_layout} #{pane_index}")
             if layout:
-                self._layout = (count, layout[0].strip())
+                self._layout = (count, *layout[0].split())
             return
         if panes.get(home) == self.window:
             pass  # home already back in the viewport
@@ -131,6 +131,13 @@ class Viewport:
         Restore the last intact layout; failing that, the sidebar's width."""
         count = sum(1 for w in self.panes().values() if w == self.window)
         if self._layout and self._layout[0] == count:
+            # The layout is positional: home goes back to the viewed pane's
+            # index first, past any extra pane under the sidebar.
+            for _ in range(count):
+                index = self.run("display-message", "-p", "-t", self.home, "#{pane_index}")
+                if not index or int(index[0]) >= int(self._layout[2]):
+                    break
+                self.run("swap-pane", "-d", "-D", "-t", self.home)
             self.run("select-layout", "-t", self.window, self._layout[1])
             return
         width = self.option(WIDTH_OPTION)

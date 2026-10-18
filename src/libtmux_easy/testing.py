@@ -8,11 +8,16 @@ A test module says what to launch, as 'window:name' -> command:
 
     PROCESSES = {"servers:web": "python3 -m http.server 8000"}
 
-    def test_serves(processes):
-        ...                      # processes.output("servers:web"), .check()
+    READY = {"servers:web": r"Serving HTTP"}       # optional: wait for these
+    FAIL_ON = {"*": [r"Traceback", r"ERROR"]}      # optional: a match fails the test
 
-The 'processes' fixture (module scope) starts them; a test fails if one
-exits before teardown, even if the test never noticed. Teardown stops them
+    def test_serves(processes):
+        ...                      # processes.output("servers:web"), .wait_for(), .check()
+
+The 'processes' fixture (module scope) starts them, and waits for each
+READY line (READY_TIMEOUT, default 30 s). A test fails if one exits before
+teardown, or prints a FAIL_ON line ("*": every process), even if the test
+never noticed. Teardown stops them
 (SIGINT, then SIGTERM, SIGKILL) and errors unless each exited 0 on SIGINT.
 
 Modes (--lte-mode; default auto: dash under lte-session, else tmux if
@@ -43,13 +48,16 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 
 from . import dash
 from ._tmux import option
+from .output import PaneExited
 from .status import ExitStatus, PaneStatus
 from .tmux_lib import PANE_MODE_WRAP, TmuxSession, _pane_cmd
+from .wrap import plain_line
 
 MODES = ("shell", "tmux", "dash")
 
@@ -133,16 +141,23 @@ class _TmuxBackend:
         self.prefix = prefix
         self.panes = {}  # name -> Pane
 
-    def start(self, name, command, setup, on_exit):
+    def start(self, name, command, setup, on_exit, on_line=None):
         window, _, pane_name = name.partition(":")
         if not any(n.partition(":")[0] == window for n in self.panes):
             self.session.new_window(f"{self.prefix}/{window}")
             self.session.send_command_before(setup, window=f"{self.prefix}/{window}")
         names = {}
+        on_output = {regex: (lambda m, r=regex: on_line(r, m.line)) for regex in on_line.patterns} \
+            if on_line else None
         pane = self.session.new_pane(pane_name, command, mode=PANE_MODE_WRAP,
-                                     on_exit=lambda s: on_exit(names[s.pane_id], s))
+                                     on_exit=lambda s: on_exit(names[s.pane_id], s),
+                                     on_output=on_output)
         names[pane.id] = name
         self.panes[name] = pane
+
+    def wait_for(self, name, regex, timeout):
+        """The first re.Match in the output; TimeoutError, or PaneExited."""
+        return self.session.wait_for_output(self.panes[name], regex, timeout).match
 
     def output(self, name):
         return "\n".join(_pane_cmd(self.panes[name], "capture-pane", "-p", "-J", "-S", "-").stdout)
@@ -155,10 +170,13 @@ class _TmuxBackend:
 
 
 class _Subprocess:
-    def __init__(self, name, command, on_exit, tty, lock):
+    def __init__(self, name, command, on_exit, tty, lock, on_line=None):
         self.name = name
         self.command = command
         self.lines = []
+        self.plain = []  # the lines as plain text, for matching
+        self.cond = threading.Condition()
+        self.done_reading = False
         self.stopped = None
         # stdin is a pty, as in a terminal. Some programs act on that: 'ros2
         # launch' with a non-tty stdin re-sends SIGINT to children that
@@ -173,9 +191,19 @@ class _Subprocess:
 
         def read():
             for line in self.proc.stdout:
-                self.lines.append(line)
+                plain = plain_line(line.rstrip("\n").encode()).decode()
+                with self.cond:
+                    self.lines.append(line)
+                    self.plain.append(plain)
+                    self.cond.notify_all()
                 with lock:
                     tty.write(f"[{name}] {line}")
+                for regex in (on_line.patterns if on_line else ()):
+                    if regex.search(plain):
+                        on_line(regex, plain)
+            with self.cond:
+                self.done_reading = True
+                self.cond.notify_all()
 
         def wait():
             self.proc.wait()
@@ -192,6 +220,25 @@ class _Subprocess:
         return PaneStatus(name=self.name, pane_id="", mode="subprocess", command=self.command,
                           target_pids=(self.proc.pid,), running=rc is None,
                           exit_status=exit_status, stopped=self.stopped)
+
+    def wait_for(self, regex, timeout):
+        """The first re.Match in the output; TimeoutError, or PaneExited."""
+        seen = 0
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while True:
+                for line in self.plain[seen:]:
+                    m = regex.search(line)
+                    if m:
+                        return m
+                seen = len(self.plain)
+                if self.done_reading:
+                    self.proc.wait()
+                    raise PaneExited(self.status())
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError(f"{self.name}: no line matching {regex.pattern!r}")
+                self.cond.wait(left)
 
     def stop(self, sigint_timeout):
         """SIGINT the group (a Ctrl-C), escalating like stop_pane()."""
@@ -217,10 +264,13 @@ class _ShellBackend:
         self.lock = threading.Lock()
         self.procs = {}
 
-    def start(self, name, command, setup, on_exit):
+    def start(self, name, command, setup, on_exit, on_line=None):
         if setup:
             command = f"{setup} && {command}"
-        self.procs[name] = _Subprocess(name, command, on_exit, self.tty, self.lock)
+        self.procs[name] = _Subprocess(name, command, on_exit, self.tty, self.lock, on_line)
+
+    def wait_for(self, name, regex, timeout):
+        return self.procs[name].wait_for(regex, timeout)
 
     def output(self, name):
         return "".join(self.procs[name].lines)
@@ -242,18 +292,44 @@ class _ShellBackend:
 class Processes:
     """Processes under test and their health, whatever the mode."""
 
-    def __init__(self, backend, commands, setup=None, checks=()):
+    def __init__(self, backend, commands, setup=None, checks=(), fail_on=None):
         self.backend = backend
         self.names = list(commands)
         self.checks = list(checks)
         self.died = []  # (name, PaneStatus) of each exit before shutdown
+        self.failed_on = []  # (name, pattern, line, during shutdown) of FAIL_ON matches
         self.stopping = False
+        fail_on = {name: [p] if isinstance(p, str) else list(p) for name, p in (fail_on or {}).items()}
         for name, command in commands.items():
-            backend.start(name, command, setup, self._on_exit)
+            patterns = [re.compile(p) for p in fail_on.get("*", []) + fail_on.get(name, [])]
+            backend.start(name, command, setup, self._on_exit, self._on_line(name, patterns))
 
     def _on_exit(self, name, status):  # a watcher thread
         if not self.stopping:
             self.died.append((name, status))
+
+    def _on_line(self, name, patterns):
+        if not patterns:
+            return None
+
+        def on_line(regex, line):  # a reader thread
+            self.failed_on.append((name, regex.pattern, line, self.stopping))
+        on_line.patterns = patterns
+        return on_line
+
+    def wait_for(self, name, pattern, timeout=10.0) -> "re.Match":
+        """Wait for the process to print a line matching 'pattern' (a regex,
+        searched in plain text); what it printed already counts. Fails the
+        test if it doesn't within 'timeout' s, or exits first."""
+        regex = re.compile(pattern)
+        try:
+            return self.backend.wait_for(name, regex, timeout)
+        except TimeoutError:
+            why = f"printed no line matching {pattern!r} within {timeout}s"
+        except PaneExited as exc:
+            why = f"{exc.status.exit_status} before printing a line matching {pattern!r}"
+        tail = self.output(name).strip().splitlines()[-8:]
+        raise AssertionError(f"{name} {why}; last output:\n    " + "\n    ".join(tail))
 
     def output(self, name) -> str:
         """Everything the process has printed so far."""
@@ -265,6 +341,8 @@ class Processes:
 
     def problems(self) -> list:
         found = [f"{name} {status.exit_status}" for name, status in self.died]
+        found += [f"{name} printed {line!r} (FAIL_ON {pattern!r})"
+                  for name, pattern, line, late in self.failed_on if not late]
         found += self._check_output()
         for name, _ in self.died:
             tail = self.output(name).strip().splitlines()[-8:]
@@ -288,6 +366,8 @@ class Processes:
             status = self.backend.status(name)
             if status.stopped not in (None, "SIGINT") or not status.exit_status.ok:
                 unclean.append(f"{name}: {status}")
+        unclean += [f"{name} printed {line!r} while stopping (FAIL_ON {pattern!r})"
+                    for name, pattern, line, late in self.failed_on if late]
         return unclean + self._check_output()
 
 
@@ -313,7 +393,15 @@ def processes(request, lte_pane_setup, lte_output_checks):
         backend = _ShellBackend(config.lte_tty)
     else:
         backend = _TmuxBackend(_run_session(config), request.module.__name__.rpartition(".")[2])
-    procs = Processes(backend, commands, lte_pane_setup, lte_output_checks)
+    procs = Processes(backend, commands, lte_pane_setup, lte_output_checks,
+                      getattr(request.module, "FAIL_ON", None))
+    ready_timeout = getattr(request.module, "READY_TIMEOUT", 30.0)
+    try:
+        for name, pattern in getattr(request.module, "READY", {}).items():
+            procs.wait_for(name, pattern, ready_timeout)
+    except AssertionError as exc:
+        procs.shutdown(getattr(request.module, "SIGINT_TIMEOUT", 10.0))
+        pytest.fail(f"not ready: {exc}", pytrace=False)
     yield procs
     unclean = procs.shutdown(getattr(request.module, "SIGINT_TIMEOUT", 10.0))
     if unclean:

@@ -14,6 +14,11 @@ _EXPORTS = (
     "PANE_MODE_SHELL",
     "PANE_MODE_EXEC",
     "PANE_MODE_WRAP",
+    "Capture",
+    "OutputExpect",
+    "OutputMatch",
+    "OutputWatch",
+    "PaneExited",
 )
 
 __all__ = list(_EXPORTS)

@@ -25,42 +25,77 @@ its id (`%3`) or the `Pane`.
 
 ## Installation
 
-| platform | method | installs |
+| you want | install | gets |
 |---|---|---|
-| Ubuntu / Debian | `.deb` (below) | library for the system Python, `lte-run`, `lte-session`, `lte-key` |
-| a venv | `pip install libtmux-easy` (`[dash]` for the dashboard) | library and commands, in the venv |
-| commands on PATH | `pipx install 'libtmux-easy[dash]'` | the commands, with Textual |
-| a checkout | `PYTHONPATH=src` | everything |
+| the commands on PATH | `pipx install 'libtmux-easy[dash]'` | `lte-run`, `lte-session`, `lte-dash`, `lte-key` (own venv) |
+| the library for the system Python (ROS) | `.deb` from [Releases](https://github.com/nasa-jpl/libtmux_easy/releases) | library, `lte-run`, `lte-session`, `lte-key` |
+| both, Ubuntu | `.deb`, plus pipx for `lte-dash` | everything |
+| a venv | `pip install 'libtmux-easy[dash]'` | library and commands, in the venv |
+| to develop | `uv sync` in a checkout | `.venv`: editable package, Textual, pytest |
+
+Not on PyPI yet: use `'libtmux-easy[dash] @ git+https://github.com/nasa-jpl/libtmux_easy'`.
+
+```bash
+pipx install 'libtmux-easy[dash]'
+sudo apt install ./python3-libtmux-easy_0.2.0_all.deb
+```
+
+- pipx only gives you the commands: its venv is private, so `import libtmux_easy`
+  needs the `.deb`, a venv, or `--user` below.
+- The `.deb` leaves out `lte-dash` (apt's Textual is too old). The library finds a
+  pipx `lte-dash` on PATH. Install the same version of both.
+- For ROS, make the venv with `python3 -m venv --system-site-packages` so it sees
+  `rclpy` (and the `.deb`, if installed).
+- Wrap-mode panes type `lte-run`: it must be on each pane's PATH, not only the
+  script's (pipx, the `.deb`, or `send_command_before("source .venv/bin/activate")`).
+
+### Without root, venv or pipx: `--break-system-packages`
+
+```bash
+sudo apt install python3-libtmux python3-psutil python3-packaging   # once, if allowed
+pip install --user --break-system-packages --no-deps libtmux-easy
+```
+
+- `--user` writes only `~/.local` (commands in `~/.local/bin`); it never touches `/usr`.
+- The risk is shadowing: PyPI copies of libtmux, psutil etc. in `~/.local` win over
+  apt's for every program you run with `python3`. `--no-deps` plus the apt
+  packages avoids that. Drop `--no-deps` if apt isn't an option.
+- `[dash]` adds Textual and rich to `~/.local`; prefer pipx for `lte-dash`.
+- Undo: `pip uninstall --break-system-packages libtmux-easy`.
+
+### Building the `.deb`
 
 ```bash
 sudo apt install build-essential debhelper dh-python python3-all \
                  python3-setuptools pybuild-plugin-pyproject
-dpkg-buildpackage -us -uc -b && sudo apt install ../python3-libtmux-easy_0.1.0_all.deb
+dpkg-buildpackage -us -uc -b && sudo apt install ../python3-libtmux-easy_*_all.deb
 ```
 
-- The `.deb` leaves out `lte-dash`: apt's Textual is too old (use pipx).
-- A venv sees the `.deb` only if made with `--system-site-packages`.
-- Wrap-mode panes type the bare `lte-run`: it must be on each pane's PATH
-  (`send_command_before("source .venv/bin/activate")`, or pipx).
-- Version bumps go in both `pyproject.toml` and `debian/changelog`.
+Releases: bump `pyproject.toml` and `debian/changelog`, then push a `v*` tag. CI
+checks the versions match, runs the tests, builds the wheel and `.deb`, and
+publishes them to GitHub Releases and PyPI.
 
 ## API
 
 | method | |
 |---|---|
-| `TmuxSession.create(name, status_file=None, env=None)` | new session (replaces one of that name) |
-| `TmuxSession.current(env=None)` | adopt the session this process runs in |
+| `TmuxSession.create(name, status_file=None, env=None, mode="shell")` | new session (replaces one of that name); `mode=`: default pane mode |
+| `TmuxSession.current(env=None, mode="shell")` | adopt the session this process runs in |
 | `new_window(name, layout="tiled", env=None)` | new window; the next panes go in it |
-| `new_pane(name, cmd, mode="shell", on_exit=None, env=None, tee=None)` | new pane running `cmd`; `tee=` (wrap mode) also writes its output to a file |
+| `new_pane(name, cmd, mode=None, on_exit=None, env=None, tee=None)` | new pane running `cmd`; `mode=None` takes the default; `tee=` (wrap mode) also writes its output to a file |
+| `set_default_mode(mode)` | mode for later `new_pane()` calls without `mode=`; returns the old one |
 | `send_keys(cmd, target_pane=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
 | `copy_environment(env=None)` | add `env` (default `os.environ`) to the session's; see Environment |
 | `select_window()`, `select_pane()`, `attach()` | |
 | `is_running(pane)`, `exit_status(pane)` | liveness; `ExitStatus` (`.code`, `.signal`, `.ok`, `.known`) |
 | `watch_pane(pane, on_exit)`, `wait_for_exit(pane, timeout)` | exit events |
+| `capture(target, path)`, `search_output(target, pattern)` | save a pane's, window's or session's output to files (`pipe-pane`); grep them later. Also `capture=` on `create`, `new_window`, `new_pane` |
+| `watch_output(target, pattern, cb)`, `wait_for_output(pane, pattern, timeout)`, `expect(pane, pattern)` | output events; also `new_pane(on_output={pattern: cb})`. See `docs/output-match.md` |
 | `stop_pane(pane)`, `stop_all()` | SIGINT, then SIGTERM, then SIGKILL; `stop_all()` in parallel |
 | `respawn_pane(pane, cmd=None)` | rerun in place, any mode |
 | `pane_status(pane)`, `status()`, `print_status()` | `PaneStatus`: `.state` running / stopped / ok / failed / unknown |
 | `dashboard()`, `dashboard_pane()`, `close_dashboard()` | see Dashboard |
+| `on_close(action, when="after")`, `close()`, `bind_close_key(key="C-x")` | see Closing a session |
 | `kill_session()`, `release(keep_windows=False)` | end, or let go and leave windows up |
 
 Status is also on each pane's border title (`server [exited 3]`), and with
@@ -110,7 +145,7 @@ Ctrl-C, Ctrl-Z / `fg` and stdin work as usual. Shell operators typed by hand
 |---|---|
 | `--tee FILE` | also copy the output to FILE, like `tee` (stdout and stderr, one stream); `-a` appends |
 | `LTE_RUN_TEE=FILE` | the same, from the environment (`--tee` wins); not passed on to the command |
-| in a tmux pane | the command keeps its terminal: tmux's `pipe-pane` copies the output |
+| in a tmux pane | the command keeps its terminal: tmux's `pipe-pane` copies the output. Takes over the pane's `capture()` pipe for the run; the pipe closes when the command ends |
 | elsewhere | the command writes to a pipe, as with `cmd 2>&1 \| tee FILE` |
 | file contents | plain text: escapes dropped, `\r` redraws collapsed (`--raw` keeps them); complete when the exit is reported |
 
@@ -174,12 +209,16 @@ pytest_plugins = ["libtmux_easy.testing"]
 # test_web.py
 PROCESSES = {"servers:web": "python3 -m http.server 8000"}
 
+READY = {"servers:web": r"Serving HTTP"}  # optional: wait for it before the tests
+FAIL_ON = {"*": r"Traceback"}             # optional: a match fails the test
+
 def test_serves(processes):
-    ...                              # processes.output("servers:web"), processes.check()
+    ...          # processes.output("servers:web"), .wait_for(name, pattern), .check()
 ```
 
-`processes` (module scope) starts `PROCESSES`. A test fails if one exits
-before teardown, even if the test never noticed. Teardown stops them and
+`processes` (module scope) starts `PROCESSES` and waits for `READY`. A test
+fails if one exits before teardown, or prints a `FAIL_ON` line, even if the
+test never noticed. Teardown stops them and
 errors unless each exited 0 on SIGINT.
 
 | `--lte-mode` | processes | after the run |
@@ -210,7 +249,8 @@ sess.close()                                      # or do it all from the script
 
 Without a script: `lte-close add -- ./cleanup.sh`, and in `~/.tmux.conf`
 `bind-key C-x run-shell -b "lte-close -t '#{session_id}'"`. The dashboard's
-`Q` `Q` runs `lte-close` too. See `docs/session-close.md`.
+`Q` `Q` runs `lte-close` too. Every way to stop panes or close a session, and
+which to use: `docs/session-close.md`.
 
 ## lte-session
 

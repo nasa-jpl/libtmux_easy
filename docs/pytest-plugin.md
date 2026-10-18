@@ -7,6 +7,8 @@ pytest_plugins = ["libtmux_easy.testing"]
 # test_web.py
 PROCESSES = {"servers:web": "python3 -m http.server 8000"}
 SIGINT_TIMEOUT = 10                       # optional
+READY = {"servers:web": r"Serving HTTP"}  # optional; READY_TIMEOUT = 30
+FAIL_ON = {"*": [r"Traceback"]}           # optional; "*" is every process
 
 def test_serves(processes): ...
 ```
@@ -33,12 +35,16 @@ A kept session is printed in the summary: `tmux attach -t lte_test_<pid>`.
 
 | when | check | outcome |
 |---|---|---|
+| setup | each `READY` line, within `READY_TIMEOUT` | ERROR with the last output |
 | a process exits mid-module | `on_exit` records it | |
+| a process prints a `FAIL_ON` line | output watch records it | as a death |
 | after each test | `pytest_runtest_call` hookwrapper | test FAILED with the process's last output |
 | any time | `lte_output_checks` callables over output | same; catches deaths only output shows |
 | teardown | `shutdown()`: SIGINT, escalating | ERROR unless each exited 0 on SIGINT |
 
-`Processes`: `output(name)`, `problems()`, `check()`, `shutdown(sigint_timeout)`.
+`Processes`: `output(name)`, `wait_for(name, pattern, timeout)` (`re.Match`),
+`problems()`, `check()`, `shutdown(sigint_timeout)`. Matching:
+[output-match.md](output-match.md).
 
 ## Hooks for the app
 

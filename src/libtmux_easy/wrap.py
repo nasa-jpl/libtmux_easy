@@ -13,6 +13,8 @@ same output, same exit status -- so it is always safe to prepend.
               stderr, as one stream. In a tmux pane the command keeps its
               terminal (tmux copies the pane's output); elsewhere its output
               goes through a pipe. FILE is complete when the exit is reported.
+              Takes over the pane's capture pipe (TmuxSession.capture()) for
+              the run; the pipe closes when the command ends.
   -a          append to FILE instead of overwriting it
   --raw       keep terminal escapes and carriage returns (default: plain text)
 
@@ -41,6 +43,58 @@ DIR_OPTION = "@lte_dir"   # tmux session option set by TmuxSession
 DIR_ENV = "LTE_DIR"       # overrides DIR_OPTION; for tests and non-tmux use
 SOCKET_NAME = "ctl.sock"
 TEE_ENV = "LTE_RUN_TEE"   # a default for --tee
+PIPE_FILE_OPTION = "@lte_pipe_file"  # pane option: the file the pane's output goes to
+PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capture began
+PIPE_TEE_OPTION = "@lte_pipe_tee"    # pane option: lte-run --tee has the pipe
+PIPE_ID_OPTION = "@lte_pipe_id"      # pane option: new for each pipe (a rerun's same file)
+_PIPE_REQ = "@lte_pipe_req"          # pane options: a pipe request, see guarded_pipe()
+
+# When a pane may be piped: not piped, or piped by a capture (it has a file).
+# A capture of the library's, unless lte-run --tee has it; with_tee, either.
+_FREE = (f"#{{||:#{{==:#{{pane_pipe}},0}},"
+         f"#{{&&:#{{{PIPE_FILE_OPTION}}},#{{!=:#{{{PIPE_TEE_OPTION}}},1}}}}}}")
+_FREE_WITH_TEE = f"#{{||:#{{==:#{{pane_pipe}},0}},#{{{PIPE_FILE_OPTION}}}}}"
+
+
+def _on_own_server(pane, commands):
+    """tmux args that run the tmux command strings 'commands' only on the
+    server this process started under. A server that exited and a new one
+    reuse pane ids: our '%0' would be someone else's pane."""
+    server_pid = (os.environ.get("TMUX", "").split(",") + ["", ""])[1]
+    if not server_pid.isdigit():
+        return [part for c in commands for part in (*shlex.split(c), ";")][:-1]
+    return ["if", "-F", "-t", pane, f"#{{==:#{{pid}},{server_pid}}}", " ; ".join(commands)]
+
+
+def guarded_unpipe(pane, *then):
+    """tmux args that close 'pane''s pipe, then run the tmux command
+    strings 'then', unless lte-run --tee has the pipe: checked in the same
+    tmux call, so a run starting meanwhile keeps it."""
+    commands = " ; ".join((f"pipe-pane -t {pane}", *then))
+    return ["if", "-F", "-t", pane, f"#{{!=:#{{{PIPE_TEE_OPTION}}},1}}", commands]
+
+
+def guarded_pipe(pane, command, options=None, with_tee=False):
+    """tmux args that pipe 'pane' to 'command' (formats escaped, as for
+    pipe-pane) and set its pane 'options' ({name: value}), but only if the
+    pane is free. The check and the pipe are one tmux call, so the library
+    and lte-run can't both see a free pane and pipe it. The call prints
+    "<pane> 1" if it piped the pane, "<pane> " if not."""
+    options = options or {}
+    req = [(f"{_PIPE_REQ}_cmd", command)] + \
+        [(f"{_PIPE_REQ}_{i}", value) for i, value in enumerate(options.values())]
+    ok = f"{_PIPE_REQ}_ok"
+    branch = f'pipe-pane -O -t {pane} "#{{E:{_PIPE_REQ}_cmd}}"' + "".join(
+        f' ; set -pF -t {pane} {name} "#{{{_PIPE_REQ}_{i}}}"' for i, name in enumerate(options)) + \
+        f" ; set -p -t {pane} {ok} 1"
+    args = ["set", "-p", "-u", "-t", pane, ok, ";"]
+    for name, value in req:
+        args += ["set", "-p", "-t", pane, name, value, ";"]
+    args += ["if", "-F", "-t", pane, _FREE_WITH_TEE if with_tee else _FREE, branch, ";",
+             "display", "-p", "-t", pane, f"{pane} #{{{ok}}}", ";"]
+    for name, _ in req + [(ok, None)]:
+        args += ["set", "-p", "-u", "-t", pane, name, ";"]
+    return args[:-1]
 
 # The terminal sends these to the whole foreground process group, so the
 # target already gets them directly. Ignoring them is what lets the wrapper
@@ -177,6 +231,28 @@ def signal_target(sig, target):
 _ESCAPES = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
                       rb"|\x1b[@-Z\\-_]")
 
+
+def plain_line(line):
+    """One line of pane output (bytes, no LF) as plain text: escapes dropped,
+    a trailing CR dropped, and a line redrawn with CR kept as its last state."""
+    if b"\x1b" not in line and b"\r" not in line:
+        return line  # the usual case: nothing to do
+    return _ESCAPES.sub(b"", line).rstrip(b"\r").rsplit(b"\r", 1)[-1]
+
+
+_CR_LF = re.compile(rb"\r+\n")
+_TO_LAST_CR = re.compile(rb"[^\n]*\r")
+
+
+def plain_text(data):
+    """plain_line() for every line of 'data' at once."""
+    if b"\x1b" in data:
+        data = _ESCAPES.sub(b"", data)
+    if b"\r" in data:
+        data = _TO_LAST_CR.sub(b"", _CR_LF.sub(b"\n", data).rstrip(b"\r"))
+    return data
+
+
 QUIET = 0.15  # after the command ends, its last output is taken to have arrived
               # once the copy has been this quiet (at most DRAIN seconds)
 DRAIN = 2.0
@@ -202,8 +278,8 @@ class Tee:
     passed on to our own stdout too. Plain text unless 'raw': escapes
     dropped, CRLF made LF, and a line redrawn with CR kept as its last state."""
 
-    def __init__(self, fd, raw):
-        self.fd, self.raw = fd, raw
+    def __init__(self, fd, raw, path=None):
+        self.fd, self.raw, self.path = fd, raw, path
         self.partial = b""
         self.pane = None       # pipe-pane: the pane, and the FIFO dir
         self.scratch = None
@@ -217,30 +293,54 @@ class Tee:
     def prepare(self):
         """Before the command starts, so not even its first line is missed."""
         pane = os.environ.get("TMUX_PANE")
-        if not (pane and os.environ.get("TMUX") and shutil.which("tmux")
-                and self._pipe_pane(pane)):
+        in_tmux = pane and os.environ.get("TMUX") and shutil.which("tmux")
+        publish = self._publish() if in_tmux else {}
+        if not (in_tmux and self._pipe_pane(pane, publish)):
             self.source, self.child_out = os.pipe()
             self.echo = True
+            if publish:
+                args = []
+                for name, value in publish.items():
+                    args += ["set", "-p", "-t", pane, name, value, ";"]
+                subprocess.run(["tmux", *args[:-1]], capture_output=True)
+
+    def _publish(self):
+        """Pane options naming FILE as the pane's output file, for watches
+        and searches; none for a FIFO."""
+        try:
+            if not (self.path and stat.S_ISREG(os.fstat(self.fd).st_mode)):
+                return {}
+            start = os.fstat(self.fd).st_size
+        except OSError:
+            return {}
+        return {PIPE_FILE_OPTION: os.path.abspath(self.path), PIPE_FROM_OPTION: str(start),
+                PIPE_ID_OPTION: f"lte-run-{os.getpid()}", PIPE_TEE_OPTION: "1"}
 
     def start(self):
         """After fork(): a thread before it would be copied half-way."""
         self.thread = threading.Thread(target=self._copy, daemon=True)
         self.thread.start()
 
-    def _pipe_pane(self, pane):
-        """tmux copies the pane's output to a FIFO we read. False when the
-        pane is already piped (e.g. lte-session's transcript): one pipe each."""
-        def tmux(*args):
-            return subprocess.run(["tmux", *args], capture_output=True, text=True)
-        if tmux("display-message", "-p", "-t", pane, "#{pane_pipe}").stdout.strip() != "0":
-            return False
+    def _pipe_pane(self, pane, publish=None):
+        """tmux copies the pane's output to a FIFO we read. A capture pipe
+        (TmuxSession.capture()) is taken over: tmux has one pipe per pane.
+        False when someone else's pipe is there (e.g. lte-session's
+        transcript)."""
         self.scratch = tempfile.mkdtemp(prefix="lte_tee_")
         fifo = os.path.join(self.scratch, "out")
         os.mkfifo(fifo)
         self.source = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
         self.hold = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-        if tmux("pipe-pane", "-O", "-t", pane, f"exec cat > {shlex.quote(fifo)}").returncode:
-            self._close()
+        # tmux expands formats and strftime in the command: '#' and '%' as themselves.
+        cat = f"exec cat > {shlex.quote(fifo)}".replace("#", "##").replace("%", "%%")
+        out = subprocess.run(["tmux", *guarded_pipe(pane, cat, publish, with_tee=True)],
+                             capture_output=True, text=True)
+        if out.returncode or "1" not in out.stdout.split():
+            for fd in (self.source, self.hold):  # not self.fd: the fallback writes it
+                os.close(fd)
+            self.source = self.hold = None
+            shutil.rmtree(self.scratch, ignore_errors=True)
+            self.scratch = None
             return False
         self.pane = pane
         return True
@@ -280,8 +380,7 @@ class Tee:
             *lines, self.partial = (self.partial + chunk).split(b"\n")
             if final and self.partial:
                 lines, self.partial = lines + [self.partial], b""
-            out = b"".join(_ESCAPES.sub(b"", line).rstrip(b"\r").rsplit(b"\r", 1)[-1] + b"\n"
-                           for line in lines)
+            out = b"".join(plain_line(line) + b"\n" for line in lines)
         try:
             if out:
                 os.write(self.fd, out)
@@ -298,8 +397,13 @@ class Tee:
             # A pipe ends when the command's processes close it; a background
             # child that keeps it open would hold us forever, hence the bound.
             self.thread.join(DRAIN if self.pane else 30)
-        if self.pane:
-            subprocess.run(["tmux", "pipe-pane", "-t", self.pane], capture_output=True)
+        pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
+        commands = [f"pipe-pane -t {self.pane}"] if self.pane else []
+        if pane and shutil.which("tmux"):
+            commands.append(f"set -p -u -t {pane} {PIPE_TEE_OPTION}")
+        if commands:
+            subprocess.run(["tmux", *_on_own_server(pane or self.pane, commands)],
+                           capture_output=True)
         self._close()
 
     def _close(self):
@@ -360,7 +464,7 @@ def main(argv=None, channel=None):
     os.environ.pop(TEE_ENV, None)  # the command inherits os.environ
     if opts["tee"]:
         try:
-            tee = Tee(open_tee(opts["tee"], opts["append"]), opts["raw"])
+            tee = Tee(open_tee(opts["tee"], opts["append"]), opts["raw"], opts["tee"])
             tee.prepare()
         except OSError as exc:  # the command still runs, untee'd: its status matters more
             sys.stderr.write(f"lte-run: --tee {opts['tee']}: {exc.strerror or exc}\n")
@@ -387,6 +491,7 @@ def main(argv=None, channel=None):
             os.execvp(argv[0], argv)
         except OSError as exc:
             sys.stderr.write(f"lte-run: {argv[0]}: {exc.strerror}\n")
+            sys.stderr.flush()  # os._exit skips it; 3.8 buffers stderr to a pipe
             os._exit(127 if isinstance(exc, FileNotFoundError) else 126)
 
     if tee is not None:

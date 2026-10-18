@@ -14,6 +14,13 @@
   `test_signal_distinguished_from_code` is `xfail`.
 - **Workaround: wrap mode.** The main reason it exists.
 
+**tmux drops output written just before a pane's process exits.**
+- tmux 3.4, raw tmux: gone from the screen, `pipe-pane` and control-mode
+  `%output` with an immediate exit; kept with 0.1 s to spare.
+- Hits exec mode only (the command is the pane's process). Effect: a
+  capture, an output watch or `capture-pane` misses a crash's last line.
+- **Workaround: wrap or shell mode** (the shell outlives the command).
+
 ## Limits by design
 
 | issue | workaround |
@@ -25,6 +32,10 @@
 | `kill_session()` only sends SIGHUP | `stop_all()` first |
 | A Ctrl-C typed by hand counts as failed | none: intent is unknowable |
 | Linux only (pidfds, `/proc`) | |
+| One pipe per pane (tmux): a pane piped by another tool (lte-session's home) can't be captured or watched | wrap the command in a pane of its own |
+| `pipe-pane` run after a split misses the first line | the library chains it into the split, or a hook does |
+| A watch keeps its last 1000 matches (`.count` has all) | a callback |
+| `refresh-client -A '%id:off'` (per-pane output filter) segfaults tmux 3.4 with a normal client attached | not used: pipes instead |
 
 ## Open bugs
 

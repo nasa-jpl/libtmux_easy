@@ -79,15 +79,23 @@ def main(argv=None):
             sys.stderr.write(f"lte-dash: {exc}\n")
             key = ""
 
+    hung = []
+
     def hung_up(signum, _frame):
-        # The window or session was killed: leave through the finally below,
-        # so the key is given back.
-        raise SystemExit(128 + signum)
+        # The window or session was killed: skip the cleanup, but leave through
+        # the finally below, so the key is given back. Ask Textual to exit:
+        # Textual 6 (Python 3.8) swallows a SystemExit raised here, then spins
+        # on the dead terminal. The alarm is the backstop if the exit stalls.
+        hung.append(128 + signum)
+        signal.alarm(5)
+        app.exit(128 + signum)
 
     signal.signal(signal.SIGHUP, hung_up)
     signal.signal(signal.SIGTERM, hung_up)
     try:
         app.run()
+        if hung:
+            return hung[0]
         if app.return_code:
             input("lte-dash crashed. Press Enter to close. ")
         # However it ended, put every pane back and close the dashboard window --
