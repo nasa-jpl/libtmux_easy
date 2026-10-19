@@ -489,6 +489,10 @@ class OutputReader(threading.Thread):
             lines.append(src.buf[:MAX_LINE])
             src.buf = src.buf[MAX_LINE:]
         fired, src.fired = src.fired, set()
+        if src.name is None:
+            # Found as it was split, before new_pane() named it; the next
+            # sync can be a second away.
+            src.name = self._names(src.pane_id)
         if lines:
             self._match_batch(src, lines, base, self._covering(src), time.time(), fired)
         return True

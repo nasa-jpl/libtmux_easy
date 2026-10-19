@@ -1,5 +1,6 @@
 """TmuxSession: sessions, windows and panes; exit status in shell and exec
 mode; stopping (stop_pane, stop_all) and the stopped state."""
+import os
 import time
 
 import pytest
@@ -25,6 +26,17 @@ class TestWindowsAndPanes:
         window = session.new_window("w")
         assert window.name == "w"
         assert len(session.windows) == 1
+
+    def test_first_pane_replaces_the_placeholder(self, session, tmp_path):
+        """A window's placeholder pane is gone once the first pane is split
+        off it: every pane is named, and a capture keeps no file for it."""
+        session.capture(None, str(tmp_path))
+        session.new_pane("a", "sleep 30")
+        session.new_window("w")
+        pane = session.new_pane("p", "sleep 30", env={"LTE_X": "1"})
+        assert [p.id for p in session.current_window.panes] == [pane.id]
+        assert all(session.get_pane_name(p) for w in session.windows for p in w.panes)
+        assert sorted(os.listdir(tmp_path)) == ["main.a.log", "w.p.log"]
 
     def test_names_lookup_and_select(self, session):
         """Names are unique per window, and find panes and windows."""
@@ -229,6 +241,19 @@ def test_wait_for_exit_after_it_ended(session, mode, cmd):
     if mode == PANE_MODE_EXEC:
         status = _exec_status(session, pane)
     assert status.code == 7
+
+
+def test_shell_loop_runs_until_the_loop_ends(session):
+    """A loop the shell runs itself: each child exiting isn't the end, and
+    nothing is typed into it. The loop's own status is the exit status."""
+    calls = []
+    pane = session.new_pane("loop", "for i in 1 2 3; do sleep 0.5; done; false",
+                            on_exit=calls.append)
+    time.sleep(0.8)  # the first sleep is gone
+    assert session.is_running(pane) and not calls
+    assert wait_until(lambda: calls, timeout=10) and len(calls) == 1
+    assert session.exit_status(pane).code == 1
+    assert pane_text(pane).count("echo __LTE_EXIT__") == 1  # probed once, at the end
 
 
 def test_exec_pane_exiting_at_once_in_a_split(session):

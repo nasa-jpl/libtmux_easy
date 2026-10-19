@@ -30,7 +30,7 @@ from .dash.homelog import _SkipIfTeed, _Tee
 from .output import (POLL as _OUTPUT_POLL, QUIET as _OUTPUT_QUIET, Capture, OutputExpect,
                      OutputMatch, OutputReader, OutputWatch, PaneExited, file_size, plain_lines,
                      typed_echo)
-from .proc import pane_child_processes, pane_process, proc_alive
+from .proc import pane_child_processes, pane_process, proc_alive, proc_stat
 from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _WrapRun
 from .wrap import (DIR_OPTION, PIPE_FILE_OPTION as PIPE_FILE, PIPE_FROM_OPTION as PIPE_FROM,
@@ -65,8 +65,13 @@ _RUN_START = 5.0
 # new_pane() types into it anyway (e.g. a PS1 that draws nothing).
 _SHELL_START = 5.0
 
-# Holds a reused pane, printing nothing, until exec mode respawns it.
-_SILENT = "sleep 2147483647"
+# A shell pane's command is done once its shell has sat idle (no child, not
+# running) this long: a loop the shell runs itself starts children in turn.
+_SHELL_SETTLE = 0.3
+
+# A new window's first pane: a placeholder, printing nothing, which the first
+# new_pane() splits and then kills. tmux has no window without a pane.
+_PLACEHOLDER = "sleep 2147483647"
 
 
 def _check_mode(mode: str) -> str:
@@ -197,8 +202,8 @@ def _set_pane_title(pane: Pane, pane_name: str):
 
 def _create_session(session_name, kill_existing=True, **kwargs):
     """A new session named 'session_name' (replacing one of that name if
-    'kill_existing'), its window 'unnamed' and pane. Returns (session,
-    window, pane)."""
+    'kill_existing'), its window 'unnamed' and that window's placeholder
+    pane. Returns (session, window, pane)."""
     old = [s for s in _server.sessions if s.name == session_name]
     if old:
         if not kill_existing:
@@ -207,6 +212,7 @@ def _create_session(session_name, kill_existing=True, **kwargs):
         _kill(old[0])
     else:
         logger.info(f"Creating new session named {session_name}")
+    kwargs.setdefault("window_command", _PLACEHOLDER)
     session = _server.new_session(session_name=session_name, **kwargs)
     window = session.windows[0]
     pane = window.panes[0]
@@ -225,8 +231,9 @@ class TmuxSession(Session):
     create() or current().
 
     Stateful, like matplotlib: new_pane() goes in the window new_window()
-    made last. A new session's first window, and a new window's first pane,
-    are reused by the first new_window() / new_pane(); later calls split.
+    made last. A new session's first window is reused by the first
+    new_window(). Every pane is split off: a new window's own first pane is
+    a placeholder, killed once new_pane() has split the first one off it.
 
     Window names are unique, pane names unique within their window. A pane
     is named 'window:pane'; anything that takes a pane also takes its id
@@ -449,8 +456,9 @@ class TmuxSession(Session):
         env: Optional[Mapping[str, str]] = None,
         capture: Union[None, bool, str] = None, **window_kwargs
     ) -> Window:
-        """A new window named 'name'; the next new_pane() reuses its first
-        pane. 'layout' is re-applied after each split (None: tmux's own).
+        """A new window named 'name', holding only a placeholder pane until
+        the first new_pane(). 'layout' is re-applied after each split (None:
+        tmux's own).
 
         'env' goes into every pane new_pane() makes in this window, on top of
         the session's (copy_environment()). tmux has no window environment,
@@ -471,6 +479,7 @@ class TmuxSession(Session):
             if name in [w.name for w in self.windows]:
                 raise ValueError(f"Window name {name} already exists.")
 
+            window_kwargs.setdefault("window_shell", _PLACEHOLDER)
             window = super().new_window(name, **window_kwargs)
             self._own_windows.append(window.id)
 
@@ -522,45 +531,41 @@ class TmuxSession(Session):
                 self.server.cmd("set-environment", "-t", self.id, name, value)
 
     def _claim_pane(self, name, env=None, **split_kwargs):
-        """Return (pane, reused, env) for the pane 'name' should occupy -- either
-        the window's initial unnamed pane (first call after new_window) or a
-        freshly split one. 'reused' matters to callers that must respawn the
-        pane, since a reused pane is already running its login shell. 'env' is
-        the pane's: session, window and 'env' merged. A split pane starts with
-        it; a reused one gets it only when respawned (respawn-pane -e)."""
-        env = {**self._session_env, **self._window_env.get(self.current_window.id, {}),
-               **pane_env(env)}
+        """Split the pane 'name' off the current window. Returns (pane, env):
+        'env' is the pane's, session, window and 'env' merged, which it
+        starts with. The window's placeholder is the first split's target,
+        then killed: every pane is made the same way, with its environment,
+        its command (exec mode) and its capture pipe from the start."""
+        window = self.current_window
+        env = {**self._session_env, **self._window_env.get(window.id, {}), **pane_env(env)}
         capture = self._new_pane_file(name)
-        if self.unnamed_pane[self.current_window.id]:
-            pane = self.current_window.panes[0]
-            self.set_pane_title(pane, name)
-            self.unnamed_pane[self.current_window.id] = False
-            self._pane_env[pane.id] = env
-            if "shell" in split_kwargs:
-                # Exec mode respawns it with the command; its login shell goes
-                # first, before the pipe, so what that shell prints while it
-                # starts (its prompt) isn't captured as the command's output.
-                self._respawn(pane, {}, _SILENT)
-            self._claimed(pane, True, capture)
-            return pane, True, env
-
-        full_name = self._full_pane_name(self.current_window, name)
+        full_name = self._full_pane_name(window, name)
         if full_name in self.pane_names:
-            raise ValueError(
-                f"Pane name {name} already exists in window {self.current_window.name}."
-            )
+            raise ValueError(f"Pane name {name} already exists in window {window.name}.")
+        placeholder = window.panes[0].id if self.unnamed_pane.get(window.id) else None
+        if placeholder:
+            split_kwargs.setdefault("target", placeholder)
         if env:
             split_kwargs["environment"] = env
         if capture:
             self._arm_pipe(capture)
         try:
-            pane = self.split_window(self.current_window, name, **split_kwargs)
+            pane = self.split_window(window, name, **split_kwargs)
         finally:
             if capture:
                 self._disarm_pipe()
+        if placeholder:
+            # A capture of the session or window piped it too: an empty file.
+            path = self._pipe_info(placeholder)[2]
+            self._tmux_run("kill-pane", "-t", placeholder)
+            if path and os.path.isfile(path) and not os.path.getsize(path):
+                os.remove(path)
+            self.unnamed_pane[window.id] = False
+            if getattr(window, "layout_str", None):
+                window.select_layout(window.layout_str)
         self._pane_env[pane.id] = env
-        self._claimed(pane, False, capture)
-        return pane, False, env
+        self._claimed(pane, capture)
+        return pane, env
 
     def new_pane(
         self,
@@ -629,10 +634,6 @@ class TmuxSession(Session):
         command's immediate child process(es) to appear -- the pids that
         is_running()/exit_status()/on_exit are actually judged on. See
         _capture_target_pids().
-
-        Caveat: exec mode relies on split_window(shell=...), which needs
-        libtmux >= 0.21. _claim_pane()'s reuse path uses respawn-pane instead,
-        so it works on any version.
         """
         mode = _check_mode(self.default_mode if mode is None else mode)
         if tee is not None and mode != PANE_MODE_WRAP:
@@ -721,11 +722,9 @@ class TmuxSession(Session):
     def _new_shell_pane(self, name, command, before, enter, mode, env, _tee=None,
                         **pane_kwargs):
         """Shell and wrap mode: type 'command' into the pane's shell."""
-        pane, reused, env = self._claim_pane(name, env, **pane_kwargs)
+        pane, env = self._claim_pane(name, env, **pane_kwargs)
         if _tee is not None:
             self._pane_tee[pane.id] = _tee
-        if reused and env:
-            self._respawn(pane, env)  # its shell predates 'env': a fresh one with it
         self._wait_shell_ready(pane)
         if before:
             self._type(pane, before, enter=True)
@@ -778,18 +777,13 @@ class TmuxSession(Session):
         before = self._tmux_run("show-options", "-wqv", "-t", window, "remain-on-exit")
         self._tmux_run("set-option", "-wq", "-t", window, "remain-on-exit", "on")
         try:
-            pane, reused, env = self._claim_pane(name, env, shell=shell_command, **pane_kwargs)
+            pane, env = self._claim_pane(name, env, shell=shell_command, **pane_kwargs)
         finally:
             if before:
                 self._tmux_run("set-option", "-wq", "-t", window, "remain-on-exit", before[0])
             else:
                 self._tmux_run("set-option", "-wqu", "-t", window, "remain-on-exit")
         self._set_remain_on_exit(pane)  # the pane's own, from now on
-
-        if reused:
-            # The reused initial pane still runs its login shell: the 'shell'
-            # kwarg above never applied to it.
-            self._respawn(pane, env, shell_command)
         return pane
 
     @staticmethod
@@ -934,7 +928,7 @@ class TmuxSession(Session):
             return super().attach()
 
     def _pane_mode(self, pane):
-        """Panes not created through new_pane() (e.g. a window's initial pane) are
+        """Panes not created through new_pane() (e.g. made by hand) are
         treated as shell panes."""
         return self.pane_modes.get(pane.id, PANE_MODE_SHELL)
 
@@ -970,6 +964,8 @@ class TmuxSession(Session):
         targets = self.pane_targets.get(pane.id)
         if targets:
             alive = any(proc_alive(p) for p in targets)
+            if not alive and self._pane_mode(pane) == PANE_MODE_SHELL:
+                return bool(self._shell_busy(pane))
             if alive or self._pane_mode(pane) != PANE_MODE_EXEC:
                 return alive
             # Exec mode: the OS-level pid can be reaped a beat before tmux's
@@ -982,6 +978,37 @@ class TmuxSession(Session):
         if self._pane_mode(pane) == PANE_MODE_EXEC:
             return not self._pane_is_dead(pane)
         return bool(pane_child_processes(pane))
+
+    def _shell_busy(self, pane, settle=0.0):
+        """Whether a shell pane whose targets are gone still runs its command:
+        'while sleep 2; do curl ...; done' is run by the shell itself, one
+        child at a time. Children found become the new targets. With
+        'settle', busy unless the shell stays idle that long. Returns the
+        children, True (busy, none), or False (idle). Once the status is
+        known, what runs is the user's, not ours."""
+        if pane.id in self._exit_status:
+            return False
+        shell = pane_process(pane)
+        if shell is None:
+            return False
+        deadline = time.time() + 3 * settle
+        idle_since = time.time()
+        while True:
+            children = pane_child_processes(pane)
+            if children:
+                self.pane_targets[pane.id] = tuple(children)
+                return children
+            stat = proc_stat(shell.pid)
+            if stat is None:
+                return False
+            now = time.time()
+            if stat[0] == "R":
+                idle_since = now
+            elif now - idle_since >= settle:
+                return False
+            if now >= deadline:
+                return True
+            time.sleep(0.02)
 
     def _pane_is_dead(self, pane) -> bool:
         """Whether tmux has recorded the pane's process as finished.
@@ -1034,6 +1061,8 @@ class TmuxSession(Session):
                     status = ExitStatus()
                 else:
                     status = self._probe_shell_status(pane)
+            elif self._shell_busy(pane, _SHELL_SETTLE):
+                return ExitStatus()  # typed into, the probe would feed the command
             else:
                 status = self._probe_shell_status(pane)
 
@@ -1347,6 +1376,18 @@ class TmuxSession(Session):
         watcher thread."""
         pane = self.get_pane(pane_id)
         if pane is not None:
+            if self._pane_mode(pane) == PANE_MODE_SHELL:
+                busy = self._shell_busy(pane, _SHELL_SETTLE)
+                if busy:
+                    # Not done: its shell started another child (now watched),
+                    # or is busy with none: look again soon.
+                    if busy is not True:
+                        self._ensure_watcher().watch(pane_id, busy)
+                    else:
+                        timer = threading.Timer(_SHELL_SETTLE, self._on_target_exit, (pane_id,))
+                        timer.daemon = True
+                        timer.start()
+                    return
             self.exit_status(pane)  # captures + caches, if not already cached
             self._refresh_pane_title(pane)
 
@@ -1563,11 +1604,10 @@ class TmuxSession(Session):
             return os.path.join(self._output_dir(keep=False), log)
         return None
 
-    def _claimed(self, pane, reused, capture):
+    def _claimed(self, pane, capture):
         """_claim_pane() has the pane: pipe it, arm new_pane(on_output=)."""
-        if capture is not None and (reused or self._pipe_info(pane.id)[2] != capture):
-            # A reused pane predates the hook; a split one only if it failed.
-            self._pipe(pane, capture)
+        if capture is not None and self._pipe_info(pane.id)[2] != capture:
+            self._pipe(pane, capture)  # the split's hook failed
         elif self._pending_capture is False and self._capture_hooked:
             self._unpipe(pane)  # new_pane(capture=False): the scope's hook piped it
         pending, self._pending_output = self._pending_output, None

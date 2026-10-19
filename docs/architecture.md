@@ -68,6 +68,9 @@ One copy each. The commands import them, so their modules stay light:
   `lte-session`): no unnamed first window, the dashboard is reused.
 - `create()` keeps the initial window (by id) and reuses it for the first
   `new_window()`, so a dashboard window opened first is never renamed.
+- A window starts with a placeholder pane (`sleep`, silent). The first
+  `new_pane()` splits off it, then kills it: every pane is named and made
+  the same way.
 - `kill_session()` only sends SIGHUP. Call `stop_all()` first for a clean
   shutdown.
 
@@ -93,9 +96,8 @@ One copy each. The commands import them, so their modules stay light:
 
 - Created session: `set-environment`, so panes made by hand get it too.
   Adopted (`current()`): only this script's panes get it.
-- Every library pane also gets the merged env with `-e` (split, or
-  `respawn-pane -e`). A window's reused first pane already runs a shell, so
-  it is respawned when there is any env. An exec pane's respawn reuses it.
+- Every library pane gets the merged env with `-e` when it is split, and
+  again on `respawn_pane()`.
 - `_tmux.SKIP_ENV` is never copied: tmux sets `TMUX*`/`TERM` per pane, and a
   copied `LTE_DIR` would send `lte-run` to another session's socket.
 

@@ -22,7 +22,8 @@ Wrap is the recommended mode; see [wrap-mode.md](wrap-mode.md).
   (and maybe the server) closes with its status. A split's command starts
   with the pane, so exec mode turns it on for the window during the split,
   then on the pane (the window's own value is put back).
-- A window's reused first pane ignores `shell=`; exec mode respawns it.
+- Every pane is a split, a window's first one too (split off its placeholder,
+  then the placeholder is killed), so `shell=` always applies.
 
 ## Target pids
 
