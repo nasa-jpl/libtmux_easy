@@ -38,8 +38,10 @@ HOME_LOG = "home.log"  # in the session's control dir; see TmuxSession.tee_home(
 
 # The prefix key the sidebar borrows while it runs (keys.py): back to the
 # dashboard from any window of its session, with no ~/.tmux.conf entry.
-# Elsewhere the key keeps its usual binding. "" borrows nothing.
+# Elsewhere the key keeps its usual binding. "" borrows nothing. Only if
+# unbound; ~/.tmux.conf's @lte_key_dash picks another (keys.chosen()).
 KEY = "g"
+KEY_ROLE = "dash"
 KEY_COMMAND = (f"run-shell \"tmux -S '#{{socket_path}}' select-window -t '#{{{WINDOW_OPTION}}}'"
                f" && tmux -S '#{{socket_path}}' select-pane -t '#{{{SIDEBAR_OPTION}}}'\"")
 

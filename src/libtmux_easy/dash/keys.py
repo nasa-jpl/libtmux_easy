@@ -15,6 +15,10 @@ borrowed is not wrapped a second time. If a borrower dies without returning
 the key, the binding stays until the server exits -- harmless, since outside
 OPTION's sessions it still runs the original.
 
+The library's own keys (the dashboard's g, lte-close's Q) are borrowed only
+when unbound, so a binding of the user's always wins, and ~/.tmux.conf can
+pick others: 'set -g @lte_key_dash G', 'set -g @lte_key_close ""' (none).
+
 Stdlib only, like wrap.py and dash/.
 """
 
@@ -71,13 +75,25 @@ def _escape(text):
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def borrow(key, option, command, message=None, run=_tmux):
+def chosen(role, default, run=_tmux):
+    """The key for one of the library's roles ("dash", "close"): the global
+    option @lte_key_<role> if set ("" for none), else 'default'."""
+    name = f"@lte_key_{role}"
+    if not run("show-options", "-gq", name):
+        return default
+    return _option(None, name, "-gq", run=run)
+
+
+def borrow(key, option, command, message=None, run=_tmux, if_free=False):
     """Bind 'key' to run 'command' (tmux command text) in sessions where
-    'option' is set, and its previous binding everywhere else."""
+    'option' is set, and its previous binding everywhere else. 'if_free':
+    only if 'key' is unbound (or already borrowed). True if borrowed."""
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)
     if users == 0:
         saved = current(key, run)
+        if saved and if_free:
+            return False
         match = _LISTED.match(saved) if saved else None
         if match:
             fallback = match["command"]
@@ -87,6 +103,7 @@ def borrow(key, option, command, message=None, run=_tmux):
                      f"{{ {command} }} {{ {fallback} }}")
         run("set-option", "-gq", saved_option, saved)
     run("set-option", "-gq", users_option, str(users + 1))
+    return True
 
 
 def give_back(key, run=_tmux):

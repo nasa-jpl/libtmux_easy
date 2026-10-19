@@ -15,6 +15,7 @@
 | `dash/homelog.py` | - | stdout/logging tee behind `tee_home()` |
 | `launch.py` | stdlib | `lte-session` |
 | `close.py` | stdlib | `lte-close`: graceful close, close actions |
+| `starter.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
 | `output.py` | stdlib | output capture (`pipe-pane` files), `OutputReader` (tails them), `Capture`, watches |
 | `testing.py` | pytest | pytest plugin |
 | `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
@@ -76,6 +77,7 @@ lives in tmux options, so they all agree without extra IPC:
 | session | `@lte_dir` (socket dir), `@lte_status` (status file), `@lte_run_dir`, `@lte_home_status`, `@lte_dash_window`, `@lte_dash_sidebar` |
 | window | `@lte_dash_home/view/from/home_cmd/width/home_kind/initial` |
 | pane | `@lte_pipe_file`, `@lte_pipe_from`, `@lte_pipe_id`, `@lte_pipe_tee`: where its output goes ([output-match.md](output-match.md)) |
+| global | `@lte_starter`, `@lte_key_dash`, `@lte_key_close` (the user's), `@lte_key_*_users/_saved` (lte-key) |
 | session, window | `@lte_pipe`, `@lte_pipe_cmd`: capture template for new panes; session `@lte_pipe_next*`: the next library pane's file |
 
 ## Threads

@@ -16,6 +16,8 @@ _TMPDIR = tempfile.mkdtemp(prefix="lte-tests-")
 os.environ["TMUX_TMPDIR"] = _TMPDIR
 for _var in ("TMUX", "TMUX_PANE", "LTE_DIR", "LTE_RUN_TEE"):
     os.environ.pop(_var, None)
+# The same bindings with or without a ~/.tmux.conf (test_starter.py turns it on).
+os.environ["LTE_TMUX_DEFAULTS"] = "0"
 
 
 def pytest_report_header():

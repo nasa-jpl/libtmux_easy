@@ -26,7 +26,8 @@ import threading
 import time
 from pathlib import Path
 
-from . import dash, wrap
+from . import close, dash, starter, wrap
+from .dash import keys
 from ._tmux import option, tmux as _tmux
 
 ENV_FILE = "env.json"      # the launching shell's environment and cwd
@@ -101,6 +102,14 @@ class Launch:
         # history-limit applies to panes created from here on, hence the
         # throwaway first window.
         _tmux("set-option", "-t", self.session, "history-limit", str(HISTORY_LIMIT))
+        starter.apply()
+        self.close_key = keys.chosen(close.KEY_ROLE, close.KEY)
+        if self.close_key and keys.borrow(self.close_key, close.KEY_OPTION, close.key_command(),
+                                          "lte-close: not a libtmux_easy session",
+                                          if_free=True):
+            _tmux("set-option", "-q", "-t", self.session, close.KEY_OPTION, "1")
+        else:
+            self.close_key = ""
 
         self.window = self.home = None
         self.return_to = None  # (client, session) to switch back to, inside tmux
@@ -235,6 +244,12 @@ class Launch:
 
     def kill(self):
         _tmux("kill-session", "-t", self.session)
+        self.give_back_key()
+
+    def give_back_key(self):
+        if self.close_key:
+            keys.give_back(self.close_key)
+            self.close_key = ""
 
 
 def _interrupt(launch):

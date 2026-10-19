@@ -76,3 +76,23 @@ def test_cli_message_option_is_not_taken_for_the_command():
     assert "display-message ours" in line and "not here" in line
     assert keys.main(["return", "y"]) == 0
     assert keys.current("y") == ""
+
+
+def test_if_free_leaves_a_bound_key_alone():
+    tmux("bind-key", "o", "rename-window", "before")
+    original = keys.current("o")
+    assert keys.borrow("o", "@mine", "rename-window ours", if_free=True) is False
+    assert keys.current("o") == original
+    assert keys.borrow("y", "@mine", "rename-window ours", if_free=True) is True
+    assert keys.borrow("y", "@mine", "rename-window ours", if_free=True) is True  # shared
+    keys.give_back("y")
+    keys.give_back("y")
+    assert keys.current("y") == ""
+
+
+def test_chosen_reads_the_tmux_option():
+    assert keys.chosen("close", "Q") == "Q"
+    tmux("set-option", "-g", "@lte_key_close", "")
+    assert keys.chosen("close", "Q") == ""
+    tmux("set-option", "-g", "@lte_key_close", "C-q")
+    assert keys.chosen("close", "Q") == "C-q"

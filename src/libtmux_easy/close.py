@@ -15,9 +15,10 @@ Opens a 'close' window in the session and, there, with its progress shown:
   4. kills the session.
 
 Ctrl-C in the close window skips to killing the session. Works on any
-session, with or without libtmux_easy. Bind it in ~/.tmux.conf:
+session, with or without libtmux_easy. Sessions made by the library borrow
+prefix Q for it (see KEY); for every session, bind it in ~/.tmux.conf:
 
-    bind-key C-x run-shell -b "lte-close -t '#{session_id}'"
+    bind-key Q run-shell -b "lte-close -t '#{session_id}'"
 
 Stdlib only. See docs/session-close.md.
 """
@@ -42,6 +43,8 @@ ACTIONS_OPTION = "@lte_on_close"   # session option: JSON list of {"cmd", "cwd",
 STATE_OPTION = "@lte_closing"      # set by the script: "stopping", then "done"
 WINDOW_OPTION_CLOSE = "@lte_close_window"
 KEY_OPTION = "@lte_close_key"      # session option: set where a borrowed close key applies
+KEY = "Q"                          # borrowed by create() and lte-session, if unbound
+KEY_ROLE = "close"                 # ~/.tmux.conf: set -g @lte_key_close KEY ("" for none)
 WINDOW_NAME = "close"
 WHEN = ("before", "after")
 

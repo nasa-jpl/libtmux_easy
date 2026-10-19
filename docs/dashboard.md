@@ -81,7 +81,9 @@ clobber the user's binding:
 - bound conditionally: where session option `@lte_dash_window` is set, go to
   the dashboard; elsewhere, run the original binding;
 - returned on exit, including SIGHUP and SIGTERM;
-- reference-counted, so two dashboards (or tlaunch's `prefix v`) share.
+- reference-counted, so two dashboards (or tlaunch's `prefix v`) share;
+- the library's own keys (`g`, lte-close's `Q`) only if unbound, and
+  `@lte_key_dash` / `@lte_key_close` pick others ([tmux-defaults.md](tmux-defaults.md)).
 
 ## Packaging
 

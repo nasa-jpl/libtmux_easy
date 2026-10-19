@@ -49,6 +49,7 @@ lte-dash = "libtmux_easy.dash.cli:main"
 lte-session = "libtmux_easy.launch:main"
 lte-key = "libtmux_easy.dash.keys:main"
 lte-close = "libtmux_easy.close:main"
+lte-defaults = "libtmux_easy.starter:main"
 
 # setuptools rather than a newer backend: it is packaged for Ubuntu 24.04, so
 # the .deb (debian/) builds from this same file with apt-only dependencies.

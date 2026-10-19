@@ -9,7 +9,7 @@ from . import keys
 from .._tmux import option, tmux as _tmux
 from ..wrap import DIR_OPTION, SOCKET_NAME
 from .control import Control
-from .options import AUTO, HOME_KIND_OPTION, INSTALL_HINT, KEY, KEY_COMMAND, SIDEBAR_OPTION, \
+from .options import AUTO, HOME_KIND_OPTION, INSTALL_HINT, KEY, KEY_COMMAND, KEY_ROLE, SIDEBAR_OPTION, \
     STATUS_OPTION, WINDOW_OPTION
 from .viewport import Viewport
 from .window import open_window
@@ -31,9 +31,10 @@ def main(argv=None):
                         help="with --open: sidebar columns, N%%, or auto (fit the panes, at start)")
     parser.add_argument("--no-mouse", action="store_true",
                         help="with --open: leave the session's mouse option alone")
-    parser.add_argument("--key", default=KEY,
+    parser.add_argument("--key", default=None,
                         help=f"prefix key the sidebar borrows, back to it from any window "
-                        f"of the session (default {KEY}; '' for none). See keys.py")
+                        f"of the session ('' for none). Default: @lte_key_{KEY_ROLE}, "
+                        f"else {KEY}, and only if unbound. See keys.py")
     args = parser.parse_args(argv)
 
     if args.open:
@@ -71,10 +72,12 @@ def main(argv=None):
             ctl = lambda: os.path.join(option(viewport.window, DIR_OPTION) or "/nonexistent",
                                        SOCKET_NAME)
     app = DashApp(viewport, status, Control(ctl))
-    key = args.key
+    key = args.key if args.key is not None else keys.chosen(KEY_ROLE, KEY)
     if key:
         try:
-            keys.borrow(key, WINDOW_OPTION, KEY_COMMAND, "no lte-dash in this session")
+            if not keys.borrow(key, WINDOW_OPTION, KEY_COMMAND, "no lte-dash in this session",
+                               if_free=args.key is None):
+                key = ""  # bound by the user: theirs wins
         except ValueError as exc:
             sys.stderr.write(f"lte-dash: {exc}\n")
             key = ""

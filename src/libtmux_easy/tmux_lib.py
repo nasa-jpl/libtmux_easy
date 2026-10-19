@@ -23,7 +23,7 @@ from libtmux.session import Session
 from libtmux.window import Window
 from packaging import version
 
-from . import close as _close, dash
+from . import close as _close, dash, starter as _starter
 from .dash import keys as _keys
 from ._tmux import env_args, option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
@@ -327,6 +327,8 @@ class TmuxSession(Session):
         session._adopted = False
         session.__post_init__(window, pane, title_status=title_status, status_file=status_file)
         session.default_mode = mode
+        _starter.apply(run=session._tmux_run)
+        session.bind_close_key()
         if env:
             session.copy_environment(env)
         if capture:
@@ -365,6 +367,7 @@ class TmuxSession(Session):
         window = session.windows[0]
         session.__post_init__(window, window.panes[0], title_status=title_status)
         session.default_mode = mode
+        _starter.apply(run=session._tmux_run)
 
         session._adopted = True
         session.unnamed_window = False
@@ -2071,15 +2074,25 @@ class TmuxSession(Session):
             self._give_back_close_keys()  # the session is about to go
             self._set_session_option(_close.STATE_OPTION, "done")
 
-    def bind_close_key(self, key: str = "C-x"):
+    def bind_close_key(self, key: Optional[str] = None) -> Optional[str]:
         """Bind prefix 'key' to lte-close in this session, so it closes
         gracefully. Elsewhere the key keeps its binding (e.g. a kill-session
         from ~/.tmux.conf); it is given back when this script lets go of the
-        session (kill_session(), release())."""
+        session (kill_session(), release()).
+
+        'key' None (create() does this): ~/.tmux.conf's @lte_key_close, else
+        Q, and only if unbound. Returns the key bound, or None."""
+        run = self._tmux_run
+        if_free = key is None
+        if key is None:
+            key = _keys.chosen(_close.KEY_ROLE, _close.KEY, run=run)
+        if not key or not _keys.borrow(key, _close.KEY_OPTION, _close.key_command(),
+                                       message="lte-close: not a libtmux_easy session",
+                                       run=run, if_free=if_free):
+            return None
         self._set_session_option(_close.KEY_OPTION, "1")
-        _keys.borrow(key, _close.KEY_OPTION, _close.key_command(),
-                     message="lte-close: not a libtmux_easy session", run=self._tmux_run)
         self._close_keys.append(key)
+        return key
 
     def kill_session(self, *args, **kwargs):
         """Stop the watcher, then kill the session. For an adopted session
@@ -2197,7 +2210,7 @@ class TmuxSession(Session):
         select: bool = True,
         tee: bool = True,
         mouse: bool = True,
-        key: str = dash.KEY,
+        key: Optional[str] = None,
         initial: Union[Pane, str, None] = None,
     ) -> Window:
         """Open a dashboard window: a status sidebar (lte-dash) on the left, and
@@ -2210,7 +2223,8 @@ class TmuxSession(Session):
         shows this script's output. 'mouse' turns on tmux mouse support for
         the session (click the sidebar, drag the border to resize). 'initial'
         (a Pane or pane name) is the pane the sidebar selects and shows first,
-        instead of home.
+        instead of home. 'key' is the prefix key back to the dashboard (""
+        for none); None: ~/.tmux.conf's @lte_key_dash, else g, if unbound.
 
         Customize it with dashboard_pane(), and the returned Window.
 

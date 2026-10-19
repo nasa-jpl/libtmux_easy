@@ -95,7 +95,7 @@ publishes them to GitHub Releases and PyPI.
 | `respawn_pane(pane, cmd=None)` | rerun in place, any mode |
 | `pane_status(pane)`, `status()`, `print_status()` | `PaneStatus`: `.state` running / stopped / ok / failed / unknown |
 | `dashboard()`, `dashboard_pane()`, `close_dashboard()` | see Dashboard |
-| `on_close(action, when="after")`, `close()`, `bind_close_key(key="C-x")` | see Closing a session |
+| `on_close(action, when="after")`, `close()`, `bind_close_key(key=None)` | see Closing a session |
 | `kill_session()`, `release(keep_windows=False)` | end, or let go and leave windows up |
 
 Status is also on each pane's border title (`server [exited 3]`), and with
@@ -181,7 +181,8 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
   `prefix w` are taken before that: the viewed pane's window shows `home`
   in its slot.
 - `prefix g` is **borrowed** while the sidebar runs (`lte-key`) and returned
-  after; nothing goes in `~/.tmux.conf`. `dashboard(key=...)` picks another.
+  after; nothing goes in `~/.tmux.conf`. Only if unbound; `set -g
+  @lte_key_dash KEY` there picks another. See tmux defaults below.
 - Turns on the session's `mouse` (`mouse=False` to skip).
 - `dashboard(initial=pane)` selects and shows that pane first, instead of `home`.
 - `dashboard(width=)`: `"auto"` (default) sizes the sidebar once, at start,
@@ -243,14 +244,29 @@ every pane (Ctrl-C, then SIGTERM, SIGKILL), and kill the session.
 ```python
 sess.on_close("./cleanup.sh")                    # shell: runs even if the script died
 sess.on_close(lambda s: save_logs(s), when="before")  # Python: while the script runs
-sess.bind_close_key("C-x")                        # prefix C-x closes this session gracefully
 sess.close()                                      # or do it all from the script
 ```
 
-Without a script: `lte-close add -- ./cleanup.sh`, and in `~/.tmux.conf`
-`bind-key C-x run-shell -b "lte-close -t '#{session_id}'"`. The dashboard's
+`prefix Q` runs `lte-close` in sessions made by `create()` or `lte-session`
+(if `Q` is unbound; see tmux defaults below). Without a script:
+`lte-close add -- ./cleanup.sh`, and in `~/.tmux.conf`
+`bind-key Q run-shell -b "lte-close -t '#{session_id}'"`. The dashboard's
 `Q` `Q` runs `lte-close` too. Every way to stop panes or close a session, and
 which to use: `docs/session-close.md`.
+
+## tmux defaults
+
+A tmux server with **no config file** gets starter settings: vi copy mode,
+`prefix |` / `-` split, `prefix h j k l` move, `prefix C-x` kill-session,
+`mouse on`. `lte-defaults` prints them as `~/.tmux.conf` lines;
+`LTE_TMUX_DEFAULTS=0` turns them off. A server with a config is left alone.
+
+| key | in lte sessions | choose in `~/.tmux.conf` |
+|---|---|---|
+| `prefix g` | back to the dashboard | `set -g @lte_key_dash G` |
+| `prefix Q` | close gracefully (`lte-close`) | `set -g @lte_key_close ""` (none) |
+
+Only borrowed if unbound: your own binding wins. `docs/tmux-defaults.md`.
 
 ## lte-session
 

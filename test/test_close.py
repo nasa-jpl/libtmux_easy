@@ -102,9 +102,9 @@ def test_script_stops_its_own_panes(session, tmp_path):
 def test_script_gives_the_key_back_when_closed(session):
     tmux("new-session", "-d", "-s", "lte-test-keepalive")  # the server outlives lte-test
     try:
-        session.bind_close_key()
+        assert "libtmux_easy.close" in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
         close.Closer(session.id, out=lambda _: None)()
-        assert "libtmux_easy.close" not in "\n".join(tmux("list-keys", "-T", "prefix", "C-x"))
+        assert "libtmux_easy.close" not in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
     finally:
         tmux("kill-session", "-t", "lte-test-keepalive")
 
@@ -134,10 +134,47 @@ def test_bind_close_key(session):
 
     tmux("bind-key", "-T", "prefix", "C-x", "kill-session")  # e.g. from ~/.tmux.conf
     try:
-        session.bind_close_key()
+        assert session.bind_close_key("C-x") == "C-x"  # asked for: wraps theirs
         assert "libtmux_easy.close" in binding() and "kill-session" in binding()
 
         session.kill_session()
         assert "libtmux_easy.close" not in binding() and "kill-session" in binding()
     finally:
         tmux("unbind-key", "-T", "prefix", "C-x")
+
+
+def _q():
+    return "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
+
+
+def test_create_borrows_q_if_free(make_session):
+    sess = make_session("lte-test-q")
+    assert "libtmux_easy.close" in _q()
+    sess.kill_session()
+    assert _q() == ""
+
+
+def test_user_binding_of_q_wins(make_session):
+    tmux("new-session", "-d", "-s", "lte-test-keepalive")  # a server to bind on
+    tmux("bind-key", "-T", "prefix", "Q", "display-message", "mine")
+    try:
+        sess = make_session("lte-test-q")
+        assert "libtmux_easy.close" not in _q()
+        assert sess.bind_close_key() is None
+    finally:
+        tmux("unbind-key", "-T", "prefix", "Q")
+        tmux("kill-session", "-t", "lte-test-keepalive")
+
+
+@pytest.mark.parametrize("chosen", ["", "C-q"])
+def test_tmux_conf_picks_the_close_key(make_session, chosen):
+    tmux("new-session", "-d", "-s", "lte-test-keepalive")
+    tmux("set-option", "-g", "@lte_key_close", chosen)
+    try:
+        make_session("lte-test-q")
+        assert _q() == ""
+        if chosen:
+            assert "libtmux_easy.close" in "\n".join(tmux("list-keys", "-T", "prefix", chosen))
+    finally:
+        tmux("set-option", "-gu", "@lte_key_close")
+        tmux("kill-session", "-t", "lte-test-keepalive")

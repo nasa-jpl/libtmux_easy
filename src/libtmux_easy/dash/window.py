@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .._tmux import tmux as _tmux
 from .options import (AUTO, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INITIAL_OPTION,
-                      INSTALL_HINT, KEY, MIN_WIDTH, SIDEBAR_OPTION, VIEW_OPTION, WIDTH_OPTION,
+                      INSTALL_HINT, MIN_WIDTH, SIDEBAR_OPTION, VIEW_OPTION, WIDTH_OPTION,
                       WINDOW_OPTION)
 
 
@@ -26,7 +26,7 @@ def launcher():
 
 
 def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=AUTO,
-                mouse=True, run=_tmux, sidebar_cmd=None, home_cmd=None, key=KEY,
+                mouse=True, run=_tmux, sidebar_cmd=None, home_cmd=None, key=None,
                 initial=None):
     """Create a dashboard window in 'session' (an id like '$1', or a name; not
     '=name', which tmux 3.4's set-option rejects as "no such session").
@@ -41,7 +41,8 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
     @lte_dir options instead. 'home_cmd' replaces the home pane's tail of
     'home_log' (which may then be None) with a command of the caller's; the
     sidebar then never closes the window (see HOME_KIND_OPTION). 'key': the
-    prefix key the sidebar borrows while it runs (KEY; "" for none). 'initial'
+    prefix key the sidebar borrows while it runs ("" for none; None: lte-dash
+    --key's default, KEY only if unbound). 'initial'
     is the pane id the sidebar selects (and shows) first, instead of home.
 
     'width': columns, a percentage like "25%", or AUTO: the sidebar sizes
@@ -66,7 +67,8 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
         sidebar_cmd = f"{sidebar_cmd} --status {shlex.quote(status_file)}"
     if ctl:
         sidebar_cmd += f" --ctl {shlex.quote(ctl)}"
-    sidebar_cmd += f" --key {shlex.quote(key)}"
+    if key is not None:
+        sidebar_cmd += f" --key {shlex.quote(key)}"
     start = MIN_WIDTH if width == AUTO else width
     sidebar = run("split-window", "-h", "-b", "-d", "-l", str(start), "-t", home,
                   "-P", "-F", "#{pane_id}", sidebar_cmd)[0].strip()

@@ -7,7 +7,7 @@
 | stop one pane | `stop_pane(pane)` | `x` | Ctrl-C typed in the pane (only SIGINT, no escalation) |
 | stop every pane | `stop_all()` | `X` `X` | |
 | rerun a pane | `respawn_pane(pane)` | `r` | |
-| close gracefully | `close()` | `Q` `Q` | `lte-close`; `prefix C-x` once bound (below) |
+| close gracefully | `close()` | `Q` `Q` | `lte-close`; `prefix Q` (below) |
 | kill now | `kill_session()` | | `tmux kill-session`, closing the last window |
 | let go, leave it up | `release(keep_windows=True)` | `q` closes the sidebar only | |
 
@@ -73,8 +73,9 @@ that fails is reported; the close goes on.
 
 | trigger | how |
 |---|---|
-| a key, from the script | `session.bind_close_key("C-x")`: borrowed like `prefix g` ([dashboard.md](dashboard.md)), so other sessions keep the old binding. Given back on `kill_session()` / `release()`, or once a close starts |
-| a key, every session | `~/.tmux.conf`: `bind-key C-x run-shell -b "lte-close -t '#{session_id}'"` |
+| `prefix Q` | borrowed by `create()` and `lte-session` if unbound; `@lte_key_close` picks another ([tmux-defaults.md](tmux-defaults.md)). Other sessions keep the old binding. Given back on `kill_session()` / `release()`, or once a close starts |
+| a key, from the script | `session.bind_close_key("C-x")`: borrowed even if bound (the binding becomes the fallback elsewhere); e.g. in a `current()` session |
+| a key, every session | `~/.tmux.conf`: `bind-key Q run-shell -b "lte-close -t '#{session_id}'"` |
 | the dashboard | `Q` `Q` runs lte-close. With tlaunch's status file (`mode: "tlaunch"`) it still sends `shutdown` |
 | the script | `session.close()`: the same steps in-process (shell actions log through `logging`), then `kill_session()` |
 
