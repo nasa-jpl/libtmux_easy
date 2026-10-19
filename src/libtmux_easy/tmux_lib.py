@@ -819,10 +819,15 @@ class TmuxSession(Session):
         else:
             pane_kwargs["target"] = window.panes[-1].id
 
-        try:
-            pane = window.split_window(**pane_kwargs)
-        except DeprecatedError:  # Window.split_window() was deprecated in 0.33.0
+        # Window.split() (libtmux >= 0.33) when it takes the args: split_window()
+        # warns there (DeprecationWarning, in the caller's pytest output too).
+        if hasattr(window, "split") and not {"vertical", "percent"} & pane_kwargs.keys():
             pane = window.split(**pane_kwargs)
+        else:
+            try:
+                pane = window.split_window(**pane_kwargs)
+            except DeprecatedError:  # an error, not a warning, in some versions
+                pane = window.split(**pane_kwargs)
         self.set_pane_title(pane, pane_name)
 
         if hasattr(window, "layout_str"):
