@@ -190,6 +190,11 @@ class TestControl:
         assert _wait_until(lambda: session.pane_status(pane).target_pids not in ((), old))
         assert session.is_running(pane)
 
+        assert control.send("stop", "%9999")  # an unknown pane, a bad command: ignored
+        assert control.send("rm -rf", "%0")
+        time.sleep(0.3)
+        assert session.is_running(pane)
+
     def test_stop_all_command(self, session):
         a = session.new_pane("a", "sleep 60", mode=PANE_MODE_WRAP)
         b = session.new_pane("b", "sleep 60", mode=PANE_MODE_WRAP)
@@ -213,12 +218,6 @@ class TestControl:
         assert _wait_until(lambda: not sess.server.has_session("lte-test-shutdown"), timeout=10.0)
         assert statuses and statuses[0].exit_status.signal == 2  # SIGINT, not SIGHUP
         sess.kill_session()  # already killed: a no-op, not an error
-
-    def test_unknown_pane_ignored(self, session):
-        control = dash.Control(os.path.join(session._wrap_dir, SOCKET_NAME))
-        assert control.send("stop", "%9999")
-        assert control.send("rm -rf", "%0")
-        time.sleep(0.3)
 
     def test_offline(self, tmp_path):
         assert dash.Control(str(tmp_path / "nope.sock")).online() is False
@@ -369,30 +368,39 @@ def entry(pane_id, name, running=False, code=None, stopped=None):
             "exit_status": {"code": code, "signal": None, "inferred": False}}
 
 
+def _run_app(viewport, status, scenario=None):
+    """Run DashApp under Textual's test driver; 'scenario(app, pilot)' is
+    awaited after it settles, and its result returned."""
+    from libtmux_easy.dash.app import DashApp
+
+    async def main():
+        app = DashApp(viewport, status, dash.Control(None))
+        async with app.run_test() as pilot:
+            await pilot.pause(0.2)
+            return await scenario(app, pilot) if scenario else None
+
+    return asyncio.run(main())
+
+
 @needs_textual
 def test_sidebar_survives_status_file_switch(tmp_path):
     """lte-session: each test's TmuxSession.current() writes its own status
     file. The sidebar crashed (KeyError) when the second one replaced the
     first, and missed the first one's final write."""
-    from libtmux_easy.dash.app import DashApp
-
     first, second = tmp_path / "a.json", tmp_path / "b.json"
     first.write_text(json.dumps([entry("%5", "nodes:talker", True)]))
     current = {"path": str(first)}
 
-    async def scenario():
-        app = DashApp(FakeViewport(), lambda: current["path"], dash.Control(None))
-        async with app.run_test() as pilot:
-            await pilot.pause(0.2)
-            # The first file's last write and the switch, within one poll.
-            first.write_text(json.dumps([entry("%5", "nodes:talker", False, code=0)]))
-            second.write_text(json.dumps([entry("%9", "tools:build", True)]))
-            current["path"] = str(second)
-            app.poll()
-            await pilot.pause(0.1)
-            return dict(app.entries), app.return_code
+    async def scenario(app, pilot):
+        # The first file's last write and the switch, within one poll.
+        first.write_text(json.dumps([entry("%5", "nodes:talker", False, code=0)]))
+        second.write_text(json.dumps([entry("%9", "tools:build", True)]))
+        current["path"] = str(second)
+        app.poll()
+        await pilot.pause(0.1)
+        return dict(app.entries), app.return_code
 
-    entries, code = asyncio.run(scenario())
+    entries, code = _run_app(FakeViewport(), lambda: current["path"], scenario)
     assert code in (None, 0)
     assert entries["%5"]["exit_status"]["code"] == 0  # the final write was seen
     assert entries["%9"]["running"] is True
@@ -400,87 +408,51 @@ def test_sidebar_survives_status_file_switch(tmp_path):
 
 @needs_textual
 def test_sidebar_summary_counts():
-    from libtmux_easy.dash.app import DashApp
     from textual.widgets import Static
 
-    async def scenario():
-        app = DashApp(FakeViewport(("%5", "%6", "%7", "%8")), None, dash.Control(None))
-        async with app.run_test() as pilot:
-            app.entries = {e["pane_id"]: e for e in (
-                entry("%5", "a:one", running=True), entry("%6", "a:two", running=True),
-                entry("%7", "a:three", code=0, stopped="SIGINT"), entry("%8", "b:four", code=3))}
-            app.poll()
-            await pilot.pause(0.1)
-            return str(app.query_one("#summary", Static).render())
+    async def scenario(app, pilot):
+        app.entries = {e["pane_id"]: e for e in (
+            entry("%5", "a:one", running=True), entry("%6", "a:two", running=True),
+            entry("%7", "a:three", code=0, stopped="SIGINT"), entry("%8", "b:four", code=3))}
+        app.poll()
+        await pilot.pause(0.1)
+        return str(app.query_one("#summary", Static).render())
 
-    assert asyncio.run(scenario()) == "2 running  1 stopped  1 failed"
+    viewport = FakeViewport(("%5", "%6", "%7", "%8"))
+    assert _run_app(viewport, None, scenario) == "2 running  1 stopped  1 failed"
 
 
 @needs_textual
-@pytest.mark.parametrize("names, width_cap, expect", [
-    (["w:a_rather_long_pane_name_here", "w:x"], 200, 7 + 28 + 12),
-    ([], 200, dash.MIN_WIDTH),                      # nothing listed yet
-    (["w:" + "n" * 80], 100, 50),                   # at most half the window
+@pytest.mark.parametrize("names, width, window_width, expect", [
+    (["w:a_rather_long_pane_name_here", "w:x"], dash.AUTO, 200, 7 + 28 + 12),
+    ([], dash.AUTO, 200, dash.MIN_WIDTH),             # nothing listed yet
+    (["w:" + "n" * 80], dash.AUTO, 100, 50),          # at most half the window
+    (["w:x"], "30", 200, None),                       # a fixed width is left alone
 ])
-def test_sidebar_autosizes_once(tmp_path, names, width_cap, expect):
+def test_sidebar_autosizes_once(tmp_path, names, width, window_width, expect):
     """Width "auto": fit the longest name plus the longest status, at start."""
-    from libtmux_easy.dash.app import DashApp
-
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry(f"%{i + 5}", n, True) for i, n in enumerate(names)]))
-    viewport = FakeViewport(options={dash.WIDTH_OPTION: dash.AUTO}, window_width=width_cap)
+    viewport = FakeViewport(options={dash.WIDTH_OPTION: width}, window_width=window_width)
 
-    async def scenario():
-        async with DashApp(viewport, str(status), dash.Control(None)).run_test() as pilot:
-            await pilot.pause(0.1)
-
-    asyncio.run(scenario())
-    assert ("resize-pane", "-t", "%0", "-x", str(expect)) in viewport.calls
-    assert ("set-option", "-wq", "-t", "@0", dash.WIDTH_OPTION, str(expect)) in viewport.calls
-
-
-@needs_textual
-def test_sidebar_fixed_width_is_left_alone(tmp_path):
-    from libtmux_easy.dash.app import DashApp
-
-    viewport = FakeViewport(options={dash.WIDTH_OPTION: "30"})
-
-    async def scenario():
-        async with DashApp(viewport, None, dash.Control(None)).run_test() as pilot:
-            await pilot.pause(0.1)
-
-    asyncio.run(scenario())
-    assert not [c for c in viewport.calls if c[0] == "resize-pane"]
+    _run_app(viewport, str(status))
+    if expect is None:
+        assert not [c for c in viewport.calls if c[0] == "resize-pane"]
+    else:
+        assert ("resize-pane", "-t", "%0", "-x", str(expect)) in viewport.calls
+        assert ("set-option", "-wq", "-t", "@0", dash.WIDTH_OPTION, str(expect)) in viewport.calls
 
 
 @needs_textual
 def test_sidebar_starts_on_initial_pane(tmp_path):
-    from libtmux_easy.dash.app import DashApp
-
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry("%5", "w:one", True), entry("%6", "w:two", True)]))
     viewport = FakeViewport(("%5", "%6"), options={dash.INITIAL_OPTION: "%6"})
 
-    async def scenario():
-        app = DashApp(viewport, str(status), dash.Control(None))
-        async with app.run_test() as pilot:
-            await pilot.pause(0.2)
-            return app._selected()
+    async def scenario(app, pilot):
+        return app._selected()
 
-    assert asyncio.run(scenario()) == "%6"
-
-
-def _run_app(viewport, status, scenario):
-    """Run DashApp under Textual's test driver; 'scenario(app, pilot)' is awaited."""
-    from libtmux_easy.dash.app import DashApp
-
-    async def main():
-        app = DashApp(viewport, status, dash.Control(None))
-        async with app.run_test() as pilot:
-            await pilot.pause(0.2)
-            return await scenario(app, pilot)
-
-    return asyncio.run(main())
+    assert _run_app(viewport, str(status), scenario) == "%6"
 
 
 @needs_textual

@@ -18,6 +18,11 @@ for _var in ("TMUX", "TMUX_PANE", "LTE_DIR", "LTE_RUN_TEE"):
     os.environ.pop(_var, None)
 # The same bindings with or without a ~/.tmux.conf (test_starter.py turns it on).
 os.environ["LTE_TMUX_DEFAULTS"] = "0"
+# Start the server with no config (not yours: ~/.tmux.conf, /etc/tmux.conf),
+# and keep it up when a test kills its last session: a later 'tmux' would
+# start a fresh server, which would read ~/.tmux.conf.
+KEEPALIVE = "zz-keepalive"  # no test name is a prefix of it: tmux matches by prefix
+subprocess.run(["tmux", "-f", "/dev/null", "new-session", "-d", "-s", KEEPALIVE], check=True)
 
 
 def pytest_report_header():

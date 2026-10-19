@@ -9,17 +9,13 @@ from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_ex
 from libtmux_easy import dash
 
 
-class TestSessionCreation:
-    def test_create(self, make_session):
-        session = make_session("lte-test-create", window=None)
-        assert session.session_name == "lte-test-create"
-        assert session_exists("lte-test-create")
-
-    def test_kill_existing(self, make_session):
-        make_session("lte-test-create", window=None)
-        with pytest.raises(ValueError, match="already exists"):
-            TmuxSession.create("lte-test-create", kill_existing=False)
-        assert make_session("lte-test-create", window=None) is not None
+def test_create_and_kill_existing(make_session):
+    session = make_session("lte-test-create", window=None)
+    assert session.session_name == "lte-test-create"
+    assert session_exists("lte-test-create")
+    with pytest.raises(ValueError, match="already exists"):
+        TmuxSession.create("lte-test-create", kill_existing=False)
+    assert make_session("lte-test-create", window=None) is not None
 
 
 class TestWindowsAndPanes:
@@ -29,19 +25,16 @@ class TestWindowsAndPanes:
         assert window.name == "w"
         assert len(session.windows) == 1
 
-    def test_names_unique(self, session):
-        session.new_pane("p", "true")
+    def test_names_lookup_and_select(self, session):
+        """Names are unique per window, and find panes and windows."""
+        p1 = session.new_pane("p1", "true")
+        p2 = session.new_pane("p2", "true")
         with pytest.raises(ValueError, match="already exists"):
-            session.new_pane("p", "true")
+            session.new_pane("p1", "true")
         with pytest.raises(ValueError, match="already exists"):
             session.new_window("main")
         session.new_window("other")
-        assert session.get_pane_name(session.new_pane("p", "true")) == "other:p"
-
-    def test_lookup_and_select(self, session):
-        p1 = session.new_pane("p1", "true")
-        p2 = session.new_pane("p2", "true")
-        session.new_window("other")
+        assert session.get_pane_name(session.new_pane("p1", "true")) == "other:p1"
 
         assert session.get_pane("main:p1").id == p1.id
         assert session.get_pane(p2.id).id == p2.id

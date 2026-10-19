@@ -45,16 +45,16 @@ class TestWrapStandalone:
         return subprocess.run([sys.executable, wrap.__file__, *argv], env=env,
                               capture_output=True, text=True, timeout=10)
 
-    def test_wrap_standalone_passthrough(self, env):
-        assert self._run(env, "sh", "-c", "exit 42").returncode == 42
-
-    def test_wrap_standalone_reraises_signal(self, env):
-        assert self._run(env, "sh", "-c", "kill -INT $$").returncode == -signal.SIGINT
-
-    def test_wrap_standalone_exec_failure(self, env):
-        proc = self._run(env, "no-such-command-xyz")
-        assert proc.returncode == 127
-        assert "lte-run: no-such-command-xyz" in proc.stderr
+    @pytest.mark.parametrize("argv, code, stderr", [
+        (("sh", "-c", "exit 42"), 42, ""),
+        (("sh", "-c", "kill -INT $$"), -signal.SIGINT, ""),   # the signal, re-raised
+        (("no-such-command-xyz",), 127, "lte-run: no-such-command-xyz"),
+        (("--bogus", "true"), 2, ""),
+    ])
+    def test_wrap_standalone_status(self, env, argv, code, stderr):
+        proc = self._run(env, *argv)
+        assert proc.returncode == code
+        assert stderr in proc.stderr
 
     def test_tee(self, env, tmp_path):
         """Outside tmux, through a pipe: shown and copied, as plain text."""
@@ -84,20 +84,8 @@ class TestWrapStandalone:
         assert proc.returncode == 4
         assert "--tee" in proc.stderr
 
-    def test_bad_option(self, env):
-        assert self._run(env, "--bogus", "true").returncode == 2
-
 
 class TestWrapMode:
-    def test_wrap_exact_exit_code(self, session):
-        pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 42'", mode=PANE_MODE_WRAP)
-
-        status = session.wait_for_exit(pane, timeout=5.0)
-
-        assert status.code == 42
-        assert status.inferred is False
-        assert session.pane_status(pane).mode == PANE_MODE_WRAP
-
     def test_wrap_distinguishes_exit_130_from_sigint(self, session):
         """The regression test for the feature: shell mode reads both of these
         as 128+2; exec mode can lose either to the tmux reaping bug."""
@@ -111,6 +99,7 @@ class TestWrapMode:
         assert (exited_status.code, exited_status.signal) == (130, None)
         assert (killed_status.code, killed_status.signal) == (None, 2)
         assert not exited_status.inferred and not killed_status.inferred
+        assert session.pane_status(exited).mode == PANE_MODE_WRAP
 
     def test_wrap_status_survives_user_commands(self, session):
         pane = session.new_pane("x", "sh -c 'sleep 0.3; exit 42'", mode=PANE_MODE_WRAP)
@@ -141,14 +130,6 @@ class TestWrapMode:
         session.send_keys("echo hi_$((6*7))", target_pane=pane)
 
         assert _wait_until(lambda: "hi_42" in _pane_text(pane))
-
-    def test_wrap_stop_escalates(self, session):
-        pane = session.new_pane("x", "sh -c 'trap \"\" INT; exec sleep 60'", mode=PANE_MODE_WRAP)
-
-        assert session.stop_pane(pane, sigint_timeout=1.0) is True
-        status = session.exit_status(pane)
-
-        assert (status.code, status.signal) == (None, 15)
 
     def test_wrap_kills_target_children(self, session):
         """SIGKILL goes to the whole target group, so nothing is orphaned.
@@ -224,11 +205,6 @@ class TestWrapMode:
         assert session.wait_for_exit(pane, timeout=5.0).known is False
         assert session.is_running(pane) is False
 
-    def test_wrap_shell_operators(self, session):
-        pane = session.new_pane("x", "sleep 0.1 && exit 9", mode=PANE_MODE_WRAP)
-
-        assert session.wait_for_exit(pane, timeout=5.0).code == 9
-
     def test_wrap_respawn_pane(self, session):
         pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
         old_pids = session.pane_status(pane).target_pids
@@ -273,10 +249,12 @@ class TestWrapMode:
 
         assert not os.path.exists(directory)
 
-    def test_wrap_command_with_dash_t(self, session):
-        """A second pane whose command contains '-t' (here '--topic'): its
-        keys used to land in the first pane. See _pane_cmd()."""
+    def test_wrap_shell_operators_and_dash_t(self, session):
+        """Shell operators run under bash -c. And a second pane whose command
+        contains '-t' (here '--topic'): its keys used to land in the first
+        pane. See _pane_cmd()."""
         session.new_pane("first", "sleep 30", mode=PANE_MODE_WRAP)
-        pane = session.new_pane("second", "sh -c 'exit 7' --topic x", mode=PANE_MODE_WRAP)
+        pane = session.new_pane("second", "sleep 0.1 && sh -c 'exit 7' --topic x",
+                                mode=PANE_MODE_WRAP)
 
         assert session.wait_for_exit(pane, timeout=5.0).code == 7

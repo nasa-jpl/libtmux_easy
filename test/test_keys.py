@@ -39,14 +39,6 @@ def test_borrowed_key_falls_back_to_the_original_and_is_restored():
     assert tmux("show-options", "-g").count("@lte_key_") == 0
 
 
-def test_an_unbound_key_is_unbound_again():
-    assert keys.current("y") == ""
-    keys.borrow("y", "@mine", "display-message ours", "not here")
-    assert "not here" in keys.current("y")
-    keys.give_back("y")
-    assert keys.current("y") == ""
-
-
 def test_borrowers_share_the_key_and_the_last_one_restores_it():
     tmux("bind-key", "o", "rename-window", "before")
     original = keys.current("o")
@@ -79,12 +71,16 @@ def test_cli_message_option_is_not_taken_for_the_command():
 
 
 def test_if_free_leaves_a_bound_key_alone():
+    """if_free: a bound key is left alone; an unbound one is borrowed (the
+    message is its fallback), shared, and unbound again at the end."""
     tmux("bind-key", "o", "rename-window", "before")
     original = keys.current("o")
     assert keys.borrow("o", "@mine", "rename-window ours", if_free=True) is False
     assert keys.current("o") == original
-    assert keys.borrow("y", "@mine", "rename-window ours", if_free=True) is True
-    assert keys.borrow("y", "@mine", "rename-window ours", if_free=True) is True  # shared
+    assert keys.current("y") == ""
+    assert keys.borrow("y", "@mine", "display-message ours", "not here", if_free=True) is True
+    assert "not here" in keys.current("y")
+    assert keys.borrow("y", "@mine", "display-message ours", if_free=True) is True  # shared
     keys.give_back("y")
     keys.give_back("y")
     assert keys.current("y") == ""

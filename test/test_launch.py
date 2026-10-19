@@ -33,26 +33,20 @@ def _has_session(name):
 
 
 class TestLauncher:
-    def test_exit_code_and_output(self):
-        proc = _launch("--name", "lte-test-launch-a", "--",
-                       sys.executable, "-c", "print('hello'); raise SystemExit(3)")
+    def test_exit_code_output_env_and_cwd(self, tmp_path):
+        """The command's status and output; it runs with the launching env and cwd."""
+        env = dict(os.environ, LTE_TEST_VAR="from_outside")
+        proc = _launch("--name", "lte-test-launch-a", "--", "sh", "-c",
+                       "echo hello var=$LTE_TEST_VAR; pwd; exit 3", env=env, cwd=tmp_path)
 
         assert proc.returncode == 3, proc.stderr
-        assert "hello" in proc.stdout
+        assert "hello var=from_outside" in proc.stdout
+        assert str(tmp_path) in proc.stdout
         assert not _has_session("lte-test-launch-a")
 
     def test_signal_death_is_128_plus_n(self):
         proc = _launch("--name", "lte-test-launch-b", "--", "sh", "-c", "kill -INT $$")
         assert proc.returncode == 130, proc.stderr
-
-    def test_runs_with_the_launching_env_and_cwd(self, tmp_path):
-        env = dict(os.environ, LTE_TEST_VAR="from_outside")
-        proc = _launch("--name", "lte-test-launch-c", "--", "sh", "-c", "echo var=$LTE_TEST_VAR; pwd",
-                       env=env, cwd=tmp_path)
-
-        assert proc.returncode == 0, proc.stderr
-        assert "var=from_outside" in proc.stdout
-        assert str(tmp_path) in proc.stdout
 
     def test_keep(self):
         proc = _launch("--name", "lte-test-launch-d", "--keep", "--", "true")

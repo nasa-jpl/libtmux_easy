@@ -116,7 +116,7 @@ def _pytest_output(tmp_path, mode, ready):
 def test_ready_wait_for_and_fail_on(tmp_path, mode):
     proc, out = _pytest_output(tmp_path, mode, r"listening on \d+")
     assert proc.returncode == 1, out
-    assert "1 failed, 1 passed" in out
+    assert "1 failed, 1 passed in" in out  # and no teardown error
     assert "FAILED test_inner.py::test_fail_on" in out
     assert "w:srv printed 'BOOM' (FAIL_ON 'BOOM')" in out
 

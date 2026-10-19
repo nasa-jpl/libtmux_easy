@@ -100,13 +100,9 @@ def test_script_stops_its_own_panes(session, tmp_path):
 
 
 def test_script_gives_the_key_back_when_closed(session):
-    tmux("new-session", "-d", "-s", "lte-test-keepalive")  # the server outlives lte-test
-    try:
-        assert "libtmux_easy.close" in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
-        close.Closer(session.id, out=lambda _: None)()
-        assert "libtmux_easy.close" not in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
-    finally:
-        tmux("kill-session", "-t", "lte-test-keepalive")
+    assert "libtmux_easy.close" in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
+    close.Closer(session.id, out=lambda _: None)()
+    assert "libtmux_easy.close" not in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
 
 
 def test_close_in_process(session, tmp_path):

@@ -92,15 +92,11 @@ def test_wait_for_output_sees_earlier_capture(session, tmp_path):
     assert m.match.group(1) == "8080" and m.offset == 0
 
 
-def test_wait_for_output_live(session):
+def test_wait_for_output_live_and_timeout(session):
     pane = session.new_pane("p", "sleep 0.5; echo ready", mode=PANE_MODE_SHELL)
     t0 = time.monotonic()
     assert session.wait_for_output(pane, "ready", timeout=5, regex=False).line == "ready"
     assert time.monotonic() - t0 < 2
-
-
-def test_wait_for_output_timeout(session):
-    pane = session.new_pane("p", "sleep 30", mode=PANE_MODE_EXEC)
     with pytest.raises(TimeoutError):
         session.wait_for_output(pane, "never", timeout=0.5)
 
@@ -205,12 +201,8 @@ def test_watch_window_and_session(session):
 
 # ----- capture -----
 
-def test_uncaptured_pane_not_piped(session):
-    pane = session.new_pane("p", "sleep 30", mode=PANE_MODE_EXEC)
-    assert not piped(session, pane) and session.output_path(pane) is None
-
-
 def test_capture_pane_from_first_byte(session, tmp_path):
+    """capture=PATH, and capture=True (the default dir)."""
     path = tmp_path / "web.log"
     pane = session.new_pane("web", r"printf '\033[32mfirst\033[0m\n'; sleep 30",
                             mode=PANE_MODE_EXEC, capture=str(path))
@@ -218,15 +210,14 @@ def test_capture_pane_from_first_byte(session, tmp_path):
     assert b"\x1b[32m" in read(path)  # raw
     assert session.output_path(pane) == str(path)
     assert [m.line for m in session.search_output(pane, "first")] == ["first"]
+
+    default = session.new_pane("api", "echo hi; sleep 30", mode=PANE_MODE_EXEC, capture=True)
+    default_path = session.output_path(default)
+    assert os.path.basename(default_path) == "main.api.log"
+    assert wait_until(lambda: b"hi" in read(default_path))
+
     session.kill()
-    assert path.exists()  # chosen to pipe: kept
-
-
-def test_capture_true_default_dir(session):
-    pane = session.new_pane("web", "echo hi; sleep 30", mode=PANE_MODE_EXEC, capture=True)
-    path = session.output_path(pane)
-    assert os.path.basename(path) == "main.web.log"
-    assert wait_until(lambda: b"hi" in read(path))
+    assert path.exists() and os.path.exists(default_path)  # chosen to pipe: kept
 
 
 def test_watch_only_files_deleted(make_session):
@@ -283,6 +274,7 @@ def test_window_capture_and_opt_out(session, tmp_path):
     c = session.new_pane("c", "echo c; sleep 30", mode=PANE_MODE_EXEC)
     assert wait_until(lambda: (tmp_path / "logs.a.log").exists())
     assert piped(session, a) and not piped(session, b) and not piped(session, c)
+    assert session.output_path(c) is None  # never captured
 
 
 def test_capture_later_mark_search_stop(session, tmp_path):
