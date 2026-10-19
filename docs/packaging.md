@@ -46,16 +46,58 @@ sudo apt install ../python3-libtmux-easy_*_all.deb ../libtmux-easy-dash_*_all.de
 debian/smoke-test
 ```
 
-After `uv lock`, regenerate the bundle's pins with
-`debian/update-dash-requirements` (CI checks they match `uv.lock`).
+## Pinned versions (`uv.lock`)
+
+`pyproject.toml` gives ranges (`libtmux>=0.17`). `uv.lock` pins the exact
+version and hash of every package, per Python (3.8 gets older libtmux,
+Textual and pytest than 3.11+).
+
+| who | gets |
+|---|---|
+| `uv sync` in a checkout, CI | exactly `uv.lock` |
+| `libtmux-easy-dash` `.deb` | `uv.lock`'s Textual and its deps, via `debian/dash-requirements.txt` |
+| `python3-libtmux-easy` `.deb` | apt's libtmux, psutil, packaging (not the lock) |
+| pip / pipx from PyPI | newest versions in the ranges; the lock isn't published |
+
+The lock changes only when you run `uv lock`. CI fails if it is stale.
+
+## When to run what locally
+
+| you changed | run, then commit the results |
+|---|---|
+| dependencies in `pyproject.toml` | `uv lock && debian/update-dash-requirements` |
+| nothing, want newer pins (fixes, before a release) | `uv lock --upgrade && debian/update-dash-requirements` |
+| `requires-python` (e.g. drop 3.8) | `uv lock && debian/update-dash-requirements`; update the CI matrix |
+| the version | `pyproject.toml` and `debian/changelog` (`dch -v X.Y.Z`), then `uv lock` |
+| `debian/` packaging | the build above, plus `debian/smoke-test` |
+
+## CI (`.github/workflows/`)
+
+`ci.yml` runs on every push and pull request:
+
+| job | does | fails when |
+|---|---|---|
+| `test` | `uv sync --locked`, then pytest, on Python 3.8, 3.10, 3.12, 3.13; plus libtmux 0.30.2 (Ubuntu 24.04's apt) and 0.17.0 (oldest supported) swapped in | a test fails; `uv.lock` is stale |
+| `dist` | checks `dash-requirements.txt` against `uv.lock`; `uv build` (sdist, wheel); `twine check --strict` | pins out of date; metadata won't render on PyPI |
+| `deb` | `dpkg-buildpackage`; installs both `.deb`s (with apt's old `python3-textual`) and runs `debian/smoke-test` | build fails; commands or the dashboard don't work as installed |
+
+`dist` and `deb` upload their files as workflow artifacts.
+
+`release.yml` runs on a `v*` tag:
+
+1. `version`: tag, `pyproject.toml` and `debian/changelog` must match.
+2. `ci`: all of `ci.yml`.
+3. `github`: a GitHub Release with the sdist, wheel and both `.deb`s.
+4. `pypi`: uploads the sdist and wheel (trusted publishing, no token).
+
+Run by hand (Actions, Release, Run workflow), it is a dry run: steps 1-2,
+then an upload to TestPyPI instead of 3-4.
 
 ## Releases
 
-1. Bump `pyproject.toml` and `debian/changelog`.
-2. Push a `v*` tag.
-
-CI then checks the three versions match, runs the tests, builds the wheel
-and `.deb`s, and publishes them to GitHub Releases and PyPI.
+1. Bump the version (table above); push to `main`.
+2. Optional: the TestPyPI dry run.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 ## Development
 
@@ -63,6 +105,3 @@ and `.deb`s, and publishes them to GitHub Releases and PyPI.
 uv sync                      # .venv: editable package, Textual, pytest
 uv run pytest -q             # on a private tmux server: your sessions are safe
 ```
-
-CI runs the suite on each supported Python, checks the PyPI metadata, and
-builds and smoke-tests the `.deb`s.

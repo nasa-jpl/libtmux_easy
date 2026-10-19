@@ -33,8 +33,8 @@ dependencies = [
 test = [
     "pytest>=7.0",
 ]
-# lte-dash, the dashboard sidebar. Not in the .deb: Ubuntu's python3-textual
-# is too old, so install it with pipx (or into a venv) alongside.
+# lte-dash, the dashboard sidebar. Ubuntu's python3-textual is too old, so the
+# libtmux-easy-dash .deb bundles this from uv.lock (debian/dash-requirements.txt).
 dash = [
     "textual>=1.0",
 ]

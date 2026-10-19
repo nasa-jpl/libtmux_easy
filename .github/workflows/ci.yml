@@ -18,8 +18,10 @@ jobs:
         # Older libtmux, swapped in after the sync: Ubuntu 24.04's apt version
         # (what the .deb runs on), and the oldest supported (pyproject.toml).
         include:
+            # Ubuntu 24
           - python: "3.12"
             libtmux: "0.30.2"
+            # Oldest supported
           - python: "3.10"
             libtmux: "0.17.0"
     env:

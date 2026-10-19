@@ -47,6 +47,7 @@ KEY_COMMAND = (f"run-shell \"tmux -S '#{{socket_path}}' select-window -t '#{{{WI
 
 INSTALL_HINT = (
     "lte-dash needs Textual (>= 1.0). Install one of:\n"
-    "  pipx install 'libtmux-easy[dash]'    # puts lte-dash on PATH\n"
-    "  pip install textual                  # into the script's venv\n"
+    "  sudo apt install ./libtmux-easy-dash_*_all.deb   # Ubuntu, from GitHub Releases\n"
+    "  pipx install 'libtmux-easy[dash]'                # puts lte-dash on PATH\n"
+    "  pip install 'libtmux-easy[dash]'                 # into the script's venv\n"
 )

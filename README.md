@@ -33,7 +33,7 @@ sudo apt install ./python3-libtmux-easy_0.2.0_all.deb ./libtmux-easy-dash_0.2.0_
   script's (the `.deb`, pipx, or `send_command_before("source .venv/bin/activate")`).
 - ROS: a venv made with `python3 -m venv --system-site-packages` sees `rclpy`.
 - More (pipx with the `.deb`, `--user` installs, building the `.deb`s):
-  [docs/packaging.md](docs/packaging.md).
+  [docs/packaging.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/packaging.md).
 
 ## Quick start
 
@@ -72,7 +72,7 @@ enough.
 an exec pane's exited process, so the status is lost: `exit_status()`
 returns unknown. It is often lost for a pane stopped with Ctrl-C. tmux can
 also drop the last output printed just before such a process exits.
-Details: [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+Details: [docs/KNOWN_ISSUES.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/KNOWN_ISSUES.md).
 
 `create(mode=)` or `set_default_mode()` sets the default. Rerun a pane with
 `respawn_pane()`: the library tracks the new run (wrap mode also tracks
@@ -122,7 +122,7 @@ sess.search_output("main", r"ERROR")         # [OutputMatch], later
 `target` is a pane, a window, or `None` for the whole session (panes made
 later too). tmux pipes each captured pane to a file (`pipe-pane`); matching
 is on plain text, colors dropped. Unwatched panes cost nothing. Details:
-[docs/output-match.md](docs/output-match.md).
+[docs/output-match.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/output-match.md).
 
 ## Dashboard
 
@@ -144,7 +144,7 @@ it is fully interactive. `home` shows the script's stdout and logging.
 | `[` / `]`, `?`, `q` | resize, help, quit |
 
 Needs Textual. Options: `width=`, `initial=pane`, `mouse=`. More:
-[docs/dashboard.md](docs/dashboard.md).
+[docs/dashboard.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/dashboard.md).
 
 ## Testing with pytest
 
@@ -173,7 +173,7 @@ noticed. Teardown stops them, and errors unless each exited 0 on SIGINT.
 
 Default: dash under lte-session, else tmux, else shell. Fixtures to
 override, and `tmux_session` for a test's own session:
-[docs/pytest-plugin.md](docs/pytest-plugin.md).
+[docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 
 ## Closing a session
 
@@ -189,7 +189,7 @@ sess.close()                                          # or close from the script
 
 `prefix Q` (sessions from `create()` or `lte-session`) and the dashboard's
 `Q` `Q` run `lte-close`. Every way to stop and close:
-[docs/session-close.md](docs/session-close.md).
+[docs/session-close.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/session-close.md).
 
 ## Commands
 
@@ -203,8 +203,8 @@ sess.close()                                          # or close from the script
 | `lte-defaults` | print the starter tmux settings |
 
 `lte-run` keeps the command's terminal: Ctrl-C, Ctrl-Z and stdin work as
-usual. See [docs/wrap-mode.md](docs/wrap-mode.md) and
-[docs/lte-session.md](docs/lte-session.md).
+usual. See [docs/wrap-mode.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/wrap-mode.md) and
+[docs/lte-session.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/lte-session.md).
 
 ## tmux defaults
 
@@ -219,14 +219,14 @@ left alone. The library's own keys are borrowed only if unbound, and
 | `prefix g` | back to the dashboard | `set -g @lte_key_dash G` |
 | `prefix Q` | close gracefully | `set -g @lte_key_close ""` (none) |
 
-[docs/tmux-defaults.md](docs/tmux-defaults.md).
+[docs/tmux-defaults.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/tmux-defaults.md).
 
 ## More
 
 - `demos/interactive/`: guided tours, one per feature; start with `01_session.py`.
   `demos/examples/`: plain scripts.
-- `docs/`: how it works and why ([index](docs/README.md)), and
-  [known issues](docs/KNOWN_ISSUES.md).
+- `docs/`: how it works and why ([index](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/README.md)), and
+  [known issues](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/KNOWN_ISSUES.md).
 - Tested with libtmux 0.17 to 0.62, tmux 3.3a and 3.4, Python 3.8 to 3.13.
   The `.deb`s need Ubuntu 24.04 or newer; on 22.04, use pipx or pip.
 
