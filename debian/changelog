@@ -1,0 +1,13 @@
+libtmux-easy (0.2.0) noble; urgency=medium
+
+  * New package libtmux-easy-dash: lte-dash, with Textual bundled.
+  * lte-session, lte-close, the pytest plugin, output capture and watches,
+    env= for sessions, windows and panes, lte-run --tee.
+
+ -- Spencer Diehl <docdiehl@gmail.com>  Sun, 18 Oct 2026 16:56:03 -0700
+
+libtmux-easy (0.1.0) noble; urgency=medium
+
+  * Initial package: library and lte-run.
+
+ -- Spencer Diehl <docdiehl@gmail.com>  Sat, 10 Oct 2026 10:45:32 -0700

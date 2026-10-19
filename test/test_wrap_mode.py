@@ -1,0 +1,261 @@
+"""
+Tests for wrap mode: panes whose command runs under lte-run
+(src/libtmux_easy/wrap.py), which reports the exact pid and exit status over
+the session's control socket. See docs/wrap-mode.md.
+"""
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+
+import psutil
+import pytest
+
+from helpers import pane_text as _pane_text, wait_until as _wait_until
+from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
+from libtmux_easy import wrap
+from libtmux_easy.tmux_lib import _wrap_prefix
+
+
+def test_wrapper_import_stays_light():
+    """lte-run starts once per pane, and its console script imports the package
+    __init__ first. Pulling libtmux and psutil in there cost ~4x the startup
+    time and +7 MB per pane."""
+    probe = "import sys, libtmux_easy.wrap; print('libtmux' in sys.modules, 'psutil' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
+                         env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+    assert out.stdout.split() == ["False", "False"], out.stderr
+
+
+class TestWrapStandalone:
+    """lte-run outside any session: a transparent passthrough."""
+
+    @pytest.fixture
+    def env(self):
+        env = dict(os.environ)
+        for name in ("LTE_DIR", "TMUX", "TMUX_PANE"):
+            env.pop(name, None)
+        return env
+
+    def _run(self, env, *argv):
+        # A subprocess, not wrap.main(): main() changes signal dispositions
+        # for the rest of the process it runs in.
+        env = dict(env, PYTHONPATH=os.pathsep.join(sys.path))
+        return subprocess.run([sys.executable, "-m", "libtmux_easy.wrap", *argv], env=env,
+                              capture_output=True, text=True, timeout=10)
+
+    @pytest.mark.parametrize("argv, code, stderr", [
+        (("sh", "-c", "exit 42"), 42, ""),
+        (("sh", "-c", "kill -INT $$"), -signal.SIGINT, ""),   # the signal, re-raised
+        (("no-such-command-xyz",), 127, "lte-run: no-such-command-xyz"),
+        (("--bogus", "true"), 2, ""),
+    ])
+    def test_wrap_standalone_status(self, env, argv, code, stderr):
+        proc = self._run(env, *argv)
+        assert proc.returncode == code
+        assert stderr in proc.stderr
+
+    def test_tee(self, env, tmp_path):
+        """Outside tmux, through a pipe: shown and copied, as plain text."""
+        log = tmp_path / "out.log"
+        cmd = r"echo out; echo err >&2; printf '\033[31mred\033[0m\n'; printf '1\r2\r3\n'; exit 3"
+        proc = self._run(env, "--tee", str(log), "sh", "-c", cmd)
+        assert proc.returncode == 3
+        assert "out" in proc.stdout and "err" in proc.stdout
+        assert log.read_text() == "out\nerr\nred\n3\n"
+
+    def test_tee_append_and_raw(self, env, tmp_path):
+        log = tmp_path / "out.log"
+        log.write_text("before\n")
+        self._run(env, "--tee", str(log), "-a", "--raw", "printf", r"\033[1mx\033[0m\n")
+        assert log.read_text() == "before\n\x1b[1mx\x1b[0m\n"
+
+    def test_tee_from_env(self, env, tmp_path):
+        """LTE_RUN_TEE: like --tee, and not passed on to the command."""
+        log = tmp_path / "out.log"
+        env[wrap.TEE_ENV] = str(log)
+        proc = self._run(env, "sh", "-c", 'echo "seen=[$LTE_RUN_TEE]"')
+        assert log.read_text() == "seen=[]\n"
+        assert proc.returncode == 0
+
+    def test_tee_unwritable_still_runs(self, env, tmp_path):
+        proc = self._run(env, "--tee", str(tmp_path / "no" / "dir.log"), "sh", "-c", "exit 4")
+        assert proc.returncode == 4
+        assert "--tee" in proc.stderr
+
+
+class TestWrapMode:
+    def test_wrap_distinguishes_exit_130_from_sigint(self, session):
+        """The regression test for the feature: shell mode reads both of these
+        as 128+2; exec mode can lose either to the tmux reaping bug."""
+        exited = session.new_pane("exited", "sh -c 'sleep 0.3; exit 130'", mode=PANE_MODE_WRAP)
+        killed = session.new_pane("killed", "sleep 60", mode=PANE_MODE_WRAP)
+
+        assert session.stop_pane(killed, sigint_timeout=5.0) is True
+        exited_status = session.wait_for_exit(exited, timeout=5.0)
+        killed_status = session.exit_status(killed)
+
+        assert (exited_status.code, exited_status.signal) == (130, None)
+        assert (killed_status.code, killed_status.signal) == (None, 2)
+        assert not exited_status.inferred and not killed_status.inferred
+        assert session.pane_status(exited).mode == PANE_MODE_WRAP
+
+    def test_wrap_status_survives_user_commands(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 0.3; exit 42'", mode=PANE_MODE_WRAP)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 42
+
+        session.send_keys("false", target_pane=pane)
+        session.send_keys("ls", target_pane=pane)
+        time.sleep(0.5)
+
+        assert str(session.exit_status(pane)) == "exited 42"
+
+    def test_wrap_target_pid_is_exact(self, session):
+        pane = session.new_pane("x", "sleep 30", mode=PANE_MODE_WRAP)
+
+        pids = session.pane_status(pane).target_pids
+        assert len(pids) == 1
+        target = psutil.Process(pids[0])
+        assert target.name() == "sleep"
+        wrapper = target.parent()
+        assert "libtmux_easy.wrap" in " ".join(wrapper.cmdline()) or "lte-run" in wrapper.name()
+        assert wrapper.pid == session._wrap_runs[pane.id].wrapper_pid
+        assert wrapper.parent().pid == int(pane.pane_pid)  # bash, the pane process
+
+    def test_wrap_pane_stays_interactive(self, session):
+        pane = session.new_pane("x", "true", mode=PANE_MODE_WRAP)
+        session.wait_for_exit(pane, timeout=5.0)
+
+        session.send_keys("echo hi_$((6*7))", target_pane=pane)
+
+        assert _wait_until(lambda: "hi_42" in _pane_text(pane))
+
+    def test_wrap_kills_target_children(self, session):
+        """SIGKILL goes to the whole target group, so nothing is orphaned.
+        The ignored dispositions are inherited by both sleeps."""
+        cmd = "sh -c 'trap \"\" INT TERM; sleep 60 & sleep 60; wait'"
+        pane = session.new_pane("x", cmd, mode=PANE_MODE_WRAP)
+        target = psutil.Process(session.pane_status(pane).target_pids[0])
+        assert _wait_until(lambda: len(target.children()) == 2)
+        sleeps = target.children()
+
+        assert session.stop_pane(pane, sigint_timeout=1.0, sigterm_timeout=1.0) is True
+
+        assert session.exit_status(pane).signal == 9
+        assert _wait_until(lambda: not any(p.is_running() and p.status() != psutil.STATUS_ZOMBIE
+                                           for p in sleeps))
+
+    def test_wrap_manual_rerun_tracked(self, session):
+        """A rerun typed into the pane (up-arrow, Enter) is a new run."""
+        pane = session.new_pane("x", "sh -c 'sleep 0.3; exit 4'", mode=PANE_MODE_WRAP)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 4
+        old_pids = session.pane_status(pane).target_pids
+
+        session.send_keys(f"{_wrap_prefix()} sh -c 'sleep 0.5; exit 8'", target_pane=pane)
+
+        assert _wait_until(lambda: session.pane_status(pane).target_pids != old_pids)
+        assert session.is_running(pane) is True
+        assert not session.exit_status(pane).known
+        assert session.wait_for_exit(pane, timeout=5.0).code == 8
+        # The rerun is now the pane's command: shown in the status, rerun by respawn.
+        assert session.pane_status(pane).command == "sh -c 'sleep 0.5; exit 8'"
+        session.respawn_pane(pane)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 8
+
+    def test_wrap_upgrades_shell_pane(self, session):
+        pane = session.new_pane("x", "true", mode=PANE_MODE_SHELL)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert session.exit_status(pane).code == 0
+
+        session.send_keys(f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 5'", target_pane=pane)
+
+        assert _wait_until(lambda: session.pane_status(pane).mode == PANE_MODE_WRAP)
+        status = session.wait_for_exit(pane, timeout=5.0)
+        assert (status.code, status.inferred) == (5, False)
+
+    def test_wrap_on_exit_fires_once(self, session):
+        calls = []
+        pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 3'", mode=PANE_MODE_WRAP,
+                                on_exit=calls.append)
+        assert _wait_until(lambda: calls)
+        time.sleep(0.5)
+
+        assert len(calls) == 1
+        assert calls[0].exit_status.code == 3
+
+        start = time.time()
+        assert session.wait_for_exit(pane, timeout=5.0).code == 3
+        assert time.time() - start < 0.5
+        assert len(calls) == 1
+
+    def test_wrap_lost_wrapper(self, session, caplog):
+        pane = session.new_pane("x", "sleep 2", mode=PANE_MODE_WRAP)
+        run = session._wrap_runs[pane.id]
+        target = psutil.Process(run.target_pid)
+
+        with caplog.at_level(logging.WARNING, logger="libtmux_easy.tmux_lib"):
+            os.kill(run.wrapper_pid, signal.SIGKILL)
+            assert _wait_until(lambda: run.lost)
+        assert any("without reporting" in r.getMessage() for r in caplog.records)
+
+        assert target.is_running()
+        assert session.is_running(pane) is True  # follows the orphaned target
+
+        assert session.wait_for_exit(pane, timeout=5.0).known is False
+        assert session.is_running(pane) is False
+
+    def test_wrap_respawn_pane(self, session):
+        pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
+        old_pids = session.pane_status(pane).target_pids
+
+        session.respawn_pane(pane, "sh -c 'sleep 0.3; exit 6'")
+
+        assert session.pane_status(pane).target_pids != old_pids
+        assert session.wait_for_exit(pane, timeout=5.0).code == 6
+
+    def test_wrap_tee(self, session, tmp_path):
+        """In a pane: the command keeps its terminal, tmux copies its output,
+        and the file is complete when the exit is reported."""
+        log = tmp_path / "pane.log"
+        pane = session.new_pane("x", "sh -c 'test -t 1 && echo tty; echo done; exit 5'",
+                                mode=PANE_MODE_WRAP, tee=str(log))
+        assert session.wait_for_exit(pane, timeout=5.0).code == 5
+        assert log.read_text() == "tty\ndone\n"
+        assert _wait_until(lambda: session._pane_fmt(pane, "#{pane_pipe}") == "0")
+
+        session.respawn_pane(pane, "sh -c 'echo rerun; exit 0'")
+        session.wait_for_exit(pane, timeout=5.0)
+        assert log.read_text() == "rerun\n"
+
+    def test_tee_needs_wrap_mode(self, session, tmp_path):
+        with pytest.raises(ValueError, match="tee"):
+            session.new_pane("x", "true", tee=str(tmp_path / "x.log"))
+
+    def test_wrap_enter_false_waits_for_enter(self, session):
+        pane = session.new_pane("x", "sh -c 'exit 2'", mode=PANE_MODE_WRAP, enter=False)
+        assert session.pane_status(pane).target_pids == ()
+
+        pane.send_keys("", enter=True)
+
+        assert _wait_until(lambda: session.pane_status(pane).target_pids != ())
+        assert session.wait_for_exit(pane, timeout=5.0).code == 2
+
+    def test_wrap_teardown(self, session):
+        directory = session._wrap_dir
+        assert os.path.exists(os.path.join(directory, wrap.SOCKET_NAME))
+
+        session.kill_session()
+
+        assert not os.path.exists(directory)
+
+    def test_wrap_shell_operators_and_dash_t(self, session):
+        """Shell operators run under bash -c. And a second pane whose command
+        contains '-t' (here '--topic'): its keys used to land in the first
+        pane. See _pane_cmd()."""
+        session.new_pane("first", "sleep 30", mode=PANE_MODE_WRAP)
+        pane = session.new_pane("second", "sleep 0.1 && sh -c 'exit 7' --topic x",
+                                mode=PANE_MODE_WRAP)
+
+        assert session.wait_for_exit(pane, timeout=5.0).code == 7

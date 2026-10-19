@@ -1,0 +1,11 @@
+#!/usr/bin/python3
+"""lte-dash from libtmux-easy-dash: runs with the Textual bundled in
+/usr/lib/libtmux-easy-dash, ahead of any other (apt's is too old). Only this
+process sees the bundle."""
+import sys
+
+sys.path.insert(0, "/usr/lib/libtmux-easy-dash")
+
+from libtmux_easy.dash.cli import main  # noqa: E402
+
+sys.exit(main())

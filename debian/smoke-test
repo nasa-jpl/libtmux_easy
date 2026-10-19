@@ -1,0 +1,39 @@
+#!/bin/sh
+# Checks the installed packages (python3-libtmux-easy, libtmux-easy-dash)
+# under the system Python: the commands, and a dashboard drawn by the bundled
+# Textual. CI runs it after installing the .debs; it works locally too.
+set -eu
+cd /tmp
+/usr/bin/python3 -c "import libtmux_easy.tmux_lib"
+lte-run true
+rc=0; lte-run sh -c 'exit 3' || rc=$?; test "$rc" = 3
+lte-dash --help > /dev/null
+
+# A dashboard, on a private tmux server. The library must pick lte-dash (and
+# so the bundle) even with apt's too-old python3-textual installed.
+TMUX_TMPDIR=$(mktemp -d /tmp/lte-smoke-XXXX)
+export TMUX_TMPDIR
+unset TMUX TMUX_PANE
+# '|| true': the server is usually gone already, and under set -e a failing
+# command in the trap would fail the script.
+trap 'tmux kill-server 2>/dev/null || true; rm -rf "$TMUX_TMPDIR"' EXIT
+/usr/bin/python3 - <<'PY'
+import subprocess, time
+from libtmux_easy import TmuxSession
+
+s = TmuxSession.create("smoke", kill_existing=True)
+s.new_window("main")
+s.new_pane("worker", "sleep 60", mode="wrap")
+s.dashboard(select=False)
+for _ in range(100):
+    text = subprocess.run(["tmux", "capture-pane", "-p", "-t", s._dash_sidebar],
+                          capture_output=True, text=True).stdout
+    if "worker" in text:
+        break
+    time.sleep(0.1)
+else:
+    raise SystemExit("the dashboard sidebar never listed the pane:\n" + text)
+s.close_dashboard()
+s.kill()
+PY
+echo "smoke test passed"

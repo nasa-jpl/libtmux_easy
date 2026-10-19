@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME=libtmux_easy
+CORE = debian/python3-libtmux-easy
+DASH = debian/libtmux-easy-dash
+BUNDLE = $(DASH)/usr/lib/libtmux-easy-dash
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+# The tests drive a live tmux server, which a build environment doesn't have.
+override_dh_auto_test:
+
+# lte-dash goes in libtmux-easy-dash, with the Textual it needs bundled (apt's
+# is too old): fetched by pip, pinned and hash-checked by dash-requirements.txt
+# (from uv.lock). So this step needs network.
+override_dh_auto_install:
+	dh_auto_install --destdir=$(CORE)
+	rm -f $(CORE)/usr/bin/lte-dash
+	python3 -m pip install --quiet --no-deps --no-compile --require-hashes \
+	    --only-binary=:all: --target $(BUNDLE) -r debian/dash-requirements.txt
+	rm -rf $(BUNDLE)/bin
+	install -D -m 755 debian/lte-dash $(DASH)/usr/bin/lte-dash
+
+# The bundle: byte-compiled on install, for the Python installed then, and
+# no apt dependencies guessed from it (that is what bundling avoids).
+override_dh_python3:
+	dh_python3 -p python3-libtmux-easy
+	dh_python3 -p libtmux-easy-dash --no-guessing-deps /usr/lib/libtmux-easy-dash

@@ -7,3 +7,17 @@ build/
 .pytest_cache/
 .tox/
 *.egg
+
+working/
+.hypothesis/
+
+# Debian package build output
+.pybuild/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/python3-libtmux-easy/
+debian/libtmux-easy-dash/
+debian/tmp/

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]   # tags run release.yml, which calls this
+  pull_request:
+  workflow_call:   # release.yml runs this first
+
+jobs:
+  test:
+    name: test (Python ${{ matrix.python }}, libtmux ${{ matrix.libtmux || 'locked' }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # uv.lock gives each Python the newest libtmux it can run (3.8: 0.38).
+        python: ["3.8", "3.10", "3.12", "3.13"]
+        # Older libtmux, swapped in after the sync: Ubuntu 24.04's apt version
+        # (what the .deb runs on), and the oldest supported (pyproject.toml).
+        include:
+            # Ubuntu 24
+          - python: "3.12"
+            libtmux: "0.30.2"
+            # Oldest supported
+          - python: "3.10"
+            libtmux: "0.17.0"
+    env:
+      TERM: xterm-256color
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - uses: astral-sh/setup-uv@v6
+      # --locked: fail if uv.lock is out of date with pyproject.toml.
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - if: matrix.libtmux
+        run: uv pip install "libtmux==${{ matrix.libtmux }}"
+      - run: uv run --no-sync python -m pytest -q
+
+  dist:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: debian/dash-requirements.txt matches uv.lock
+        run: debian/update-dash-requirements && git diff --exit-code debian/dash-requirements.txt
+      - run: uv build
+      - name: Check the metadata renders on PyPI
+        run: uvx twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper dh-python python3-all \
+                                  python3-pip python3-setuptools pybuild-plugin-pyproject
+      - run: dpkg-buildpackage -us -uc -b
+      - run: mkdir deb && mv ../*.deb deb/
+      # python3-textual (0.1, too old) too: the library must still use the bundle.
+      - name: Install and smoke-test
+        run: |
+          sudo apt-get install -y tmux python3-textual ./deb/*.deb
+          debian/smoke-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: deb/

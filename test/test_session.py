@@ -1,238 +1,360 @@
-"""
-Automated tests for libtmux_easy.
+"""TmuxSession: sessions, windows and panes; exit status in shell and exec
+mode; stopping (stop_pane, stop_all) and the stopped state."""
+import os
+import time
 
-These tests create actual tmux sessions and verify behavior.
-They clean up after themselves by killing test sessions.
-"""
 import pytest
-from libtmux_easy import TmuxSession, session_exists
-import libtmux
+
+from helpers import pane_text, title, wait_until
+from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
+from libtmux_easy import dash
+from libtmux_easy._tmux import tmux
 
 
-class TestSessionCreation:
-    def test_create_session(self):
-        """Test basic session creation"""
-        session = TmuxSession.create("test-session-1", kill_existing=True)
-
-        assert session is not None
-        assert session.session_name == "test-session-1"
-        assert session_exists("test-session-1")
-
-        # Cleanup
-        try:
-            session.kill_session()
-        except:
-            session.kill()
-
-    def test_create_kills_existing(self):
-        """Test that create with kill_existing=True replaces old session"""
-        session1 = TmuxSession.create("test-session-2", kill_existing=True)
-        session2 = TmuxSession.create("test-session-2", kill_existing=True)
-
-        assert session2 is not None
-
-        # Cleanup
-        try:
-            session2.kill_session()
-        except:
-            session2.kill()
+def test_create_and_kill_existing(make_session):
+    session = make_session("lte-test-create", window=None)
+    assert session.session_name == "lte-test-create"
+    assert session_exists("lte-test-create")
+    with pytest.raises(ValueError, match="already exists"):
+        TmuxSession.create("lte-test-create", kill_existing=False)
+    assert make_session("lte-test-create", window=None) is not None
 
 
-class TestWindows:
-    @pytest.fixture
-    def session(self):
-        """Create a test session"""
-        sess = TmuxSession.create("test-windows", kill_existing=True)
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
-    def test_new_window(self, session):
-        """Test creating a new window"""
-        window = session.new_window("test-window")
-
-        assert window is not None
-        assert window.name == "test-window"
+class TestWindowsAndPanes:
+    def test_first_window_reuses_the_initial_one(self, make_session):
+        session = make_session(window=None)
+        window = session.new_window("w")
+        assert window.name == "w"
         assert len(session.windows) == 1
 
-    def test_unique_window_names(self, session):
-        """Test that duplicate window names raise error"""
-        session.new_window("window1")
+    def test_first_pane_replaces_the_placeholder(self, session, tmp_path):
+        """A window's placeholder pane is gone once the first pane is split
+        off it: every pane is named, and a capture keeps no file for it."""
+        session.capture(None, str(tmp_path))
+        session.new_pane("a", "sleep 30")
+        session.new_window("w")
+        pane = session.new_pane("p", "sleep 30", env={"LTE_X": "1"})
+        assert [p.id for p in session.current_window.panes] == [pane.id]
+        assert all(session.get_pane_name(p) for w in session.windows for p in w.panes)
+        assert sorted(os.listdir(tmp_path)) == ["main.a.log", "w.p.log"]
 
+    def test_names_lookup_and_select(self, session):
+        """Names are unique per window, and find panes and windows."""
+        p1 = session.new_pane("p1", "true")
+        p2 = session.new_pane("p2", "true")
         with pytest.raises(ValueError, match="already exists"):
-            session.new_window("window1")
-
-    def test_select_window(self, session):
-        """Test window selection"""
-        w1 = session.new_window("win1")
-        w2 = session.new_window("win2")
-
-        session.select_window("win1")
-        assert session.current_window.name == "win1"
-
-
-class TestPanes:
-    @pytest.fixture
-    def session(self):
-        """Create a test session with a window"""
-        sess = TmuxSession.create("test-panes", kill_existing=True)
-        sess.new_window("main")
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
-    def test_new_pane(self, session):
-        """Test creating a new pane"""
-        pane = session.new_pane("pane1", "echo test")
-
-        assert pane is not None
-        assert session.get_pane_name(pane) == "main:pane1"
-
-    def test_unique_pane_names_per_window(self, session):
-        """Test that duplicate pane names in same window raise error"""
-        session.new_pane("pane1", "echo 1")
-        session.new_pane("pane2", "echo 2")
-
-        # Should raise ValueError for duplicate name
+            session.new_pane("p1", "true")
         with pytest.raises(ValueError, match="already exists"):
-            session.new_pane("pane1", "echo 3")
+            session.new_window("main")
+        session.new_window("other")
+        assert session.get_pane_name(session.new_pane("p1", "true")) == "other:p1"
 
-    def test_pane_names_unique_per_window_not_session(self, session):
-        """Test that pane names can repeat across windows"""
-        session.new_pane("pane1", "echo window1")
+        assert session.get_pane("main:p1").id == p1.id
+        assert session.get_pane(p2.id).id == p2.id
+        assert session.select_pane("main:p1").id == p1.id
+        assert session.select_window("other").name == "other"
 
-        session.new_window("window2")
-        pane2 = session.new_pane("pane1", "echo window2")  # Should not raise
+    def test_send_keys_and_command_before(self, session):
+        session.send_command_before("export LTE_X=from_before")
+        pane = session.new_pane("p", "echo before=$LTE_X")
+        session.send_keys("echo sent_$((6*7))", target_pane="main:p")
 
-        assert session.get_pane_name(pane2) == "window2:pane1"
+        assert wait_until(lambda: "sent_42" in pane_text(pane))
+        assert "before=from_before" in pane_text(pane)
+        assert session.commands["main:p"] == ["echo before=$LTE_X", "echo sent_$((6*7))"]
 
-    def test_get_pane_by_name(self, session):
-        """Test pane lookup by name"""
-        created_pane = session.new_pane("test-pane", "echo test")
-        retrieved_pane = session.get_pane("main:test-pane")
+    def test_default_mode(self, make_session):
+        session = make_session(mode=PANE_MODE_EXEC)
+        exec_pane = session.new_pane("a", "sleep 30")
+        assert session.set_default_mode(PANE_MODE_WRAP) == PANE_MODE_EXEC
+        wrap_pane = session.new_pane("b", "sleep 30")
+        shell_pane = session.new_pane("c", "sleep 30", mode="shell")  # explicit wins
 
-        assert retrieved_pane is not None
-        assert retrieved_pane.id == created_pane.id
+        assert session.pane_modes[exec_pane.id] == PANE_MODE_EXEC
+        assert session.pane_modes[wrap_pane.id] == PANE_MODE_WRAP
+        assert session.pane_modes[shell_pane.id] == "shell"
+        with pytest.raises(ValueError, match="mode must be one of"):
+            session.set_default_mode("bogus")
+        with pytest.raises(ValueError, match="mode must be one of"):
+            TmuxSession.create("lte-test-bad-mode", mode="bogus")
 
-    def test_select_pane(self, session):
-        """Test pane selection"""
-        p1 = session.new_pane("p1", "echo 1")
-        p2 = session.new_pane("p2", "echo 2")
+    def test_env_levels(self, make_session):
+        """Session, window and pane env merge, later levels winning; the
+        window's reused first pane gets it too; SKIP_ENV never goes in."""
+        session = make_session(window=None, env={"LTE_A": "session", "LTE_B": "session",
+                                                 "TERM": "bogus", "TMUX_PANE": "%bogus"})
+        session.new_window("w", env={"LTE_B": "window", "LTE_C": "window"})
+        show = "echo a=$LTE_A,b=$LTE_B,c=$LTE_C,term=$TERM,pane=$TMUX_PANE"
+        first = session.new_pane("first", show)
+        second = session.new_pane("second", show, env={"LTE_C": "pane"})
 
-        # Verify we can select by name
-        result = session.select_pane("main:p1")
-        assert result is not None
-        # Pane was selected in tmux
-        assert result.id == p1.id
+        assert wait_until(lambda: "a=session,b=window,c=window," in pane_text(first))
+        assert wait_until(lambda: "a=session,b=window,c=pane," in pane_text(second))
+        for pane in (first, second):
+            assert "term=bogus" not in pane_text(pane)
+            assert f"pane={pane.id}" in pane_text(pane)
 
+    def test_copy_environment(self, session):
+        """Panes started afterwards get it, with no sourcing step; a hand-made
+        pane too, as it is the session's tmux environment."""
+        session.copy_environment({"LTE_COPIED": "hello"})
+        pane = session.new_pane("p", "echo got=$LTE_COPIED")
+        assert wait_until(lambda: "got=hello" in pane_text(pane))
+        out = session.server.cmd("show-environment", "-t", session.id, "LTE_COPIED").stdout
+        assert out == ["LTE_COPIED=hello"]
 
-class TestCommands:
-    @pytest.fixture
-    def session(self):
-        """Create a test session with window and pane"""
-        sess = TmuxSession.create("test-commands", kill_existing=True)
-        sess.new_window("main")
-        sess.new_pane("shell", "# ready")
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
+    def test_exec_respawn_keeps_env(self, session, tmp_path):
+        out = tmp_path / "v"
+        pane = session.new_pane("p", f"sh -c 'echo $LTE_V > {out}'", mode=PANE_MODE_EXEC,
+                                env={"LTE_V": "kept"})
+        assert wait_until(lambda: out.exists() and out.read_text() == "kept\n")
+        out.unlink()
+        session.respawn_pane(pane)
+        assert wait_until(lambda: out.exists() and out.read_text() == "kept\n")
 
-    def test_send_keys(self, session):
-        """Test sending commands to pane"""
-        # Should not raise
-        session.send_keys("echo test", enter=False)
+    def test_layouts(self, make_session):
+        session = make_session(window=None)
+        # The first window must get layout_str too, or splits are never
+        # re-tiled and the 6th fails with 'no space for new pane'.
+        window = session.new_window("many", layout="main-horizontal")
+        assert window.layout_str == "main-horizontal"
+        for i in range(8):
+            session.new_pane(f"p{i}", "sleep 30", target_pid_timeout=0.1)
+        assert len(session.get_window("many").panes) == 8
 
-    def test_send_keys_to_target(self, session):
-        """Test sending commands to specific pane"""
-        session.new_pane("pane2", "# ready")
+    def test_title_shows_status(self, session):
+        """Titles look like 'p [running]'. A shell-split tmux command string
+        used to drop everything after the space."""
+        pane = session.new_pane("p", "sh -c 'sleep 0.3; exit 3'")
+        assert title(pane) == "p [running]"
+        assert wait_until(lambda: title(pane) == "p [exited 3]")
 
-        # Should not raise
-        session.send_keys("echo target", target_pane="main:pane2", enter=False)
+    def test_text_with_dash_t_goes_to_its_pane(self, session):
+        """libtmux's Pane.cmd() drops its own '-t <pane>' when any argument
+        merely contains '-t' (e.g. '--topic'), so the keys went to the active
+        pane. Here the first pane is the active one."""
+        first = session.new_pane("first", "true")
+        second = session.new_pane("second", "echo tag-$((6*7)) --topic x")
+        session.set_pane_title(second, "my-topic")
 
-    def test_command_before_global(self, session):
-        """Test global command_before"""
-        session.send_command_before("cd /tmp")
-
-        assert session.command_before["all"] == "cd /tmp"
-
-    def test_command_before_window(self, session):
-        """Test window-specific command_before"""
-        session.send_command_before("cd /tmp", window="main")
-
-        assert session.current_window.id in session.command_before
-
-
-class TestLayouts:
-    @pytest.fixture
-    def session(self):
-        """Create a test session"""
-        sess = TmuxSession.create("test-layouts", kill_existing=True)
-        yield sess
-        try:
-            sess.kill_session()
-        except:
-            sess.kill()
-
-    def test_window_with_layout(self, session):
-        """Test creating window with specific layout"""
-        # First window reuses unnamed window, doesn't set layout_str
-        window = session.new_window("tiled-window", layout="tiled")
-
-        # Create second window to test layout_str is actually set
-        window2 = session.new_window("second", layout="main-horizontal")
-        assert hasattr(window2, "layout_str")
-        assert window2.layout_str == "main-horizontal"
-
-    def test_main_horizontal_layout(self, session):
-        """Test main-horizontal layout"""
-        window = session.new_window("horiz", layout="main-horizontal")
-        session.new_pane("p1", "echo 1")
-        session.new_pane("p2", "echo 2")
-
-        # Just verify no errors occurred
-        assert len(window.panes) >= 2
+        assert wait_until(lambda: "tag-42" in pane_text(second))
+        assert "tag-42" not in pane_text(first)
+        assert title(second).startswith("my-topic")
+        assert not title(first).startswith("my-topic")
 
 
-class TestVersionCompatibility:
-    def test_libtmux_version_detected(self):
-        """Test that version detection works"""
-        from libtmux_easy.tmux_lib import libtmux_version
-        from packaging import version
+class TestShellMode:
+    def test_exit_code(self, session):
+        pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 42'")
+        assert session.is_running(pane)
+        assert session.exit_status(pane).known is False
 
-        assert libtmux_version is not None
-        assert libtmux_version >= version.parse("0.10.1")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        status = session.exit_status(pane)
+        assert (status.code, status.signal, status.ok) == (42, None, False)
+        assert session.exit_status(pane) == status  # cached: a re-probe would read 0
+
+    def test_sigint_is_inferred(self, session):
+        """Ctrl-C shows up as $? = 130: signal 2, but only inferred."""
+        pane = session.new_pane("x", "sh -c 'exec sleep 300'")
+        session.stop_pane(pane, sigint_timeout=5.0)
+        status = session.exit_status(pane)
+        assert (status.signal, status.inferred) == (2, True)
+
+    def test_sigint_handler_exit_code(self, session):
+        cmd = ("python3 -c 'import signal, sys, time; "
+               "signal.signal(signal.SIGINT, lambda *a: sys.exit(7)); time.sleep(300)'")
+        pane = session.new_pane("x", cmd)
+        time.sleep(0.5)  # until the handler is installed
+        session.stop_pane(pane, sigint_timeout=5.0)
+        assert session.exit_status(pane).code == 7
+
+    def test_slow_shell_start(self, session, tmp_path):
+        """The pane's login shell still runs ~/.profile when new_pane() is
+        called: the command is tracked, not the rc file's 'sleep'."""
+        (tmp_path / ".profile").write_text("sleep 1\nPS1='slow$ '\n")
+        pane = session.new_pane("x", "sleep 100", env={"HOME": str(tmp_path)})
+        time.sleep(0.5)
+        assert session.is_running(pane)
+        assert session.stop_pane(pane, sigint_timeout=5.0)
+        assert session.exit_status(pane).signal == 2
 
 
-class TestIntegration:
-    def test_full_workflow(self):
-        """Test complete session setup workflow"""
-        session = TmuxSession.create("integration-test", kill_existing=True)
+def _exec_status(session, pane):
+    """exit_status() of an exec pane; xfail if tmux lost it. tmux sometimes
+    never records an exec pane's status (docs/KNOWN_ISSUES.md), more often
+    under pytest for a command that sleeps, then exits."""
+    status = session.exit_status(pane)
+    if status.code is None and status.signal is None:
+        pytest.xfail("tmux lost the status (docs/KNOWN_ISSUES.md)")
+    return status
 
-        # Create first window with panes
-        session.new_window("work")
-        session.new_pane("editor", "echo vim", enter=False)
-        session.new_pane("shell", "echo bash", enter=False)
 
-        # Create second window with layout
-        session.new_window("monitoring", layout="main-horizontal")
-        session.new_pane("logs", "echo logs", enter=False)
-        session.new_pane("htop", "echo htop", enter=False)
+class TestExecMode:
 
-        # Verify structure
-        assert len(session.windows) == 2
-        assert session.get_window("work") is not None
-        assert session.get_window("monitoring") is not None
-        assert session.get_pane("work:editor") is not None
-        assert session.get_pane("monitoring:logs") is not None
+    def test_exit_code_from_tmux(self, session):
+        """Also: the window's initial pane runs the command, not a shell."""
+        pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 42'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
 
-        # Cleanup
-        try:
-            session.kill_session()
-        except:
-            session.kill()
+        assert session._pane_fmt(pane, "#{pane_dead}") == "1"  # pane kept
+        status = _exec_status(session, pane)
+        assert status.code == 42
+        assert status.inferred is False
+
+    @pytest.mark.xfail(reason="tmux often never records a SIGINT'd exec pane's status "
+                              "(docs/KNOWN_ISSUES.md)", strict=False)
+    def test_signal_distinguished_from_code(self, session):
+        pane = session.new_pane("x", "sh -c 'exec sleep 300'", mode=PANE_MODE_EXEC)
+        assert session.is_running(pane)
+        assert session.stop_pane(pane, sigint_timeout=5.0)
+        status = session.exit_status(pane)
+        assert (status.signal, status.code, status.inferred) == (2, None, False)
+
+    def test_command_before_and_respawn(self, session):
+        """The status is the command's, not the setup shell's."""
+        session.send_command_before("true")
+        pane = session.new_pane("x", "sh -c 'exit 5'", mode=PANE_MODE_EXEC)
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert _exec_status(session, pane).code == 5
+
+        session.respawn_pane(pane, "sh -c 'exit 22'")
+        session.wait_for_pane_idle(pane, timeout=5.0)
+        assert _exec_status(session, pane).code == 22
+
+
+@pytest.mark.parametrize("mode, cmd", [
+    ("shell", "sh -c 'sleep 0.3; exit 7'"),
+    ("shell", "sh -c 'exit 7'"),          # gone before its pid is seen
+    ("exec", "sh -c 'sleep 0.3; exit 7'"),
+])
+def test_wait_for_exit_after_it_ended(session, mode, cmd):
+    """Watched only after the command ended: the callback still fires, and
+    wait_for_exit() returns the status, not unknown at the timeout."""
+    pane = session.new_pane("x", cmd, mode=mode)
+    assert wait_until(lambda: not session.is_running(pane))
+    time.sleep(0.5)
+    calls = []
+    session.watch_pane(pane, calls.append)
+    assert wait_until(lambda: calls, timeout=5) and len(calls) == 1
+    status = session.wait_for_exit(pane, timeout=5)
+    if mode == PANE_MODE_EXEC:
+        status = _exec_status(session, pane)
+    assert status.code == 7
+
+
+def test_shell_loop_runs_until_the_loop_ends(session):
+    """A loop the shell runs itself: each child exiting isn't the end, and
+    nothing is typed into it. The loop's own status is the exit status."""
+    calls = []
+    pane = session.new_pane("loop", "for i in 1 2 3; do sleep 0.5; done; false",
+                            on_exit=calls.append)
+    time.sleep(0.8)  # the first sleep is gone
+    assert session.is_running(pane) and not calls
+    assert wait_until(lambda: calls, timeout=10) and len(calls) == 1
+    assert session.exit_status(pane).code == 1
+    assert pane_text(pane).count("echo __LTE_EXIT__") == 1  # probed once, at the end
+
+
+def test_exec_pane_exiting_at_once_in_a_split(session):
+    """A split's command starts with the pane: remain-on-exit has to be on
+    already, or the pane (and its status) is gone."""
+    session.new_pane("first", "sleep 30")
+    pane = session.new_pane("fast", "sh -c 'exit 3'", mode=PANE_MODE_EXEC)
+    assert _exec_status_wait(session, pane).code == 3
+    # The window's own option (the format would read the active pane's).
+    assert tmux("show-options", "-wqv", "-t", f"{session.id}:main", "remain-on-exit") \
+        in ([], ["off"])
+
+
+def _exec_status_wait(session, pane):
+    session.wait_for_exit(pane, timeout=5)
+    return _exec_status(session, pane)
+
+
+class TestStopping:
+    def test_stop_pane(self, session):
+        sleeper = session.new_pane("sleeper", "sleep 100")
+        idle = session.new_pane("idle", "true")
+
+        assert session.wait_for_pane_idle(sleeper, timeout=0.5, poll_interval=0.1) is False
+        assert session.stop_pane(sleeper, sigint_timeout=5.0) is True
+        assert session.stop_pane(idle, sigint_timeout=5.0) is True
+
+    def test_stop_pane_escalates_past_sigint(self, session):
+        pane = session.new_pane("trapper", "trap '' INT; sleep 100")
+        time.sleep(0.5)
+        assert session.stop_pane(pane, sigint_timeout=1.0) is True
+        assert session.pane_status(pane).stopped == "SIGTERM"
+
+    def test_stop_all_in_parallel(self, session):
+        """One pane ignores SIGINT and needs SIGTERM; in parallel, the whole
+        thing takes about one escalation."""
+        quick = [session.new_pane(f"q{i}", "sleep 60", mode=PANE_MODE_WRAP) for i in range(3)]
+        stubborn = session.new_pane("stubborn", "sh -c 'trap \"\" INT; exec sleep 60'",
+                                    mode=PANE_MODE_WRAP)
+        done = session.new_pane("done", "true", mode=PANE_MODE_WRAP)
+        session.wait_for_exit(done, timeout=5.0)
+
+        start = time.time()
+        results = session.stop_all(sigint_timeout=1.0)
+
+        assert time.time() - start < 3.0
+        assert results == {"main:q0": True, "main:q1": True, "main:q2": True,
+                           "main:stubborn": True}  # 'done' was not running
+        assert {session.pane_status(p).stopped for p in quick} == {"SIGINT"}
+        assert all(session.exit_status(p).signal == 2 for p in quick)
+        assert session.exit_status(stubborn).signal == 15
+        assert session.pane_status(stubborn).state == "stopped"
+        assert session.pane_status(done).state == "ok"
+
+    def test_stopped_vs_ended_on_its_own(self, session):
+        stopped = session.new_pane("s", "sleep 60", mode=PANE_MODE_WRAP)
+        crashed = session.new_pane("c", "sh -c 'kill -INT $$'", mode=PANE_MODE_WRAP)
+        session.wait_for_exit(crashed, timeout=5.0)
+        session.stop_pane(stopped, sigint_timeout=5.0)
+
+        # Same exit status; only one was asked to stop.
+        assert session.exit_status(stopped) == session.exit_status(crashed)
+        assert session.pane_status(stopped).state == "stopped"
+        assert session.pane_status(crashed).state == "failed"
+        assert str(session.pane_status(stopped)) == "stopped (SIGINT): killed by signal 2"
+
+    def test_rerun_clears_stopped(self, session):
+        pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
+        session.stop_pane(pane, sigint_timeout=5.0)
+        session.respawn_pane(pane, "sh -c 'sleep 0.3; exit 1'")
+
+        assert session.wait_for_exit(pane, timeout=5.0).code == 1
+        assert session.pane_status(pane).stopped is None
+        assert session.pane_status(pane).state == "failed"
+
+
+def test_status_file_and_title(make_session, tmp_path):
+    path = str(tmp_path / "status.json")
+    session = make_session(status_file=path)
+    pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
+    assert [(e["name"], e["running"]) for e in dash.read_status(path)] == [("main:x", True)]
+
+    session.stop_pane(pane, sigint_timeout=5.0)
+
+    assert wait_until(lambda: title(pane) == "x [stopped]")
+    # The title and the file are updated one after the other: wait for both.
+    assert wait_until(lambda: dash.read_status(path)[0]["stopped"] == "SIGINT")
+
+
+def test_status_after_session_closed(session, caplog):
+    """Closed under us (lte-close, tmux kill-session): exit events don't
+    raise, and status() reports the last known state."""
+    events = []
+    done = session.new_pane("done", "sh -c 'exit 3'", mode=PANE_MODE_WRAP)
+    session.wait_for_exit(done, timeout=5)
+    session.new_pane("busy", "sleep 60", mode=PANE_MODE_WRAP, on_exit=events.append)
+
+    session.server.cmd("kill-session", "-t", session.id)
+
+    assert wait_until(lambda: events)
+    by_name = {s.name: s for s in session.status()}
+    assert by_name["main:done"].exit_status.code == 3
+    assert not by_name["main:busy"].running
+    assert "raised" not in caplog.text

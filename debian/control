@@ -1,0 +1,45 @@
+Source: libtmux-easy
+Section: python
+Priority: optional
+Maintainer: Spencer Diehl <docdiehl@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-pip,
+               python3-setuptools,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/nasa-jpl/libtmux_easy
+
+Package: python3-libtmux-easy
+Architecture: all
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         tmux,
+Description: tmux sessions from Python, with exact pane exit status
+ A stateful wrapper around libtmux for building tmux sessions of named
+ windows and panes, with exit status, exit events, output capture and stop
+ escalation for the commands running in them, and pytest fixtures that
+ launch the processes a test needs.
+ .
+ Commands: lte-run (supervises a command typed into a pane and reports its
+ exact exit status), lte-session (runs a command as the home pane of a new
+ dashboard session), lte-close (closes a session gracefully) and lte-key
+ (borrows a tmux prefix key for one session). The dashboard sidebar,
+ lte-dash, is in libtmux-easy-dash.
+
+Package: libtmux-easy-dash
+Architecture: all
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         python3 (>= 3.9),
+         python3-libtmux-easy (= ${binary:Version}),
+Description: dashboard sidebar for libtmux-easy sessions (lte-dash)
+ A Textual sidebar beside a tmux viewport: every pane of the session with
+ its live status, the selected pane shown fully interactive on the right,
+ and keys to stop, rerun and browse them.
+ .
+ Bundles Textual and its dependencies (MIT, BSD-2-Clause, PSF-2.0) in
+ /usr/lib/libtmux-easy-dash, used by lte-dash only: Ubuntu's python3-textual
+ is too old.
