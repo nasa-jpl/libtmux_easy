@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Build a tmux session with two windows of panes, then attach.
-
-    python3 basic.py                          # prefix d detaches; the session keeps running
-    tmux kill-session -t lte_example_basic    # when you're done
-
-Run it outside tmux (inside, attaching would nest sessions).
-"""
+"""Build a tmux session with two windows of panes, then attach"""
 
 from libtmux_easy import TmuxSession
 
