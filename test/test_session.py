@@ -156,6 +156,16 @@ class TestShellMode:
         session.stop_pane(pane, sigint_timeout=5.0)
         assert session.exit_status(pane).code == 7
 
+    def test_slow_shell_start(self, session, tmp_path):
+        """The pane's login shell still runs ~/.profile when new_pane() is
+        called: the command is tracked, not the rc file's 'sleep'."""
+        (tmp_path / ".profile").write_text("sleep 1\nPS1='slow$ '\n")
+        pane = session.new_pane("x", "sleep 100", env={"HOME": str(tmp_path)})
+        time.sleep(0.5)
+        assert session.is_running(pane)
+        assert session.stop_pane(pane, sigint_timeout=5.0)
+        assert session.exit_status(pane).signal == 2
+
 
 def _exec_status(session, pane):
     """exit_status() of an exec pane; xfail if tmux lost it. tmux sometimes

@@ -59,6 +59,10 @@ _PANE_MODES = (PANE_MODE_SHELL, PANE_MODE_EXEC, PANE_MODE_WRAP)
 # it started; until then wait_for_output() treats it as running.
 _RUN_START = 5.0
 
+# How long a new pane's shell may take to start (~/.profile, ~/.bashrc) before
+# new_pane() types into it anyway (e.g. a PS1 that draws nothing).
+_SHELL_START = 5.0
+
 
 def _check_mode(mode: str) -> str:
     if mode not in _PANE_MODES:
@@ -768,6 +772,7 @@ class TmuxSession(Session):
             # Its shell predates 'env': start a fresh one with it.
             _pane_cmd(pane, "respawn-pane", "-k", *env_args(env))
             pane.refresh()
+        self._wait_shell_ready(pane)
         if before:
             self._type(pane, before, enter=True)
             # Let setup finish, so _capture_target_pids() snapshots the target
@@ -779,6 +784,22 @@ class TmuxSession(Session):
         else:
             self._type(pane, command, enter)
         return pane
+
+    def _wait_shell_ready(self, pane, timeout=_SHELL_START):
+        """Until the pane's shell has started: drawn its prompt (the cursor
+        has moved) and no child left (what ~/.bashrc runs). Typed earlier, the
+        command echoes as output, and _capture_target_pids() records the rc
+        file's helpers instead of the command. Twice in a row, since an rc file
+        that prints moves the cursor before it is done."""
+        deadline = time.time() + timeout
+        ready = 0
+        while time.time() < deadline:
+            moved = self._pane_fmt(pane, "#{cursor_x},#{cursor_y}") not in ("", "0,0")
+            ready = ready + 1 if moved and not pane_child_processes(pane) else 0
+            if ready == 2:
+                return
+            time.sleep(0.05)
+        logger.debug(f"Pane {pane.id}: shell not ready within {timeout}s; typing anyway.")
 
     def _new_exec_pane(self, name, command, before, env, **pane_kwargs):
         # A command_before still works here, but it has to run in the same process
