@@ -11,6 +11,7 @@ code. Tests named in the last column guard them.
 |---|---|---|
 | A fast command exits before `remain-on-exit` is set: tmux deletes the pane and its exit status (`new_pane()` crashed) | set it **before** the command can start: on the window for the split, then on the pane; the window's own value is put back | `_new_exec_pane()`; `test_exec_pane_exiting_at_once_in_a_split` |
 | `pipe-pane` run after `split-window` misses the first line | pipe in the same tmux command list as the split (`@lte_pipe_next` + an `after-split-window` hook), never as a second call | `_arm_pipe()`, `_PIPE_HOOK`; `test_capture_pane_from_first_byte` |
+| Exec mode on a window's first pane (reused): its login shell prints its prompt after the pipe starts, before the respawn, and the prompt is captured as the command's output | respawn the shell away (a silent `sleep`) **before** piping, then respawn with the command | `_claim_pane()`, `_SILENT`; `test_capture_exec_skips_the_starting_shell` |
 | Typing into a new shell before it has started: the command echoes as output, and the rc file's helpers are taken for the target pid | wait until the prompt is drawn and no child is left, twice in a row (5 s at most) | `_wait_shell_ready()` |
 | A shell command exits before its pid is seen: no target pid | an empty target list means "already exited"; the status comes from `$?` | `_capture_target_pids()` |
 
