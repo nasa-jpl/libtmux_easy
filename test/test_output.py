@@ -9,6 +9,7 @@ import pytest
 from helpers import fmt, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_SHELL, PANE_MODE_WRAP, PaneExited
 from libtmux_easy import output
+from libtmux_easy._tmux import tmux
 from libtmux_easy.tmux_lib import _wrap_prefix
 
 MODES = (PANE_MODE_SHELL, PANE_MODE_EXEC, PANE_MODE_WRAP)
@@ -218,6 +219,21 @@ def test_capture_pane_from_first_byte(session, tmp_path):
 
     session.kill()
     assert path.exists() and os.path.exists(default_path)  # chosen to pipe: kept
+
+
+def test_capture_exec_skips_the_starting_shell(make_session, tmp_path):
+    """The window's first pane, reused: what its shell prints while it
+    starts (a prompt, here noise) isn't captured as the exec command's."""
+    noisy = "sh -c 'yes NOISE & sleep 3; kill $!; exec sh'"  # prints nonstop
+    tmux("set-option", "-g", "default-command", noisy)  # create() makes the pane
+    try:
+        session = make_session()
+    finally:
+        tmux("set-option", "-gu", "default-command")
+    path = tmp_path / "out.log"
+    pane = session.new_pane("p", "echo first; sleep 30", mode=PANE_MODE_EXEC, capture=str(path))
+    assert wait_until(lambda: b"first" in read(path))
+    assert [m.line for m in session.search_output(pane, ".")] == ["first"]
 
 
 def test_watch_only_files_deleted(make_session):

@@ -4,9 +4,10 @@ import time
 
 import pytest
 
-from helpers import fmt, pane_text, title, wait_until
+from helpers import pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
 from libtmux_easy import dash
+from libtmux_easy._tmux import tmux
 
 
 def test_create_and_kill_existing(make_session):
@@ -236,7 +237,9 @@ def test_exec_pane_exiting_at_once_in_a_split(session):
     session.new_pane("first", "sleep 30")
     pane = session.new_pane("fast", "sh -c 'exit 3'", mode=PANE_MODE_EXEC)
     assert _exec_status_wait(session, pane).code == 3
-    assert fmt(session, f"{session.id}:main", "#{remain-on-exit}") in ("", "off")
+    # The window's own option (the format would read the active pane's).
+    assert tmux("show-options", "-wqv", "-t", f"{session.id}:main", "remain-on-exit") \
+        in ([], ["off"])
 
 
 def _exec_status_wait(session, pane):

@@ -65,6 +65,9 @@ _RUN_START = 5.0
 # new_pane() types into it anyway (e.g. a PS1 that draws nothing).
 _SHELL_START = 5.0
 
+# Holds a reused pane, printing nothing, until exec mode respawns it.
+_SILENT = "sleep 2147483647"
+
 
 def _check_mode(mode: str) -> str:
     if mode not in _PANE_MODES:
@@ -533,6 +536,11 @@ class TmuxSession(Session):
             self.set_pane_title(pane, name)
             self.unnamed_pane[self.current_window.id] = False
             self._pane_env[pane.id] = env
+            if "shell" in split_kwargs:
+                # Exec mode respawns it with the command; its login shell goes
+                # first, before the pipe, so what that shell prints while it
+                # starts (its prompt) isn't captured as the command's output.
+                self._respawn(pane, {}, _SILENT)
             self._claimed(pane, True, capture)
             return pane, True, env
 
