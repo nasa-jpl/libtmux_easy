@@ -8,6 +8,13 @@ CMD runs as the dashboard's **home pane**, a real terminal: `print()`,
 `input()`, pdb and Ctrl-C work. Leaving prints its scrollback in your
 terminal, and the exit code is CMD's.
 
+| flag | |
+|---|---|
+| `--name NAME` | session name (default `lte_<command>_<pid>`) |
+| `--keep` | stay after CMD ends (to inspect panes); leave the session up |
+| `--width N` | sidebar columns, `N%`, or `auto` (default: no panes yet at start, so its minimum) |
+| `--no-dash` | home pane only (also the fallback without Textual) |
+
 ## Startup
 
 1. Save env and cwd to the run dir; `new-session -d`.

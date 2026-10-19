@@ -65,7 +65,8 @@ renders everything else.
 - All dashboard state is in tmux options ([architecture.md](architecture.md)),
   so a restarted sidebar and the library agree.
 - The summary line counts running, stopped, failed (plus ok and unknown when
-  nonzero).
+  nonzero). Colors: green running or exit 0, red failed, yellow stopped (by
+  `x`, `X`, `stop_pane()`), magenta unknown.
 - **Home** shows the script's stdout, stderr and logging via `tee_home()`
   (`dash/homelog.py`).
 

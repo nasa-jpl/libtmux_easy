@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 
 from . import wrap
+from .proc import alive, comm, pane_pids
 from ._tmux import option, tmux as _tmux
 from .dash.control import Control, describe, read_status
 from .dash.options import (HOME_KIND_OPTION, HOME_OPTION, SIDEBAR_OPTION, STATUS_OPTION,
@@ -52,7 +53,6 @@ TIMEOUTS = (10.0, 5.0, 2.0)        # SIGINT, SIGTERM, SIGKILL: as stop_pane()
 ACK_TIMEOUT = 2.0                  # for the script to take the 'close' command
 SCRIPT_TIMEOUT = 120.0             # for it to finish
 PAUSE = 1.5                        # the summary stays up this long before the kill
-SHELLS = frozenset(("bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh"))
 
 
 # ---------- actions (session option) ----------
@@ -87,53 +87,6 @@ def run_actions(entries, when, out=print):
             continue
         if code:
             out(f"  exited {code}")
-
-
-# ---------- processes (stdlib, Linux /proc) ----------
-
-def _stat(pid):
-    """(state, ppid) of 'pid', or None if it is gone."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            fields = f.read().rpartition(")")[2].split()
-        return fields[0], int(fields[1])
-    except (OSError, IndexError, ValueError):
-        return None
-
-
-def _alive(pid):
-    stat = _stat(pid)
-    return stat is not None and stat[0] != "Z"
-
-
-def _comm(pid):
-    try:
-        with open(f"/proc/{pid}/comm") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
-
-
-def _descendants(pid):
-    children = {}
-    for entry in os.listdir("/proc"):
-        if entry.isdigit():
-            stat = _stat(int(entry))
-            if stat is not None:
-                children.setdefault(stat[1], []).append(int(entry))
-    found, todo = [], list(children.get(pid, ()))
-    while todo:
-        child = todo.pop()
-        found.append(child)
-        todo.extend(children.get(child, ()))
-    return found
-
-
-def targets(pane_pid):
-    """What a pane runs: a shell's descendants (the shell itself stays), or
-    the pane's own process and its descendants."""
-    found = _descendants(pane_pid)
-    return found if _comm(pane_pid) in SHELLS else [pane_pid] + found
 
 
 # ---------- the close sequence ----------
@@ -220,9 +173,9 @@ class Closer:
     def stop_panes(self):
         running = {}
         for pane_id, (pid, label) in self._panes().items():
-            pids = targets(pid)
+            pids = pane_pids(pid)
             if pids:
-                running[pane_id] = (f"{label} ({_comm(pids[0]) or pids[0]})", pids)
+                running[pane_id] = (f"{label} ({comm(pids[0]) or pids[0]})", pids)
         if not running:
             self.out("Nothing left running in the panes.")
             return
@@ -244,7 +197,7 @@ class Closer:
             deadline = time.monotonic() + timeout
             while running and time.monotonic() < deadline:
                 for pane_id, (label, pids) in list(running.items()):
-                    if not any(_alive(p) for p in pids):
+                    if not any(alive(p) for p in pids):
                         self.out(f"  {label}: stopped by {step}")
                         del running[pane_id]
                 time.sleep(0.1)

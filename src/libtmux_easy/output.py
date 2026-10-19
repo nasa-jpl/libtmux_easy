@@ -5,11 +5,11 @@ Capturing a pane means tmux appends its raw output to a file
 file, so this library, lte-run --tee and a later process all agree on where
 a pane's output is. A watch tails the file (OutputReader: one thread per
 session, woken by inotify when a watched file is written); a search scans
-it once. Lines are matched as plain text
-(wrap.plain_line). Panes nobody captured cost nothing. See
-docs/output-match.md.
+it once. Lines are matched as plain text (wrap.plain_line). Panes nobody
+captured cost nothing. See docs/output-match.md.
 """
 
+import bisect
 import collections
 import ctypes
 import ctypes.util
@@ -23,9 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import bisect
-
-from .wrap import PIPE_FILE_OPTION, PIPE_FROM_OPTION, PIPE_ID_OPTION, plain_line, plain_text
+from .wrap import plain_line, plain_text
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +37,6 @@ KEEP = 1000        # matches an OutputWatch keeps (.matches) and holds unread fo
 BATCH = 4          # from this many lines, a read is matched as one text (see _match_batch)
 # Could match less on lines joined by newlines than one by one: matched per line.
 _CROSS_LINE = re.compile(r"\\[AZ]|\(\?<?[=!]|\(\?>|[*+?}]\+")
-
-PIPE_FILE = PIPE_FILE_OPTION
-PIPE_FROM = PIPE_FROM_OPTION
-PIPE_ID = PIPE_ID_OPTION
 
 
 class PaneExited(RuntimeError):
@@ -62,6 +56,20 @@ class OutputMatch:
     line: str            # plain text, no newline
     time: float          # time.time() when the line was read
     offset: int = -1     # where the line starts in the pane's file (-1: not from a file)
+
+
+def file_size(path) -> int:
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return 0
+
+
+def typed_echo(line, typed):
+    """'line' is the shell echoing one of the commands 'typed' (stripped,
+    non-empty) into its pane: prompt + command."""
+    tail = line.rstrip()
+    return any(tail.endswith(t) for t in typed)
 
 
 def plain_lines(data):
@@ -221,7 +229,8 @@ class OutputReader(threading.Thread):
 
     'panes()' -> {pane_id: (window_id, piped, path, start, pipe id)} for
     the session's panes with a file; 'names(pane_id)' -> its name or None;
-    'typed(pane_id)' -> texts typed into it, for echoes in a replay."""
+    'typed(pane_id)' -> texts typed into it (for typed_echo()), for echoes
+    in a replay."""
 
     def __init__(self, panes, names, typed, ignore=None):
         super().__init__(daemon=True, name="lte-output")
@@ -284,7 +293,7 @@ class OutputReader(threading.Thread):
                 if not watch.covers(pane_id, src.window_id):
                     continue
                 begin = (src.start if since == "start" else
-                         since.get(pane_id, 0) if isinstance(since, dict) else _size(src.path))
+                         since.get(pane_id, 0) if isinstance(since, dict) else file_size(src.path))
                 watch._from[pane_id] = begin  # a pane made later: from its first byte
                 if begin < src.offset:
                     self._replay(src, begin, src.offset, watch)
@@ -436,7 +445,7 @@ class OutputReader(threading.Thread):
             if src is None:
                 # Known before any watch: only what comes next. Else (a pane
                 # made or captured since): all of its capture.
-                offset = start if self._watches or self._synced_once else _size(path)
+                offset = start if self._watches or self._synced_once else file_size(path)
                 src = self._sources[pane_id] = _Source(pane_id, window_id, None, path, start,
                                                        pipe, offset)
             elif (src.path, src.start, src.pipe) != (path, start, pipe):
@@ -533,13 +542,12 @@ class OutputReader(threading.Thread):
                 data = f.read(end - begin)
         except OSError:
             return
-        typed = [t.strip() for t in self._typed(src.pane_id) if t.strip()]
+        typed = self._typed(src.pane_id) if watch.skip_echo else ()
         now = time.time()
         for off, line in plain_lines(data):
             if watch.done:
                 break
-            if not self._skip(line) and not (watch.skip_echo and any(line.rstrip().endswith(t)
-                                                                      for t in typed)):
+            if not self._skip(line) and not typed_echo(line, typed):
                 watch._offer(line, now, src.pane_id, src.name, begin + off)
 
     def _flush_partials(self):
@@ -610,13 +618,6 @@ def _drain(fd):
         pass
 
 
-def _size(path):
-    try:
-        return os.stat(path).st_size
-    except OSError:
-        return 0
-
-
 class Capture:
     """Output capture over a pane, a window or the session: TmuxSession.capture().
 
@@ -658,7 +659,7 @@ class Capture:
         """Where the output is now: an offset, or {pane id: offset} for a
         window or session capture. Pass it as search(since=)."""
         if pane is None and not self._is_pane:
-            return {p: _size(f) for p, f in self.panes().items()}
+            return {p: file_size(f) for p, f in self.panes().items()}
         return self.session.output_mark(self._pane(pane))
 
     def search(self, pattern, pane=None, since=None, *, regex=True, flags=0):

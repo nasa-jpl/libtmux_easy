@@ -15,6 +15,7 @@ Linux 6.x); don't re-research them.
 | [tmux-defaults.md](tmux-defaults.md) | starter tmux settings for a server with no config; the library's keys (`g`, `Q`) and how to change them |
 | [session-close.md](session-close.md) | every way to stop panes and close a session; `lte-close`, close actions, the close key |
 | [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: modes, health checks, hooks |
+| [packaging.md](packaging.md) | installs in detail, the `.deb`s, releases, development |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | tmux bugs, limits, open bugs |
 
 ## Why it exists

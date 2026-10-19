@@ -9,22 +9,10 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
-import psutil
-
+from .proc import proc_alive
 from .status import ExitStatus
 
 logger = logging.getLogger(__name__)
-
-
-def _proc_alive(proc: psutil.Process) -> bool:
-    """True if 'proc' is still alive and not a zombie.
-
-    The zombie check matters: a reaped-but-not-yet-collected process still
-    reports is_running() == True from psutil."""
-    try:
-        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return False
 
 
 class _Watch:
@@ -119,7 +107,7 @@ class _PaneWatcher(threading.Thread):
         watch = _Watch(pane_id)
         finished = True
         for proc in procs:
-            alive = _proc_alive(proc)
+            alive = proc_alive(proc)
             fd = None
             if alive and hasattr(os, "pidfd_open"):
                 try:
@@ -128,7 +116,7 @@ class _PaneWatcher(threading.Thread):
                     # Raced with the process exiting between the alive-check
                     # above and the open -- re-check rather than assume.
                     fd = None
-                    alive = _proc_alive(proc)
+                    alive = proc_alive(proc)
             if not alive:
                 continue
             finished = False
@@ -268,7 +256,7 @@ class _PaneWatcher(threading.Thread):
                 for pane_id, watch in list(self._watches.items()):
                     if not watch.poll_procs:
                         continue
-                    watch.poll_procs = [p for p in watch.poll_procs if _proc_alive(p)]
+                    watch.poll_procs = [p for p in watch.poll_procs if proc_alive(p)]
                     if not watch.fds and not watch.poll_procs:
                         finished.append(pane_id)
                         del self._watches[pane_id]

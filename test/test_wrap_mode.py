@@ -42,7 +42,8 @@ class TestWrapStandalone:
     def _run(self, env, *argv):
         # A subprocess, not wrap.main(): main() changes signal dispositions
         # for the rest of the process it runs in.
-        return subprocess.run([sys.executable, wrap.__file__, *argv], env=env,
+        env = dict(env, PYTHONPATH=os.pathsep.join(sys.path))
+        return subprocess.run([sys.executable, "-m", "libtmux_easy.wrap", *argv], env=env,
                               capture_output=True, text=True, timeout=10)
 
     @pytest.mark.parametrize("argv, code, stderr", [
@@ -119,7 +120,7 @@ class TestWrapMode:
         target = psutil.Process(pids[0])
         assert target.name() == "sleep"
         wrapper = target.parent()
-        assert "wrap.py" in " ".join(wrapper.cmdline()) or "lte-run" in wrapper.name()
+        assert "libtmux_easy.wrap" in " ".join(wrapper.cmdline()) or "lte-run" in wrapper.name()
         assert wrapper.pid == session._wrap_runs[pane.id].wrapper_pid
         assert wrapper.parent().pid == int(pane.pane_pid)  # bash, the pane process
 

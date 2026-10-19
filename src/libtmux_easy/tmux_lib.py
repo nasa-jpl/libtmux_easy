@@ -28,13 +28,15 @@ from .dash import keys as _keys
 from ._tmux import env_args, option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
 from .output import (POLL as _OUTPUT_POLL, QUIET as _OUTPUT_QUIET, Capture, OutputExpect,
-                     OutputMatch, OutputReader, OutputWatch, PaneExited, PIPE_FILE, PIPE_FROM,
-                     PIPE_ID, plain_lines)
-from .proc import pane_child_processes
+                     OutputMatch, OutputReader, OutputWatch, PaneExited, file_size, plain_lines,
+                     typed_echo)
+from .proc import pane_child_processes, pane_process, proc_alive
 from .status import ExitStatus, PaneStatus
-from .watcher import _PaneWatcher, _proc_alive, _WrapRun
-from .wrap import (DIR_OPTION, PIPE_TEE_OPTION, PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION,
-                   SOCKET_NAME, guarded_pipe, guarded_unpipe)
+from .watcher import _PaneWatcher, _WrapRun
+from .wrap import (DIR_OPTION, PIPE_FILE_OPTION as PIPE_FILE, PIPE_FROM_OPTION as PIPE_FROM,
+                   PIPE_ID_OPTION as PIPE_ID, PIPE_TEE_OPTION,
+                   PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION, SOCKET_NAME, guarded_pipe,
+                   guarded_unpipe, tmux_literal)
 
 libtmux_version = version.parse(libtmux.__version__)
 
@@ -81,11 +83,11 @@ _MAX_SOCKET_PATH = 107
 
 def _wrap_prefix() -> str:
     """How the library invokes lte-run in a pane: the bare name if it is
-    installed, else an absolute path that works from a plain checkout."""
+    installed, else this interpreter on this source tree (a plain checkout)."""
     if shutil.which("lte-run"):
         return "lte-run"
-    script = Path(__file__).resolve().with_name("wrap.py")
-    return f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    src = Path(__file__).resolve().parents[1]
+    return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m libtmux_easy.wrap"
 
 
 def _make_wrap_dir() -> str:
@@ -122,56 +124,48 @@ def _safe_name(name) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(name))
 
 
-def _file_size(path) -> int:
+def _remove(path):
     try:
-        return os.stat(path).st_size
+        os.remove(path)
     except OSError:
-        return 0
-
-
-def _tmux_literal(text) -> str:
-    """'text' as itself in a pipe-pane command, which tmux expands as a
-    format and with strftime: 'main.%4.log' would become 'main.'."""
-    return text.replace("#", "##").replace("%", "%%")
+        pass
 
 
 def _cat_to(path) -> str:
     """pipe-pane's command for 'path'."""
-    return _tmux_literal(f"exec cat >> {shlex.quote(path)}")
+    return tmux_literal(f"exec cat >> {shlex.quote(path)}")
 
 
-# Global default server object
-_server = libtmux.Server(
-    socket_name=None,
-    socket_path=None,
-    config_file=None,
-    colors=None,
-)
+# The server create() makes sessions on: see set_server().
+_server = libtmux.Server()
 
 
 def set_server(**kwargs):
-    """Set the server object that will be used by the rest of the this library. This allow users to
-    specify custom tmux server options (e.g. socket name)"""
+    """Make create() use a tmux server of its own: libtmux.Server(**kwargs),
+    e.g. socket_name="test"."""
     global _server
     _server = libtmux.Server(**kwargs)
 
 
 def tmux_command(cmd: str) -> str:
-    """Helper function to run a tmux command and return the output. Raises an exception if the
-    command returns an error."""
+    """Run 'tmux CMD' (one string, shell-split) on the default server; its
+    stdout lines. LibTmuxException on an error."""
     proc = tmux_cmd(*shlex.split(cmd))
     if proc.stderr:
-        raise exc.LibTmuxException(
-            "Command: %s returned error: %s" % (proc.cmd, proc.stderr)
-        )
+        raise exc.LibTmuxException(f"Command: {proc.cmd} returned error: {proc.stderr}")
     return proc.stdout
 
 
 def session_exists(session_name: str) -> bool:
-    """Returns True if tmux session already exists."""
-    assert isinstance(session_name, str)
-    exists = _server.has_session(session_name)
-    return exists
+    """True if a tmux session of that name exists."""
+    return _server.has_session(session_name)
+
+
+def _kill(session, *args, **kwargs):
+    """Session.kill(), or kill_session() before libtmux 0.30."""
+    if hasattr(Session, "kill"):
+        return Session.kill(session, *args, **kwargs)
+    return Session.kill_session(session, *args, **kwargs)
 
 
 def _pane_cmd(pane: Pane, cmd: str, *args):
@@ -195,56 +189,26 @@ def _set_pane_title(pane: Pane, pane_name: str):
     status suffix ('sim [running]'), which a shell-split string would break."""
     proc = _pane_cmd(pane, "select-pane", "-T", pane_name)
     if proc.stderr:
-        raise exc.LibTmuxException(
-            "Command: %s returned error: %s" % (proc.cmd, proc.stderr)
-        )
+        raise exc.LibTmuxException(f"Command: {proc.cmd} returned error: {proc.stderr}")
 
 
-def _create_session(
-    session_name,
-    window_name="unnamed",
-    pane_name="unnamed",
-    kill_existing=True,
-    **kwargs,
-):
-    """Create a new tmux session with the given name. If a session with the same name already
-    exists, it can be killed and replaced with a new session. Returns the created session, window,
-    and pane objects."""
-
-    global _server
-    # TODO - just use kill_session option in new_session()
-
-    if session_exists(session_name):
+def _create_session(session_name, kill_existing=True, **kwargs):
+    """A new session named 'session_name' (replacing one of that name if
+    'kill_existing'), its window 'unnamed' and pane. Returns (session,
+    window, pane)."""
+    old = [s for s in _server.sessions if s.name == session_name]
+    if old:
         if not kill_existing:
-            raise ValueError(
-                f"Session {session_name} already exists and kill_existing is False."
-            )
-        session = [
-            session for session in _server.sessions if session.name == session_name
-        ][0]
-        logger.info(
-            f"Session {session_name} exists. Killing and creating new session."
-        )
-        if hasattr(session, "kill"):
-            session.kill()
-        else:
-            session.kill_session()  # libtmux < 0.30
-        session = _server.new_session(
-            session_name=session_name,
-        )
+            raise ValueError(f"Session {session_name} already exists and kill_existing is False.")
+        logger.info(f"Session {session_name} exists. Killing and creating new session.")
+        _kill(old[0])
     else:
         logger.info(f"Creating new session named {session_name}")
-        session = _server.new_session(session_name=session_name, **kwargs)
-
+    session = _server.new_session(session_name=session_name, **kwargs)
     window = session.windows[0]
     pane = window.panes[0]
-
-    if window_name:
-        window.rename_window(window_name)
-
-    if pane_name:
-        _set_pane_title(pane, pane_name)
-
+    window.rename_window("unnamed")
+    _set_pane_title(pane, "unnamed")
     return session, window, pane
 
 
@@ -254,35 +218,16 @@ def _create_session(
 
 
 class TmuxSession(Session):
-    """Helper class that streamlines the creation of a tmux session. It is "stateful" in that it
-    will act on the most recent context. Sort of similar to matplotlib. (e.g. new_pane will create a
-    new pane in the most recently created window)
+    """A tmux session built and supervised from Python. Make one with
+    create() or current().
 
-    New Windows and Panes
-    ---------------------
-    For a new session, tmux will by default create a new window and pane (which we will title
-    'unnamed'), and the first call to new_window() or new_pane() will reuse that initial
-    window/pane.  Then subsequent calls will create new windows/panes as normal.
+    Stateful, like matplotlib: new_pane() goes in the window new_window()
+    made last. A new session's first window, and a new window's first pane,
+    are reused by the first new_window() / new_pane(); later calls split.
 
-    Similarly, when new_window() creates a new window, tmux will create an new pane for that
-    window. The next call to new_pane() will reuse that initial pane, and then subsequent calls will
-    create new panes as normal.
-
-    Naming
-    ---------------------
-    When created, windows and names will automatically be given unique ids. The first window will be
-    @0, the second will be @1, etc. Panes are named %0, %1, etc.
-
-    In this class, windows and panes are also always assigned a user-specified name.
-        - Window names must be unique.
-        - Pane names must be unique within a window.
-
-    Becuase pane names can be repeated across windows, the identifying name of a pane is actually
-    'window_name:pane_name'. This is the name that should be supplied to functions that accept a pane
-    name.
-
-    In general, functions that accept a target_pane will accept a Pane object, the pane id, or the
-    fully qualified pane name (i.e. 'window_name:pane_name').
+    Window names are unique, pane names unique within their window. A pane
+    is named 'window:pane'; anything that takes a pane also takes its id
+    ('%3') or the Pane. See docs/architecture.md.
     """
 
     def __init__(self, **kwargs):
@@ -398,6 +343,10 @@ class TmuxSession(Session):
             session.copy_environment(env)
         return session
 
+    def _tmux_run(self, *args):
+        """A tmux command on this session's server; its stdout lines."""
+        return self.server.cmd(*args).stdout
+
     def _session_option(self, name) -> str:
         return option(self.id, name, run=self._tmux_run)
 
@@ -413,6 +362,12 @@ class TmuxSession(Session):
         that follows it (lte-dash without --status)."""
         self._set_session_option(dash.STATUS_OPTION, os.path.abspath(self.status_file))
         self._write_status_file()
+
+    def _ensure_status_file(self):
+        """Have a status file (in the control dir if none was configured)."""
+        if not self.status_file:
+            self.status_file = os.path.join(self._wrap_dir, "status.json")
+            self._publish_status_file()
 
     def __post_init__(self, window, pane, title_status: bool = True, status_file: Optional[str] = None):
         # Set internal state
@@ -490,9 +445,8 @@ class TmuxSession(Session):
         env: Optional[Mapping[str, str]] = None,
         capture: Union[None, bool, str] = None, **window_kwargs
     ) -> Window:
-        """Create a new window with the given name. Due to the nature of tmux, this will by also
-        create a default, unnamed pane. The next call to new_pane will reuse and rename this pane
-        instead of actually creating a new pane.
+        """A new window named 'name'; the next new_pane() reuses its first
+        pane. 'layout' is re-applied after each split (None: tmux's own).
 
         'env' goes into every pane new_pane() makes in this window, on top of
         the session's (copy_environment()). tmux has no window environment,
@@ -537,15 +491,10 @@ class TmuxSession(Session):
 
 
     def send_command_before(self, command: str, window: Union[str, Window] = None):
-        """Helper function to send a command before sending the actual command to a new pane. This
-        is useful for setting up the context for the command (e.g. changing directories, setting env
-        vars, etc.)
-        
-        If 'window' is provided, the command will be sent to all the new panes for that window.
-        Otherwise, the command will be sent to all new panes for the entire session.
-        
-        NOTE - a window command_before will override a session command_before.
-        """
+        """Run 'command' in every new pane before its own command (cd, source
+        an environment). For 'window' only, or the whole session; a window's
+        replaces the session's. In exec mode it runs in the same process
+        ('setup && exec cmd')."""
         if window:
             window = self.resolve_target_window(window)
             self.command_before[window.id] = command
@@ -733,10 +682,8 @@ class TmuxSession(Session):
         Returns a possibly-empty tuple; empty means the command exited before
         it could be seen, or never started."""
         if mode == PANE_MODE_EXEC:
-            try:
-                return (psutil.Process(int(pane.pane_pid)),)
-            except (psutil.NoSuchProcess, ValueError, TypeError):
-                return ()
+            proc = pane_process(pane)
+            return (proc,) if proc else ()
 
         if mode == PANE_MODE_WRAP:
             started = self._wrap_started.get(pane.id)
@@ -769,9 +716,7 @@ class TmuxSession(Session):
         if _tee is not None:
             self._pane_tee[pane.id] = _tee
         if reused and env:
-            # Its shell predates 'env': start a fresh one with it.
-            _pane_cmd(pane, "respawn-pane", "-k", *env_args(env))
-            pane.refresh()
+            self._respawn(pane, env)  # its shell predates 'env': a fresh one with it
         self._wait_shell_ready(pane)
         if before:
             self._type(pane, before, enter=True)
@@ -824,17 +769,17 @@ class TmuxSession(Session):
         self._set_remain_on_exit(pane)
 
         if reused:
-            # The reused initial pane is still running its login shell -- the
-            # 'shell' kwarg above never applied to it. Replace its process.
-            _pane_cmd(pane, "respawn-pane", "-k", *env_args(env), shell_command)
-            # respawn-pane kills the old process and starts a new one under
-            # the same pane, but this Pane object's 'pane_pid' field is a
-            # cached snapshot from whenever it was first fetched -- it still
-            # holds the OLD (now-dead) pid unless refreshed. Without this,
-            # _capture_target_pids() would watch a pid that's already gone.
-            pane.refresh()
-
+            # The reused initial pane still runs its login shell: the 'shell'
+            # kwarg above never applied to it.
+            self._respawn(pane, env, shell_command)
         return pane
+
+    @staticmethod
+    def _respawn(pane, env, *command):
+        """respawn-pane -k: the pane's process replaced (by 'command', or a
+        fresh shell), with 'env'."""
+        _pane_cmd(pane, "respawn-pane", "-k", *env_args(env), *command)
+        pane.refresh()  # pane_pid is a cached field: the old, dead pid otherwise
 
     def _set_remain_on_exit(self, pane):
         """Keep a pane and its recorded exit status alive after its process ends.
@@ -844,7 +789,6 @@ class TmuxSession(Session):
             logger.debug("per-pane remain-on-exit unavailable; falling back to window scope")
             self.current_window.set_window_option("remain-on-exit", "on")
 
-    # TODO - specify layout when creating the window. If 'None', then don't select layout.
     def set_default_mode(self, mode: str) -> str:
         """Make 'mode' (PANE_MODE_SHELL, _EXEC or _WRAP) the mode of every
         later new_pane() that doesn't pass one. Panes already made keep
@@ -853,9 +797,8 @@ class TmuxSession(Session):
         return previous
 
     def split_window(self, window: Window, pane_name=None, **pane_kwargs) -> Pane:
-        """Add a new pane to the given window"""
-        # Splitting with layouts that aren't 'tiled' can run into issues. Switch to tiled, split,
-        # and then back to the target layout.
+        """Add a pane to 'window', titled 'pane_name'."""
+        # Other layouts can leave no room for a split: tile, split, then restore.
         if hasattr(window, "layout_str"):
             window.select_layout("tiled")
 
@@ -877,12 +820,8 @@ class TmuxSession(Session):
     def send_keys(
         self, command: str, enter: bool = True, target_pane: Union[Pane, str] = None
     ):
-        """Send the provided command string to the last created pane, or to the target_pane.
-
-        'target_pane' should either be a pane name, pane id, or a Pane object. If None, the command
-        will be sent to the most recently created pane. Raises ValueError if the resolved pane isn't
-        a pane tracked/named by this session (i.e. not created via new_pane()).
-        """
+        """Type 'command' into 'target_pane' (default: the last new_pane()).
+        ValueError for a pane not made by new_pane()."""
         if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
             raise ValueError("Must create a window and pane before sending commands.")
 
@@ -902,8 +841,7 @@ class TmuxSession(Session):
         self.commands.setdefault(pane_name, []).append(command)
 
     def resolve_target_pane(self, identifier: Union[Pane, str]) -> Pane:
-        """Helper function to retrieve a Pane object from either a pane name, pane id, or a Pane
-        object."""
+        """The Pane for a name ('window:pane'), an id ('%3') or a Pane."""
         if isinstance(identifier, str):
             pane = self.get_pane(identifier)
             if pane is None:
@@ -914,8 +852,7 @@ class TmuxSession(Session):
         return pane
 
     def resolve_target_window(self, identifier: Union[Window, str]) -> Window:
-        """Helper function to retrieve a Window object from either a window name, window id, or a
-        window object."""
+        """The Window for a name, an id ('@1') or a Window."""
         if isinstance(identifier, str):
             window = self.get_window(identifier)
             if window is None:
@@ -926,13 +863,12 @@ class TmuxSession(Session):
         return window
 
     def set_pane_title(self, pane: Pane, pane_name: str):
-        """Set the title of a tmux pane. This is done by sending a tmux command to select the pane
-        and set its title."""
+        """Set the pane's title and name it 'window:pane_name'."""
         _set_pane_title(pane, pane_name)
         self.pane_names[self._full_pane_name(pane, pane_name)] = pane
 
     def print(self):
-        """Print layout of the session, including windows and panes."""
+        """Print the session's windows, panes and the commands sent to them."""
         rep = f"Session: {self.session_name}\n"
         tab = "    "
         for window in self.windows:
@@ -947,9 +883,8 @@ class TmuxSession(Session):
         print(rep)
 
     def select_window(self, target_window: Union[Window, str]) -> Window:
-        """Select the given window. 'target_window' can be either the name of the window, the id of
-        the window, or the Window object itself. Returns the Window object. Note that selecting a
-        window will also select the most recently created pane in that window."""
+        """Select a window (name, id or Window) and its last pane; later
+        new_pane() calls go in it."""
         window = self.resolve_target_window(target_window)
         self.current_window = window
         self.current_pane = window.panes[-1]
@@ -958,8 +893,7 @@ class TmuxSession(Session):
         return window
     
     def select_pane(self, target_pane: Union[Pane, str]) -> Pane:
-        """Select the given pane. 'target_pane' can be either the name of the pane, the id of
-        the pane, or the Pane object itself. Returns the Pane object"""
+        """Select a pane (name, id or Pane) and its window."""
         pane = self.resolve_target_pane(target_pane)
         self.current_pane = pane
         self.current_window = pane.window
@@ -975,7 +909,7 @@ class TmuxSession(Session):
         return super().select_window(window.id).select_pane(window.panes[0].id)
 
     def attach(self) -> Session:
-        """Attach to the tmux session"""
+        """Attach this terminal to the session."""
         try:
             return self.attach_session()
         except DeprecatedError:  # attach_session() deprecated in 0.30.0
@@ -1017,7 +951,7 @@ class TmuxSession(Session):
 
         targets = self.pane_targets.get(pane.id)
         if targets:
-            alive = any(_proc_alive(p) for p in targets)
+            alive = any(proc_alive(p) for p in targets)
             if alive or self._pane_mode(pane) != PANE_MODE_EXEC:
                 return alive
             # Exec mode: the OS-level pid can be reaped a beat before tmux's
@@ -1218,14 +1152,12 @@ class TmuxSession(Session):
         if self._pane_mode(pane) == PANE_MODE_WRAP:
             if self._wrap_signal(pane, sig):
                 return
-            targets = [p for p in self.pane_targets.get(pane.id, ()) if _proc_alive(p)]
+            targets = [p for p in self.pane_targets.get(pane.id, ()) if proc_alive(p)]
         else:
             targets = list(pane_child_processes(pane))
-            if self._pane_mode(pane) == PANE_MODE_EXEC:
-                try:
-                    targets.append(psutil.Process(int(pane.pane_pid)))
-                except (psutil.NoSuchProcess, ValueError, TypeError):
-                    pass
+            own = pane_process(pane) if self._pane_mode(pane) == PANE_MODE_EXEC else None
+            if own is not None:
+                targets.append(own)
         for proc in targets:
             try:
                 proc.send_signal(sig)
@@ -1255,9 +1187,7 @@ class TmuxSession(Session):
 
         if mode == PANE_MODE_EXEC:
             self._stopped_by.pop(pane.id, None)
-            _pane_cmd(pane, "respawn-pane", "-k", *env_args(self._pane_env.get(pane.id)),
-                      command)
-            pane.refresh()  # pane_pid is a cached field; respawn-pane gave it a new one
+            self._respawn(pane, self._pane_env.get(pane.id), command)
         else:
             if self.is_running(pane):
                 self.stop_pane(pane)
@@ -1579,6 +1509,15 @@ class TmuxSession(Session):
             self._reader.expect_echo(pane.id, text)
         _type(pane, text, enter)
 
+    def _typed_texts(self, pane_id):
+        """What was typed into the pane, for output.typed_echo()."""
+        return [t.strip() for t in self._typed.get(pane_id, ()) if t.strip()]
+
+    def _is_output(self, pane_id, line):
+        """Not blank, not our '$?' probe, not the echo of a command we typed."""
+        return bool(line.strip()) and _EXIT_MARKER not in line and \
+            not typed_echo(line, self._typed_texts(pane_id))
+
     def _new_pane_file(self, name) -> Optional[str]:
         """The file new_pane()'s pane is captured to, if any."""
         capture, window = self._pending_capture, self.current_window
@@ -1598,7 +1537,7 @@ class TmuxSession(Session):
 
     def _claimed(self, pane, reused, capture):
         """_claim_pane() has the pane: pipe it, arm new_pane(on_output=)."""
-        if capture is not None and (reused or self._pipe_info(pane)[2] != capture):
+        if capture is not None and (reused or self._pipe_info(pane.id)[2] != capture):
             # A reused pane predates the hook; a split one only if it failed.
             self._pipe(pane, capture)
         elif self._pending_capture is False and self._capture_hooked:
@@ -1640,15 +1579,11 @@ class TmuxSession(Session):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self._tmux_run("set", "-t", self.id, "@lte_pipe_next", path, ";",
                        "set", "-t", self.id, "@lte_pipe_next_cmd", _cat_to(path), ";",
-                       "set", "-t", self.id, "@lte_pipe_next_from", str(_file_size(path)))
+                       "set", "-t", self.id, "@lte_pipe_next_from", str(file_size(path)))
 
     def _disarm_pipe(self):
         for opt in ("@lte_pipe_next", "@lte_pipe_next_cmd", "@lte_pipe_next_from"):
             self._tmux_run("set", "-q", "-u", "-t", self.id, opt)
-
-    def _pipe_info(self, pane):
-        """(piped, lte-run's --tee has it, the pane's file or '')."""
-        return self._pane_pipe_info(pane.id)
 
     def _pipe(self, pane, path, quiet=False) -> bool:
         """Pipe the pane's output to 'path' (appended), replacing a capture
@@ -1660,7 +1595,7 @@ class TmuxSession(Session):
         """_pipe() for {pane id: path}, in one tmux call. The pane ids piped."""
         if len(paths) == 1:
             pane_id = next(iter(paths))
-            infos = {pane_id: self._pane_pipe_info(pane_id)}
+            infos = {pane_id: self._pipe_info(pane_id)}
         else:
             infos = self._all_pipe_info()
         args, piped, stale = [], set(), []
@@ -1677,7 +1612,7 @@ class TmuxSession(Session):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             # Checked again in tmux, with the pipe: lte-run may pipe it meanwhile.
             args += guarded_pipe(pane_id, _cat_to(path), {
-                PIPE_FILE: path, PIPE_FROM: str(_file_size(path)),
+                PIPE_FILE: path, PIPE_FROM: str(file_size(path)),
                 PIPE_ID: f"lib-{time.monotonic_ns()}"}) + [";"]
             if current and current != path and current.endswith(f".{pane_id}.log"):
                 stale.append(current)
@@ -1690,15 +1625,13 @@ class TmuxSession(Session):
         for path in stale:
             # The hook's file for a pane only now named (new_window()'s first
             # pane): just its shell's prompt.
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            _remove(path)
         if args and self._reader is not None:
             self._reader.resync()
         return piped
 
-    def _pane_pipe_info(self, pane_id):
+    def _pipe_info(self, pane_id):
+        """(piped, lte-run's --tee has it, the pane's file or '')."""
         out = self._tmux_run("display", "-p", "-t", pane_id,
                              f"#{{pane_pipe}}\t#{{{PIPE_TEE_OPTION}}}\t#{{{PIPE_FILE}}}")
         piped, tee, path = ((out[0] if out else "").split("\t") + ["", "", ""])[:3]
@@ -1716,13 +1649,14 @@ class TmuxSession(Session):
 
     def _unpipe(self, pane):
         """Stop a capture pipe and forget its file (it held a moment's output)."""
-        piped, tee, current = self._pipe_info(pane)
+        piped, tee, current = self._pipe_info(pane.id)
         if piped and current and not tee:
-            self._tmux_run(*guarded_unpipe(pane.id, f"set -p -u -t {pane.id} {PIPE_FILE}"))
-            try:
-                os.remove(current)
-            except OSError:
-                pass
+            self._drop_pipe(pane.id, current)
+
+    def _drop_pipe(self, pane_id, path):
+        """Close a capture pipe of ours, forget its file and delete it."""
+        self._tmux_run(*guarded_unpipe(pane_id, f"set -p -u -t {pane_id} {PIPE_FILE}"))
+        _remove(path)
 
     def _resolve_scope(self, target):
         """('session', None), ('window', Window) or ('pane', Pane)."""
@@ -1764,7 +1698,7 @@ class TmuxSession(Session):
         esc = directory.replace("#", "##")
         self._tmux_run("set", *scope, "@lte_pipe", f"{esc}/{_PIPE_NAME}", ";",
                        "set", *scope, "@lte_pipe_cmd",
-                       f"exec cat >> {_tmux_literal(shlex.quote(directory + '/'))}{_PIPE_NAME}")
+                       f"exec cat >> {tmux_literal(shlex.quote(directory + '/'))}{_PIPE_NAME}")
         cap = Capture(self, None if kind == "session" else obj.id, directory, keep)
         self._scope_captures[cap.target] = cap
         windows = [obj] if kind == "window" else [
@@ -1782,11 +1716,7 @@ class TmuxSession(Session):
         self._tmux_run("set", "-w", "-t", window_id, "@lte_pipe", "")
         for pane_id, (window, piped, path, _, _) in self._piped_panes().items():
             if window == window_id and piped:
-                self._tmux_run(*guarded_unpipe(pane_id, f"set -p -u -t {pane_id} {PIPE_FILE}"))
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                self._drop_pipe(pane_id, path)
 
     def _stop_capture(self, cap):
         """Capture.stop(): unpipe its panes; new panes aren't piped."""
@@ -1825,8 +1755,7 @@ class TmuxSession(Session):
     def _output_reader(self) -> OutputReader:
         if self._reader is None or not self._reader.alive:
             self._reader = OutputReader(
-                self._piped_panes, self._name_for_pane_id,
-                lambda pane_id: list(self._typed.get(pane_id, ())),
+                self._piped_panes, self._name_for_pane_id, self._typed_texts,
                 ignore=re.compile(re.escape(_EXIT_MARKER)))
         return self._reader
 
@@ -1839,23 +1768,21 @@ class TmuxSession(Session):
     def _scrollback(self, pane):
         """What the pane shows and keeps, as plain lines, without the
         commands typed into it."""
-        typed = [t.strip() for t in self._typed.get(pane.id, ()) if t.strip()]
         for line in _pane_cmd(pane, "capture-pane", "-p", "-J", "-S", "-").stdout:
             line = line.rstrip()
-            if line.strip() and _EXIT_MARKER not in line and \
-                    not any(line.endswith(t) for t in typed):
+            if self._is_output(pane.id, line):
                 yield line
 
     def output_path(self, target_pane: Union[Pane, str]) -> Optional[str]:
         """The file the pane's output goes (or last went) to: a capture's,
         or lte-run --tee's. None if it was never captured."""
         pane = self.resolve_target_pane(target_pane)
-        return self._pipe_info(pane)[2] or None
+        return self._pipe_info(pane.id)[2] or None
 
     def output_mark(self, target_pane: Union[Pane, str]) -> int:
         """Where the pane's file ends now: pass as search_output(since=)."""
         path = self.output_path(target_pane)
-        return _file_size(path) if path else 0
+        return file_size(path) if path else 0
 
     def _file_lines(self, pane_id, path, since):
         """(offset, line) of plain text from 'path' at 'since', without
@@ -1866,10 +1793,8 @@ class TmuxSession(Session):
                 data = f.read()
         except OSError:
             return
-        typed = [t.strip() for t in self._typed.get(pane_id, ()) if t.strip()]
         for off, line in plain_lines(data):
-            if line.strip() and _EXIT_MARKER not in line and \
-                    not any(line.rstrip().endswith(t) for t in typed):
+            if self._is_output(pane_id, line):
                 yield (since or 0) + off, line
 
     def search_output(self, target, pattern, since=None, *, regex: bool = True,
@@ -1928,7 +1853,7 @@ class TmuxSession(Session):
         scroll = []
         if kind == "pane":
             target_id, name = obj.id, self._name_for_pane_id(obj.id)
-            piped, _, current = self._pipe_info(obj)
+            piped, _, current = self._pipe_info(obj.id)
             if piped and not current:
                 raise RuntimeError(f"pane {name or obj.id} is piped by something else "
                                    "(tmux has one pipe per pane): can't watch it")
@@ -2082,9 +2007,7 @@ class TmuxSession(Session):
     def _close_requested(self):
         """lte-close asks us to stop our panes (it runs the shell actions and
         kills the session itself). Progress goes through the status file."""
-        if not self.status_file:
-            self.status_file = os.path.join(self._wrap_dir, "status.json")
-            self._publish_status_file()
+        self._ensure_status_file()
         self._set_session_option(_close.STATE_OPTION, "stopping")
         try:
             self._run_close_callbacks("before")
@@ -2132,9 +2055,7 @@ class TmuxSession(Session):
             return self._release()
         self.stop_watching()
         self._close_wrap()
-        if hasattr(Session, "kill"):
-            return super().kill(*args, **kwargs)
-        return super().kill_session(*args, **kwargs)  # libtmux < 0.30
+        return _kill(self, *args, **kwargs)
 
     def release(self, keep_windows: bool = False, label: Optional[str] = None):
         """Let go of the session: stop tracking and close what is ours.
@@ -2190,7 +2111,7 @@ class TmuxSession(Session):
                 self._write_status_file()
             self._close_wrap()
             return None
-        if self._dash_window and self.get_window(self._dash_window) is not None:
+        if self._dash_open():
             # A pane of ours on show has the home pane parked in its slot,
             # which kill-window would take with it.
             dash.Viewport(self._dash_window, run=self._tmux_run,
@@ -2220,9 +2141,6 @@ class TmuxSession(Session):
             self._wrap_dir = None
 
     # =============== Dashboard ===============
-
-    def _tmux_run(self, *args):
-        return self.server.cmd(*args).stdout
 
     def dashboard(
         self,
@@ -2254,13 +2172,11 @@ class TmuxSession(Session):
         created in the session's control dir if none was configured. Calling
         it again reuses the open dashboard."""
         run = self._tmux_run
-        if self._dash_window is None or self.get_window(self._dash_window) is None:
+        if not self._dash_open():
             launcher = dash.launcher()  # fail before touching the session
             initial_pane = self.resolve_target_pane(initial) if initial is not None else None
 
-            if self.status_file is None:
-                self.status_file = os.path.join(self._wrap_dir, "status.json")
-                self._publish_status_file()
+            self._ensure_status_file()
             for pane_id in list(self.pane_targets):
                 pane = self.get_pane(pane_id)
                 if pane is not None:
@@ -2318,7 +2234,7 @@ class TmuxSession(Session):
         it has no name, mode or status, and is not listed in the sidebar."""
         if side not in ("below", "right"):
             raise ValueError(f"side must be 'below' or 'right', got {side!r}")
-        if self._dash_window is None or self.get_window(self._dash_window) is None:
+        if not self._dash_open():
             raise RuntimeError("no dashboard open; call dashboard() first")
         viewport = dash.Viewport(self._dash_window, run=self._tmux_run,
                                  sidebar=self._dash_sidebar)
@@ -2333,6 +2249,9 @@ class TmuxSession(Session):
         if command:
             self._type(pane, command, enter=True)
         return pane
+
+    def _dash_open(self) -> bool:
+        return self._dash_window is not None and self.get_window(self._dash_window) is not None
 
     @property
     def home_log(self) -> Optional[str]:
@@ -2472,19 +2391,17 @@ class TmuxSession(Session):
 
     # =============== Getters ===============
     def get_pane_name(self, pane: Pane) -> Optional[str]:
-        """Return the fully qualified name of the given pane (i.e. 'window_name:pane_name'), or None
-        if the pane is unnamed."""
+        """The pane's 'window:pane' name, or None if new_pane() didn't make it."""
         self._check_pane_membership(pane)
         return self._name_for_pane_id(pane.id)
 
     def get_window_name(self, window: Window) -> Optional[str]:
-        """Return the name of the given window, or None if the window is unnamed."""
+        """The window's name."""
         self._check_window_membership(window)
         return window.name
 
     def get_pane(self, identifier: str) -> Optional[Pane]:
-        """Return the Pane object associated with the given 'identifier' which can either be the
-        fully qualified pane name or the pane id. Return None if no pane is found."""
+        """The Pane for a 'window:pane' name or a '%id', or None."""
         if identifier[0] == "%":
             try:
                 ids = {p.id: p for p in self.panes}
@@ -2495,8 +2412,7 @@ class TmuxSession(Session):
             return self.pane_names.get(identifier, None)
 
     def get_window(self, identifier: str) -> Optional[Window]:
-        """Return the Window object associated with the given 'identifier' which can either be the
-        window name or the window id. Return None if no window is found."""
+        """The Window for a name or an '@id', or None."""
         if identifier[0] == "@":
             ids = {w.id: w for w in self.windows}
             return ids.get(identifier, None)
@@ -2514,12 +2430,12 @@ class TmuxSession(Session):
         return f"{context.name}:{name}"
 
     def _check_pane_membership(self, pane: Pane):
-        """Check if the given pane is part of this session. Raises an exception if not."""
+        """ValueError unless 'pane' is in this session."""
         if pane not in self.panes:
             raise ValueError(f"Pane {pane} not found in this session.")
 
     def _check_window_membership(self, window: Window):
-        """Check if the given window is part of this session. Raises an exception if not."""
+        """ValueError unless 'window' is in this session."""
         if window not in self.windows:
             raise ValueError(f"Window {window} not found in this session.")
 

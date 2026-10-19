@@ -17,8 +17,9 @@ A test module says what to launch, as 'window:name' -> command:
 The 'processes' fixture (module scope) starts them, and waits for each
 READY line (READY_TIMEOUT, default 30 s). A test fails if one exits before
 teardown, or prints a FAIL_ON line ("*": every process), even if the test
-never noticed. Teardown stops them
-(SIGINT, then SIGTERM, SIGKILL) and errors unless each exited 0 on SIGINT.
+never noticed. Teardown stops them (SIGINT, then SIGTERM, SIGKILL) and
+errors unless each exited 0 on SIGINT; SIGINT_TIMEOUT (default 10 s) is how
+long SIGINT gets.
 
 Modes (--lte-mode; default auto: dash under lte-session, else tmux if
 installed, else shell):
@@ -328,12 +329,14 @@ class Processes:
             why = f"printed no line matching {pattern!r} within {timeout}s"
         except PaneExited as exc:
             why = f"{exc.status.exit_status} before printing a line matching {pattern!r}"
-        tail = self.output(name).strip().splitlines()[-8:]
-        raise AssertionError(f"{name} {why}; last output:\n    " + "\n    ".join(tail))
+        raise AssertionError(f"{name} {why}; last output:\n    " + self._tail(name))
 
     def output(self, name) -> str:
         """Everything the process has printed so far."""
         return self.backend.output(name)
+
+    def _tail(self, name, lines=8):
+        return "\n    ".join(self.output(name).strip().splitlines()[-lines:])
 
     def _check_output(self):
         return [problem for name in self.names for check in self.checks
@@ -345,8 +348,7 @@ class Processes:
                   for name, pattern, line, late in self.failed_on if not late]
         found += self._check_output()
         for name, _ in self.died:
-            tail = self.output(name).strip().splitlines()[-8:]
-            found.append(f"  last output of {name}:\n    " + "\n    ".join(tail))
+            found.append(f"  last output of {name}:\n    " + self._tail(name))
         return found
 
     def check(self):
@@ -396,14 +398,15 @@ def processes(request, lte_pane_setup, lte_output_checks):
     procs = Processes(backend, commands, lte_pane_setup, lte_output_checks,
                       getattr(request.module, "FAIL_ON", None))
     ready_timeout = getattr(request.module, "READY_TIMEOUT", 30.0)
+    sigint_timeout = getattr(request.module, "SIGINT_TIMEOUT", 10.0)
     try:
         for name, pattern in getattr(request.module, "READY", {}).items():
             procs.wait_for(name, pattern, ready_timeout)
     except AssertionError as exc:
-        procs.shutdown(getattr(request.module, "SIGINT_TIMEOUT", 10.0))
+        procs.shutdown(sigint_timeout)
         pytest.fail(f"not ready: {exc}", pytrace=False)
     yield procs
-    unclean = procs.shutdown(getattr(request.module, "SIGINT_TIMEOUT", 10.0))
+    unclean = procs.shutdown(sigint_timeout)
     if unclean:
         pytest.fail("did not shut down cleanly:\n" + "\n".join(unclean), pytrace=False)
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """lte-run: run a command under libtmux_easy supervision.
 
     lte-run [--tee FILE [-a] [--raw]] [--] COMMAND [ARG...]
@@ -38,6 +37,8 @@ import tempfile
 import threading
 import time
 
+from .proc import descendants, proc_table
+
 PROTOCOL_VERSION = 1
 DIR_OPTION = "@lte_dir"   # tmux session option set by TmuxSession
 DIR_ENV = "LTE_DIR"       # overrides DIR_OPTION; for tests and non-tmux use
@@ -64,6 +65,12 @@ def _on_own_server(pane, commands):
     if not server_pid.isdigit():
         return [part for c in commands for part in (*shlex.split(c), ";")][:-1]
     return ["if", "-F", "-t", pane, f"#{{==:#{{pid}},{server_pid}}}", " ; ".join(commands)]
+
+
+def tmux_literal(text):
+    """'text' as itself in a pipe-pane command, which tmux expands as a
+    format and with strftime: 'main.%4.log' would become 'main.'."""
+    return text.replace("#", "##").replace("%", "%%")
 
 
 def guarded_unpipe(pane, *then):
@@ -95,6 +102,7 @@ def guarded_pipe(pane, command, options=None, with_tee=False):
     for name, _ in req + [(ok, None)]:
         args += ["set", "-p", "-u", "-t", pane, name, ";"]
     return args[:-1]
+
 
 # The terminal sends these to the whole foreground process group, so the
 # target already gets them directly. Ignoring them is what lets the wrapper
@@ -175,55 +183,23 @@ class Channel:
                     pass
 
 
-def _proc_table():
-    """pid -> (ppid, pgrp), from /proc."""
-    table = {}
-    for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        try:
-            with open(f"/proc/{name}/stat") as f:
-                # Field 2 (comm) may contain spaces and parens; split after it.
-                fields = f.read().rsplit(")", 1)[1].split()
-            table[int(name)] = (int(fields[1]), int(fields[2]))
-        except (OSError, ValueError, IndexError):
-            pass  # exited mid-scan
-    return table
-
-
 def signal_target(sig, target):
     """Deliver 'sig' to the target and every descendant of ours in our process
     group -- what a Ctrl-C at the terminal reaches, minus the wrapper itself.
 
     The descendant filter matters without job control (e.g. 'sh -c "lte-run
     ..."'), where our process group also contains whatever started us."""
-    try:
-        table = _proc_table()
-    except OSError:
-        table = {}
+    table = proc_table()
     if not table:  # no /proc: best effort
+        pids = [target]
+    else:
+        pgid = os.getpgrp()
+        pids = [p for p in descendants(os.getpid(), table) if p == target or table[p][2] == pgid]
+    for pid in pids:
         try:
-            os.kill(target, sig)
+            os.kill(pid, sig)
         except OSError:
             pass
-        return
-
-    me, pgid = os.getpid(), os.getpgrp()
-    children = {}
-    for pid, (ppid, _) in table.items():
-        children.setdefault(ppid, []).append(pid)
-    stack, seen = list(children.get(me, ())), set()
-    while stack:
-        pid = stack.pop()
-        if pid in seen:
-            continue
-        seen.add(pid)
-        stack.extend(children.get(pid, ()))
-        if pid == target or table[pid][1] == pgid:
-            try:
-                os.kill(pid, sig)
-            except OSError:
-                pass
 
 
 # Terminal escapes (CSI, OSC, two-byte ESC sequences): what a pane's output
@@ -331,8 +307,7 @@ class Tee:
         os.mkfifo(fifo)
         self.source = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
         self.hold = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-        # tmux expands formats and strftime in the command: '#' and '%' as themselves.
-        cat = f"exec cat > {shlex.quote(fifo)}".replace("#", "##").replace("%", "%%")
+        cat = tmux_literal(f"exec cat > {shlex.quote(fifo)}")
         out = subprocess.run(["tmux", *guarded_pipe(pane, cat, publish, with_tee=True)],
                              capture_output=True, text=True)
         if out.returncode or "1" not in out.stdout.split():

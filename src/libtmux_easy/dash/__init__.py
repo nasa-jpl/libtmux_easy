@@ -9,7 +9,7 @@ interactive. The "home" pane (a 'tail -F' of the script's output) is the
 placeholder that fills the selected pane's slot in its own window while it is
 on show, so every window keeps its layout.
 
-Stdlib-only, like wrap.py, except app.py (Textual): only cli.main() imports
+Stdlib only, like wrap.py, except app.py (Textual): only cli.main() imports
 it, so the library can use Viewport without Textual.
 
   options.py   tmux option names holding the dashboard's state
@@ -19,11 +19,12 @@ it, so the library can use Viewport without Textual.
   cli.py       lte-dash
   app.py       the sidebar UI (Textual)
   keys.py      lte-key: borrow a prefix key
+  winhook.py   a tmux hook that tells the sidebar its window changed
   homelog.py   the tee behind TmuxSession.tee_home()
 
 A program that is not a TmuxSession can open a dashboard too: 'lte-dash
---open SESSION ...', or open_window(). It then writes
-the status file itself and answers the control socket's commands.
+--open SESSION ...', or open_window(). It then writes the status file
+itself and answers the control socket's commands.
 
     lte-dash --open SESSION --status FILE --ctl SOCKET --home-log FILE
 """

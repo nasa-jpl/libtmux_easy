@@ -267,11 +267,9 @@ class DashApp(App):
         loop = asyncio.get_running_loop()
         signal.signal(signal.SIGUSR1,
                       lambda *_: loop.call_soon_threadsafe(self._follow_window))
-        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
-                                "#{session_id}")
-        session = out[0].strip() if out else ""
-        self._hook = (winhook.install(session, os.getpid(), run=self.viewport.run)
-                      if session.startswith("$") else None)
+        session = self._session_id()
+        self._hook = winhook.install(session, os.getpid(), run=self.viewport.run) \
+            if session else None
 
     def on_unmount(self):
         if self._hook is not None:
@@ -290,9 +288,7 @@ class DashApp(App):
         if active:
             self._show_selected()
         else:
-            if self._show_timer is not None:
-                self._show_timer.stop()
-                self._show_timer = None
+            self._cancel_show()
             self.viewport.restore()
 
     def check_online(self):
@@ -400,9 +396,19 @@ class DashApp(App):
 
     def on_tree_node_highlighted(self, event):
         self._show_details()
+        self._cancel_show()
+        self._show_timer = self.set_timer(self.SHOW_DELAY, self._show_selected)
+
+    def _cancel_show(self):
         if self._show_timer is not None:
             self._show_timer.stop()
-        self._show_timer = self.set_timer(self.SHOW_DELAY, self._show_selected)
+            self._show_timer = None
+
+    def _session_id(self):
+        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
+                                "#{session_id}")
+        session = out[0].strip() if out else ""
+        return session if session.startswith("$") else None
 
     def _target(self):
         """The pane id the selection maps to, or None for a window node or a
@@ -430,9 +436,7 @@ class DashApp(App):
         target = self._target()
         if self._selected() == HOME or not target:
             return
-        if self._show_timer is not None:
-            self._show_timer.stop()
-            self._show_timer = None
+        self._cancel_show()
         self.viewport.go_to(target)
 
     def action_home(self):
@@ -467,15 +471,17 @@ class DashApp(App):
 
     # ---------- actions ----------
 
+    def _send(self, cmd, pane_id, done):
+        if self.control.send(cmd, pane_id):
+            self.notify(done)
+        else:
+            self.notify("The session's script is not running.", severity="warning")
+
     def _action(self, cmd, verb):
         pane_id = self._selected()
         entry = self.entries.get(pane_id)
-        if entry is None:
-            return
-        if self.control.send(cmd, pane_id):
-            self.notify(f"{verb} {entry['name']}")
-        else:
-            self.notify("The session's script is not running.", severity="warning")
+        if entry is not None:
+            self._send(cmd, pane_id, f"{verb} {entry['name']}")
 
     def action_stop(self):
         self._action("stop", "stopping")
@@ -493,28 +499,21 @@ class DashApp(App):
         self.notify(prompt, timeout=self.CONFIRM_WINDOW)
         return False
 
-    def _session_action(self, cmd, done):
-        if not self.control.send(cmd, None):
-            self.notify("The session's script is not running.", severity="warning")
-            return
-        self.notify(done)
-
     def action_stop_all(self):
         running = sum(1 for e in self.entries.values() if e.get("running"))
         if self._confirmed("stop_all", f"Press X again to stop all {running} running panes."):
-            self._session_action("stop_all", "Stopping all panes: SIGINT, then SIGTERM, SIGKILL.")
+            self._send("stop_all", None, "Stopping all panes: SIGINT, then SIGTERM, SIGKILL.")
 
     def action_shutdown(self):
         if not self._confirmed("shutdown", "Press Q again to stop all panes and kill the session."):
             return
         if any(e.get("mode") == "tlaunch" for e in self.entries.values()):
             # tlaunch answers 'shutdown' with its own sequence.
-            self._session_action("shutdown", "Stopping all panes, then killing the session.")
+            self._send("shutdown", None, "Stopping all panes, then killing the session.")
             return
         # lte-close: the session's close actions, and a window showing progress.
-        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
-                                "#{session_id}")
-        if out and out[0].strip().startswith("$"):
-            subprocess.Popen(shlex.split(close.self_command()) + ["-t", out[0].strip()],
+        session = self._session_id()
+        if session:
+            subprocess.Popen(shlex.split(close.self_command()) + ["-t", session],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)

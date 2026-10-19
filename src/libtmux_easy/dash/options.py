@@ -19,7 +19,7 @@ INITIAL_OPTION = "@lte_dash_initial"  # pane id to show first, instead of home
 # quitting the sidebar must leave the window, and with it the command, alone.
 HOME_KIND_OPTION = "@lte_dash_home_kind"
 
-# Session options, for key bindings outside the dashboard (README "Dashboard").
+# Session options, for key bindings outside the dashboard (docs/dashboard.md).
 WINDOW_OPTION = "@lte_dash_window"    # the dashboard window's id
 SIDEBAR_OPTION = "@lte_dash_sidebar"  # the sidebar pane's id
 
