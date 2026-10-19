@@ -14,7 +14,9 @@ lte-dash --help > /dev/null
 TMUX_TMPDIR=$(mktemp -d /tmp/lte-smoke-XXXX)
 export TMUX_TMPDIR
 unset TMUX TMUX_PANE
-trap 'tmux kill-server 2>/dev/null; rm -rf "$TMUX_TMPDIR"' EXIT
+# '|| true': the server is usually gone already, and under set -e a failing
+# command in the trap would fail the script.
+trap 'tmux kill-server 2>/dev/null || true; rm -rf "$TMUX_TMPDIR"' EXIT
 /usr/bin/python3 - <<'PY'
 import subprocess, time
 from libtmux_easy import TmuxSession

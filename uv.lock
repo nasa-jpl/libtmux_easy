@@ -124,7 +124,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "libtmux", specifier = ">=0.10.1" },
+    { name = "libtmux", specifier = ">=0.17" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0" },

@@ -70,7 +70,8 @@ class TestLauncher:
                 print("INNER_OK")
         """))
         proc = _launch("--name", "lte-test-launch-e", "--", sys.executable, "-m", "pytest",
-                       "-q", "-s", "-p", "no:cacheprovider", "test_inner.py", cwd=tmp_path)
+                       "-q", "-s", "-p", "no:cacheprovider", "-p", "no:libtmux",
+                       "test_inner.py", cwd=tmp_path)
 
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "INNER_OK" in proc.stdout

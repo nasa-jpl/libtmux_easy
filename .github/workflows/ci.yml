@@ -8,11 +8,20 @@ on:
 
 jobs:
   test:
+    name: test (Python ${{ matrix.python }}, libtmux ${{ matrix.libtmux || 'locked' }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
+        # uv.lock gives each Python the newest libtmux it can run (3.8: 0.38).
         python: ["3.8", "3.10", "3.12", "3.13"]
+        # Older libtmux, swapped in after the sync: Ubuntu 24.04's apt version
+        # (what the .deb runs on), and the oldest supported (pyproject.toml).
+        include:
+          - python: "3.12"
+            libtmux: "0.30.2"
+          - python: "3.10"
+            libtmux: "0.17.0"
     env:
       TERM: xterm-256color
     steps:
@@ -22,6 +31,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       # --locked: fail if uv.lock is out of date with pyproject.toml.
       - run: uv sync --locked --python ${{ matrix.python }}
+      - if: matrix.libtmux
+        run: uv pip install "libtmux==${{ matrix.libtmux }}"
       - run: uv run --no-sync python -m pytest -q
 
   dist:

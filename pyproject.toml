@@ -24,7 +24,7 @@ classifiers = [
 ]
 requires-python = ">=3.8.1"
 dependencies = [
-    "libtmux>=0.10.1",
+    "libtmux>=0.17",
     "psutil",
     "packaging",
 ]

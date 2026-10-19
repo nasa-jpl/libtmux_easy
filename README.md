@@ -217,7 +217,8 @@ left alone. The library's own keys are borrowed only if unbound, and
   `demos/examples/`: plain scripts.
 - `docs/`: how it works and why ([index](docs/README.md)), and
   [known issues](docs/KNOWN_ISSUES.md).
-- Tested with libtmux 0.10.1 to 0.62, tmux 3.3a and 3.4, Python 3.8 to 3.13.
+- Tested with libtmux 0.17 to 0.62, tmux 3.3a and 3.4, Python 3.8 to 3.13.
+  The `.deb`s need Ubuntu 24.04 or newer; on 22.04, use pipx or pip.
 
 ## License
 

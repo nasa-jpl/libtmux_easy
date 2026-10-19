@@ -41,7 +41,7 @@ def _pytest(tmp_path, mode, die):
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     env["PYTHONPATH"] = SRC
     return subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           f"--lte-mode={mode}", "test_inner.py"],
+                           "-p", "no:libtmux", f"--lte-mode={mode}", "test_inner.py"],
                           cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
 
 
@@ -107,7 +107,8 @@ def _pytest_output(tmp_path, mode, ready):
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     env["PYTHONPATH"] = SRC
     proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           f"--lte-mode={mode}", "--lte-keep=never", "test_inner.py"],
+                           "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
+                           "test_inner.py"],
                           cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
     return proc, proc.stdout + proc.stderr
 
