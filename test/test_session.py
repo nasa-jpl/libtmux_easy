@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from helpers import pane_text, title, wait_until
+from helpers import fmt, pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
 from libtmux_easy import dash
 
@@ -208,6 +208,40 @@ class TestExecMode:
         session.respawn_pane(pane, "sh -c 'exit 22'")
         session.wait_for_pane_idle(pane, timeout=5.0)
         assert _exec_status(session, pane).code == 22
+
+
+@pytest.mark.parametrize("mode, cmd", [
+    ("shell", "sh -c 'sleep 0.3; exit 7'"),
+    ("shell", "sh -c 'exit 7'"),          # gone before its pid is seen
+    ("exec", "sh -c 'sleep 0.3; exit 7'"),
+])
+def test_wait_for_exit_after_it_ended(session, mode, cmd):
+    """Watched only after the command ended: the callback still fires, and
+    wait_for_exit() returns the status, not unknown at the timeout."""
+    pane = session.new_pane("x", cmd, mode=mode)
+    assert wait_until(lambda: not session.is_running(pane))
+    time.sleep(0.5)
+    calls = []
+    session.watch_pane(pane, calls.append)
+    assert wait_until(lambda: calls, timeout=5) and len(calls) == 1
+    status = session.wait_for_exit(pane, timeout=5)
+    if mode == PANE_MODE_EXEC:
+        status = _exec_status(session, pane)
+    assert status.code == 7
+
+
+def test_exec_pane_exiting_at_once_in_a_split(session):
+    """A split's command starts with the pane: remain-on-exit has to be on
+    already, or the pane (and its status) is gone."""
+    session.new_pane("first", "sleep 30")
+    pane = session.new_pane("fast", "sh -c 'exit 3'", mode=PANE_MODE_EXEC)
+    assert _exec_status_wait(session, pane).code == 3
+    assert fmt(session, f"{session.id}:main", "#{remain-on-exit}") in ("", "off")
+
+
+def _exec_status_wait(session, pane):
+    session.wait_for_exit(pane, timeout=5)
+    return _exec_status(session, pane)
 
 
 class TestStopping:

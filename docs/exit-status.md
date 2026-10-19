@@ -19,7 +19,9 @@ Wrap is the recommended mode; see [wrap-mode.md](wrap-mode.md).
 - `$?` is one-shot: the probe or any typed command overwrites it. So the
   status is captured at the exit event and cached.
 - `remain-on-exit` must be set **before** the command can exit, or the pane
-  (and maybe the server) closes with its status.
+  (and maybe the server) closes with its status. A split's command starts
+  with the pane, so exec mode turns it on for the window during the split,
+  then on the pane (the window's own value is put back).
 - A window's reused first pane ignores `shell=`; exec mode respawns it.
 
 ## Target pids
@@ -46,6 +48,11 @@ On exit, in order:
 2. refresh the pane title;
 3. rewrite the status file;
 4. run `on_exit` callbacks, each isolated (one raising doesn't stop others).
+
+A callback registered after its run's exit event (`watch_pane()`,
+`wait_for_exit()` on a pane that already ended) fires at once. The check and
+the event share `_status_lock`, so it fires exactly once; `_ended` holds the
+panes whose run has ended, cleared by a new run.
 
 API: `new_pane(..., on_exit=)`, `watch_pane()`, `unwatch_pane()`,
 `wait_for_exit(timeout)`.

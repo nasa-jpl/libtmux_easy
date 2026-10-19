@@ -405,6 +405,7 @@ class TmuxSession(Session):
                                        # the pane's command itself spawned)
         self._exit_callbacks = {}     # pane.id -> list of on_exit(PaneStatus) callbacks
         self._watched_panes = set()   # pane.id -- already armed, avoid double-registering
+        self._ended = set()           # pane.id whose run's exit event has fired
         self._watcher = None          # lazily-started _PaneWatcher
         self._status_lock = threading.Lock()
 
@@ -762,11 +763,20 @@ class TmuxSession(Session):
         if "shell" in pane_kwargs:
             raise ValueError("'shell' is not accepted in exec mode; pass 'command' instead.")
 
-        pane, reused, env = self._claim_pane(name, env, shell=shell_command, **pane_kwargs)
-
-        # Must happen before the command can exit, or a fast-failing command takes
-        # its own exit status (and possibly the whole session) down with the pane.
-        self._set_remain_on_exit(pane)
+        # remain-on-exit must be on before the command can exit, or a fast one
+        # takes its pane (and exit status) with it. A split's command starts
+        # with the pane, so the window has it for the split.
+        window = self.current_window.id
+        before = self._tmux_run("show-options", "-wqv", "-t", window, "remain-on-exit")
+        self._tmux_run("set-option", "-wq", "-t", window, "remain-on-exit", "on")
+        try:
+            pane, reused, env = self._claim_pane(name, env, shell=shell_command, **pane_kwargs)
+        finally:
+            if before:
+                self._tmux_run("set-option", "-wq", "-t", window, "remain-on-exit", before[0])
+            else:
+                self._tmux_run("set-option", "-wqu", "-t", window, "remain-on-exit")
+        self._set_remain_on_exit(pane)  # the pane's own, from now on
 
         if reused:
             # The reused initial pane still runs its login shell: the 'shell'
@@ -1207,6 +1217,7 @@ class TmuxSession(Session):
         # one, same as a fresh new_pane().
         self.pane_targets[pane.id] = self._capture_target_pids(pane, mode, 1.0)
         self._watched_panes.discard(pane.id)
+        self._ended.discard(pane.id)
         self._refresh_pane_title(pane)
         if self.title_status or self.status_file is not None:
             self.watch_pane(pane)
@@ -1256,8 +1267,14 @@ class TmuxSession(Session):
                 return
 
         if on_exit is not None:
+            # Checked under the lock _on_target_exit() takes: a callback
+            # registered after the exit event fires now, not never.
             with self._status_lock:
-                self._exit_callbacks.setdefault(pane_id, []).append(on_exit)
+                ended = pane_id in self._ended
+                if not ended:
+                    self._exit_callbacks.setdefault(pane_id, []).append(on_exit)
+            if ended:
+                on_exit(self._build_pane_status(pane_id, pane))  # just this one
 
         if pane_id in self._watched_panes:
             return
@@ -1289,6 +1306,7 @@ class TmuxSession(Session):
         pane_id = pane.id
         with self._status_lock:
             self._exit_callbacks.pop(pane_id, None)
+            self._ended.discard(pane_id)
         self._watched_panes.discard(pane_id)
         if self._watcher is not None:
             self._watcher.unwatch(pane_id)
@@ -1326,6 +1344,7 @@ class TmuxSession(Session):
 
         with self._status_lock:
             callbacks = list(self._exit_callbacks.get(pane_id, []))
+            self._ended.add(pane_id)
 
         status = self._build_pane_status(pane_id, pane)
         self._write_status_file()
@@ -1366,6 +1385,7 @@ class TmuxSession(Session):
                 self._wrap_pending.discard(pane_id)
                 self._run_typed.pop(pane_id, None)
                 self._exit_status.pop(pane_id, None)  # a new run
+                self._ended.discard(pane_id)
                 self._stopped_by.pop(pane_id, None)
                 self._wrap_runs[pane_id] = _WrapRun(
                     conn, msg.get("wrapper_pid"), msg.get("target_pid"), msg.get("argv", []))
