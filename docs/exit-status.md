@@ -52,7 +52,8 @@ On exit, in order:
 A callback registered after its run's exit event (`watch_pane()`,
 `wait_for_exit()` on a pane that already ended) fires at once. The check and
 the event share `_status_lock`, so it fires exactly once; `_ended` holds the
-panes whose run has ended, cleared by a new run.
+panes whose run has ended, cleared by a new run. All such rules:
+[races.md](races.md).
 
 API: `new_pane(..., on_exit=)`, `watch_pane()`, `unwatch_pane()`,
 `wait_for_exit(timeout)`.

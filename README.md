@@ -61,12 +61,22 @@ name, its id (`%3`) or the `Pane`. Each pane's border shows its state
 | `mode=` | the command | exit status | interactive |
 |---|---|---|---|
 | `"shell"` (default) | is typed into bash | from `$?`: a signal death is *inferred* from 128+N | yes |
-| `"exec"` | is the pane's process | from tmux; exact, but tmux sometimes loses it | no |
 | `"wrap"` | is typed as `lte-run <cmd>` | from `lte-run`, exact | yes |
+| `"exec"` | is the pane's process | from tmux, when tmux records it (see below) | no |
 
-Use **wrap** when the status matters. `create(mode=)` or
-`set_default_mode()` sets the default. Rerun a pane with `respawn_pane()`:
-the library tracks the new run (wrap mode also tracks reruns typed by hand).
+**Use wrap** to monitor a process and get its exit status: exact, and the
+pane stays a shell you can type into. Shell mode is fine when 128+N is good
+enough.
+
+**Avoid exec mode for status.** tmux (3.3a, 3.4) sometimes never collects
+an exec pane's exited process, so the status is lost: `exit_status()`
+returns unknown. It is often lost for a pane stopped with Ctrl-C. tmux can
+also drop the last output printed just before such a process exits.
+Details: [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+
+`create(mode=)` or `set_default_mode()` sets the default. Rerun a pane with
+`respawn_pane()`: the library tracks the new run (wrap mode also tracks
+reruns typed by hand).
 
 ## API
 

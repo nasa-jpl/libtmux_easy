@@ -16,6 +16,7 @@ Linux 6.x); don't re-research them.
 | [session-close.md](session-close.md) | every way to stop panes and close a session; `lte-close`, close actions, the close key |
 | [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: modes, health checks, hooks |
 | [packaging.md](packaging.md) | installs in detail, the `.deb`s, releases, development |
+| [races.md](races.md) | every race we hit, and the rule that avoids it |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | tmux bugs, limits, open bugs |
 
 ## Why it exists

@@ -3,16 +3,21 @@
 ## tmux
 
 **tmux can lose an exec pane's exit status.**
-- Reproduced with raw tmux, no library code: tmux never reaps the pane
-  process. Zombie, `pane_dead=1`, no `pane_dead_status` / `_signal`.
+- In exec mode the command is the pane's process, so only tmux (its parent)
+  can collect its status. Sometimes tmux never reaps it: the process stays a
+  zombie, `pane_dead=1`, and `pane_dead_status` / `_signal` are never set.
+  Only the parent can read a zombie's status, so it is lost for good.
+- Reproduced with raw tmux, no library code. Seen on tmux 3.3a and 3.4;
+  newer versions untested.
 - Rare alone (0 in 65). Common for SIGINT'd panes on tmux 3.4, and under
   pytest for a command that sleeps then exits (2 in 3; an immediate exit:
   0 in 6).
 - Ruled out: the server's signal mask, our watcher, status-line jobs. Root
-  cause unknown.
-- Effect: `exit_status()` returns unknown and logs a warning.
-  `test_signal_distinguished_from_code` is `xfail`.
-- **Workaround: wrap mode.** The main reason it exists.
+  cause unknown; a race in tmux's child reaping (SIGCHLD) is a guess.
+- Effect: `exit_status()` returns unknown and logs a warning. Exec-mode
+  tests `xfail` on it (`_exec_status()` in `test_session.py`).
+- **Workaround: wrap mode.** `lte-run` is the command's parent and reports
+  the status itself. The main reason wrap mode exists.
 
 **tmux drops output written just before a pane's process exits.**
 - tmux 3.4, raw tmux: gone from the screen, `pipe-pane` and control-mode
