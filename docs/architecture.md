@@ -23,8 +23,8 @@
 - **Stdlib-only commands.** `lte-run` runs once per pane: importing libtmux
   and psutil cost ~4x the startup and +7 MB per pane. `__init__` loads names
   lazily for the same reason.
-- **Textual is optional** (`[dash]` extra). The `.deb` leaves out `lte-dash`:
-  apt's Textual is too old.
+- **Textual is optional** (`[dash]` extra). apt's is too old, so `lte-dash` is
+  its own `.deb`, `libtmux-easy-dash`, with Textual bundled in a private directory.
 
 ## Sessions
 

@@ -15,6 +15,7 @@ import pytest
 
 from helpers import fmt as _fmt, pane_text, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, dash
+from libtmux_easy.dash import window as dash_window
 from libtmux_easy._tmux import option, tmux
 from libtmux_easy.wrap import SOCKET_NAME
 
@@ -611,3 +612,32 @@ def test_sidebar_follows_window_on_signal(tmp_path):
         return list(viewport.shown)
 
     assert _run_app(viewport, str(status), scenario) == ["restore"]
+
+
+# ---------- launcher(): how a dashboard starts lte-dash ----------
+
+
+@needs_textual
+def test_launcher_uses_this_python():
+    cmd = dash_window.launcher()
+    assert cmd.endswith(f"{sys.executable} -m libtmux_easy.dash")
+    assert ":" not in cmd.split()[1]  # PYTHONPATH: the source dir only
+
+
+@needs_textual
+def test_launcher_adds_a_private_textual(monkeypatch):
+    """Textual outside the site dirs (the .deb's bundle): its dir goes on
+    the sidebar's PYTHONPATH, or the sidebar couldn't import it."""
+    monkeypatch.setattr(dash_window, "_site_dirs", lambda: set())
+    textual = os.path.dirname(os.path.dirname(importlib.util.find_spec("textual").origin))
+    assert textual in dash_window.launcher().split()[1]
+
+
+def test_launcher_skips_an_old_textual(monkeypatch):
+    """apt's python3-textual is 0.1: use an installed lte-dash instead."""
+    monkeypatch.setattr(dash_window.importlib.metadata, "version", lambda name: "0.1.13")
+    monkeypatch.setattr(dash_window.shutil, "which", lambda name: "/usr/bin/lte-dash")
+    assert dash_window.launcher() == "lte-dash"
+    monkeypatch.setattr(dash_window.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="needs Textual"):
+        dash_window.launcher()

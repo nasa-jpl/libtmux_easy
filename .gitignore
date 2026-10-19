@@ -19,3 +19,5 @@ debian/files
 debian/*.substvars
 debian/*.debhelper.log
 debian/python3-libtmux-easy/
+debian/libtmux-easy-dash/
+debian/tmp/

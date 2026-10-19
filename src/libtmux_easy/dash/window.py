@@ -1,10 +1,15 @@
 """Opening the dashboard window."""
 
+import importlib.metadata
 import importlib.util
+import os
 import shlex
 import shutil
+import site
 import sys
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 from .._tmux import tmux as _tmux
 from .options import (AUTO, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INITIAL_OPTION,
@@ -14,15 +19,39 @@ from .options import (AUTO, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INIT
 
 def launcher():
     """How the dashboard window runs lte-dash: under this interpreter when it
-    has Textual (e.g. a venv), else an installed lte-dash (e.g. pipx), which
-    brings its own. Raises RuntimeError when neither exists."""
-    if importlib.util.find_spec("textual") is not None:
-        src = Path(__file__).resolve().parents[2]
-        return (f"env PYTHONPATH={shlex.quote(str(src))} "
+    has Textual >= 1.0 (e.g. a venv), else an installed lte-dash (pipx, the
+    .deb), which brings its own. Raises RuntimeError when neither exists."""
+    textual = _textual_dir()
+    if textual:
+        path = [str(Path(__file__).resolve().parents[2])]
+        if textual not in _site_dirs():
+            path.append(textual)  # a private copy, e.g. the .deb's bundle
+        return (f"env PYTHONPATH={shlex.quote(os.pathsep.join(path))} "
                 f"{shlex.quote(sys.executable)} -m libtmux_easy.dash")
     if shutil.which("lte-dash"):
         return "lte-dash"
     raise RuntimeError(INSTALL_HINT)
+
+
+def _textual_dir():
+    """The directory this interpreter imports Textual from, if it is >= 1.0
+    (apt's python3-textual is 0.1), else None."""
+    spec = importlib.util.find_spec("textual")
+    if spec is None or not spec.origin:
+        return None
+    try:
+        if Version(importlib.metadata.version("textual")) < Version("1.0"):
+            return None
+    except (importlib.metadata.PackageNotFoundError, InvalidVersion):
+        return None
+    return str(Path(spec.origin).resolve().parents[1])
+
+
+def _site_dirs():
+    """Where a fresh interpreter finds packages without PYTHONPATH."""
+    dirs = list(site.getsitepackages()) if hasattr(site, "getsitepackages") else []
+    dirs.append(site.getusersitepackages())
+    return {str(Path(d).resolve()) for d in dirs}
 
 
 def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=AUTO,

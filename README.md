@@ -25,29 +25,31 @@ its id (`%3`) or the `Pane`.
 
 ## Installation
 
+Two ways in: `.deb` packages for Ubuntu, or pip/pipx from PyPI.
+
 | you want | install | gets |
 |---|---|---|
-| the commands on PATH | `pipx install 'libtmux-easy[dash]'` | `lte-run`, `lte-session`, `lte-dash`, `lte-key` (own venv) |
-| the library for the system Python (ROS) | `.deb` from [Releases](https://github.com/nasa-jpl/libtmux_easy/releases) | library, `lte-run`, `lte-session`, `lte-key` |
-| both, Ubuntu | `.deb`, plus pipx for `lte-dash` | everything |
-| a venv | `pip install 'libtmux-easy[dash]'` | library and commands, in the venv |
+| everything, Ubuntu 22.04+ | both `.deb`s from [Releases](https://github.com/nasa-jpl/libtmux_easy/releases) | library for the system Python (ROS), all `lte-*` commands |
+| the core only, Ubuntu | `python3-libtmux-easy` `.deb` | the same, without `lte-dash` |
+| the commands, any OS | `pipx install 'libtmux-easy[dash]'` | all `lte-*` commands, in their own venv |
+| library and commands in a venv | `pip install 'libtmux-easy[dash]'` | both, in the venv |
 | to develop | `uv sync` in a checkout | `.venv`: editable package, Textual, pytest |
 
-Not on PyPI yet: use `'libtmux-easy[dash] @ git+https://github.com/nasa-jpl/libtmux_easy'`.
-
 ```bash
+sudo apt install ./python3-libtmux-easy_0.2.0_all.deb ./libtmux-easy-dash_0.2.0_all.deb
 pipx install 'libtmux-easy[dash]'
-sudo apt install ./python3-libtmux-easy_0.2.0_all.deb
 ```
 
-- pipx only gives you the commands: its venv is private, so `import libtmux_easy`
-  needs the `.deb`, a venv, or `--user` below.
-- The `.deb` leaves out `lte-dash` (apt's Textual is too old). The library finds a
-  pipx `lte-dash` on PATH. Install the same version of both.
-- For ROS, make the venv with `python3 -m venv --system-site-packages` so it sees
-  `rclpy` (and the `.deb`, if installed).
+- `libtmux-easy-dash` holds `lte-dash` and its own Textual (apt's is too old),
+  used by `lte-dash` only. Everything else comes from apt.
+- pipx gives you only the commands: its venv is private, so `import libtmux_easy`
+  needs the `.deb`, a venv, or `--user` below. Mixing the `.deb` library with pipx
+  commands works; install the same version of both.
+- No `[dash]`: no Textual, no dashboard; the rest works.
+- For ROS, make a venv with `python3 -m venv --system-site-packages` so it sees `rclpy`.
 - Wrap-mode panes type `lte-run`: it must be on each pane's PATH, not only the
-  script's (pipx, the `.deb`, or `send_command_before("source .venv/bin/activate")`).
+  script's (the `.deb`, pipx, or `send_command_before("source .venv/bin/activate")`).
+- Not on PyPI yet: use `'libtmux-easy[dash] @ git+https://github.com/nasa-jpl/libtmux_easy'`.
 
 ### Without root, venv or pipx: `--break-system-packages`
 
@@ -63,17 +65,21 @@ pip install --user --break-system-packages --no-deps libtmux-easy
 - `[dash]` adds Textual and rich to `~/.local`; prefer pipx for `lte-dash`.
 - Undo: `pip uninstall --break-system-packages libtmux-easy`.
 
-### Building the `.deb`
+### Building the `.deb`s
 
 ```bash
-sudo apt install build-essential debhelper dh-python python3-all \
+sudo apt install build-essential debhelper dh-python python3-all python3-pip \
                  python3-setuptools pybuild-plugin-pyproject
-dpkg-buildpackage -us -uc -b && sudo apt install ../python3-libtmux-easy_*_all.deb
+dpkg-buildpackage -us -uc -b        # needs network: fetches the bundled Textual
+sudo apt install ../python3-libtmux-easy_*_all.deb ../libtmux-easy-dash_*_all.deb
+debian/smoke-test
 ```
 
-Releases: bump `pyproject.toml` and `debian/changelog`, then push a `v*` tag. CI
-checks the versions match, runs the tests, builds the wheel and `.deb`, and
-publishes them to GitHub Releases and PyPI.
+- The bundle is pinned and hash-checked by `debian/dash-requirements.txt`. After
+  `uv lock`, regenerate it with `debian/update-dash-requirements` (CI checks).
+- Releases: bump `pyproject.toml` and `debian/changelog`, then push a `v*` tag.
+  CI checks the versions match, runs the tests, builds the wheel and `.deb`s, and
+  publishes them to GitHub Releases and PyPI.
 
 ## API
 
@@ -188,11 +194,8 @@ keeps its layout. `home` shows the script's stdout, stderr and logging.
 - `dashboard(width=)`: `"auto"` (default) sizes the sidebar once, at start,
   to the longest pane name plus the longest status (at least 36 columns, at
   most half the window); or columns, or `"25%"`. `[` / `]` resize after.
-- Needs Textual: `pip install textual` in the venv, or `pipx install 'libtmux-easy[dash]'`.
-  Plain `pipx install .` (no extras) still installs `lte-dash` on PATH, but it
-  exits with the install hint instead of opening -- Textual is an extra, not
-  a base dependency, because the same `pyproject.toml` drives the `.deb`
-  build, and apt's Textual is too old/absent (see `debian/rules`).
+- Needs Textual: the `libtmux-easy-dash` `.deb`, `pipx install 'libtmux-easy[dash]'`,
+  or `pip install textual` in the venv. Without it `lte-dash` prints that hint.
 - Without a `TmuxSession`: `lte-dash --open SESSION --status FILE --ctl SOCKET
   --home-log FILE` (or `dash.open_window()`), then keep the status file
   current and answer the socket's `stop` / `respawn` / `stop_all` / `shutdown`.

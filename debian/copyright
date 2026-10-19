@@ -1,6 +1,11 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: libtmux_easy
 Source: https://github.com/nasa-jpl/libtmux_easy
+Comment: libtmux-easy-dash bundles, in /usr/lib/libtmux-easy-dash, third-party
+ packages fetched from PyPI at build time (debian/dash-requirements.txt):
+ textual, rich, markdown-it-py, mdit-py-plugins, mdurl, linkify-it-py,
+ platformdirs (MIT); pygments (BSD-2-Clause); typing_extensions (PSF-2.0).
+ Each one's license text is installed with it, in its *.dist-info directory.
 
 Files: *
 Copyright: 2026 California Institute of Technology

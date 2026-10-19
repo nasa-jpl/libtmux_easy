@@ -29,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - name: debian/dash-requirements.txt matches uv.lock
+        run: debian/update-dash-requirements && git diff --exit-code debian/dash-requirements.txt
       - run: uv build
       - name: Check the metadata renders on PyPI
         run: uvx twine check --strict dist/*
@@ -45,17 +47,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential debhelper dh-python python3-all \
-                                  python3-setuptools pybuild-plugin-pyproject
+                                  python3-pip python3-setuptools pybuild-plugin-pyproject
       - run: dpkg-buildpackage -us -uc -b
       - run: mkdir deb && mv ../*.deb deb/
+      # python3-textual (0.1, too old) too: the library must still use the bundle.
       - name: Install and smoke-test
         run: |
-          sudo apt-get install -y ./deb/*.deb
-          cd /tmp
-          /usr/bin/python3 -c "import libtmux_easy.tmux_lib"
-          lte-run true
-          rc=0; lte-run sh -c 'exit 3' || rc=$?; test "$rc" = 3
-          test ! -e /usr/bin/lte-dash
+          sudo apt-get install -y tmux python3-textual ./deb/*.deb
+          debian/smoke-test
       - uses: actions/upload-artifact@v4
         with:
           name: deb

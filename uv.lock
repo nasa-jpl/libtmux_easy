@@ -95,7 +95,7 @@ wheels = [
 
 [[package]]
 name = "libtmux-easy"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "libtmux", version = "0.38.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
