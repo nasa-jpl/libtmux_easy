@@ -1,7 +1,7 @@
 """The pytest plugin (libtmux_easy.testing), from the repo root:
 
-    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin --lte-mode=shell   # no tmux
-    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin --lte-mode=tmux    # detached
+    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin                   # subprocesses
+    PYTHONPATH=src python3 -m pytest demos/interactive/pytest_plugin --tmux             # detached
     PYTHONPATH=src .venv/bin/python -m libtmux_easy.launch -- \\
         .venv/bin/python -m pytest -s demos/interactive/pytest_plugin                    # dashboard
 

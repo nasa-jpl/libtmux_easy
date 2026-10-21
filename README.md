@@ -171,7 +171,9 @@ noticed. Teardown stops them, and errors unless each exited 0 on SIGINT.
 | `tmux` | wrap panes in a detached session | kept on failure (`--lte-keep`) |
 | `dash` | panes in `lte-session`'s session and dashboard | kept with `lte-session --keep` |
 
-Default: dash under lte-session, else tmux, else shell. Fixtures to
+Default: dash under lte-session, else shell; `--tmux` for tmux.
+`--keep-open` never stops processes and leaves the session up. A test can
+start and stop its own with `launcher`. Logs go to pytest's temp dir. Fixtures to
 override, and `tmux_session` for a test's own session:
 [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 
