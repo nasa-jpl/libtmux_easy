@@ -444,6 +444,43 @@ def test_sidebar_autosizes_once(tmp_path, names, width, window_width, expect):
 
 
 @needs_textual
+def test_sidebar_shows_subprocess_tree(tmp_path):
+    """The selected pane's subprocesses, in a dropdown that starts closed
+    and 'p' toggles; none for a pane without any."""
+    from textual.widgets import Collapsible, Static
+
+    proc = subprocess.Popen(["sh", "-c", "sleep 30; true"])
+    try:
+        status = tmp_path / "s.json"
+        busy, idle = entry("%5", "w:busy", True), entry("%6", "w:idle", True)
+        busy["target_pids"] = [proc.pid]
+        idle["target_pids"] = [os.getpid() + 2**22]  # no such process
+        status.write_text(json.dumps([busy, idle]))
+        from libtmux_easy.proc import descendant_tree
+        assert _wait_until(lambda: descendant_tree(proc.pid))  # sh has started sleep
+
+        async def scenario(app, pilot):
+            procs = app.query_one("#procs", Collapsible)
+            assert app._selected() == "%5"
+            assert procs.display
+            assert procs.title == "1 subprocess" and procs.collapsed
+            lines = str(app.query_one("#proc-tree", Static).render()).splitlines()
+            assert lines[0].split(None, 1) == [str(proc.pid), "sh -c sleep 30; true"]
+            assert lines[1].split()[1:] == ["\\_", "sleep", "30"]
+            await pilot.press("p")
+            assert not procs.collapsed
+            await pilot.press("down")
+            await pilot.pause(0.1)
+            assert not procs.display
+
+        viewport = FakeViewport(("%5", "%6"), options={dash.INITIAL_OPTION: "%5"})
+        _run_app(viewport, str(status), scenario)
+    finally:
+        proc.terminate()
+        proc.wait()
+
+
+@needs_textual
 def test_sidebar_starts_on_initial_pane(tmp_path):
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry("%5", "w:one", True), entry("%6", "w:two", True)]))

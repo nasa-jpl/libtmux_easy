@@ -47,17 +47,52 @@ def proc_table():
     return table
 
 
+def _children(table):
+    """ppid -> [pid, ...] of a proc_table(), each list sorted."""
+    children = {}
+    for child, (_, ppid, _) in table.items():
+        children.setdefault(ppid, []).append(child)
+    for pids in children.values():
+        pids.sort()
+    return children
+
+
 def descendants(pid, table=None):
     """The pids below 'pid' in a proc_table() (a fresh one by default)."""
-    children = {}
-    for child, (_, ppid, _) in (proc_table() if table is None else table).items():
-        children.setdefault(ppid, []).append(child)
+    children = _children(proc_table() if table is None else table)
     found, todo = [], list(children.get(pid, ()))
     while todo:
         child = todo.pop()
         found.append(child)
         todo.extend(children.get(child, ()))
     return found
+
+
+def descendant_tree(pid, table=None):
+    """[(depth, pid), ...] below 'pid', depth 1 for its children, in the
+    order 'ps axf' draws them: depth first, siblings by pid."""
+    children = _children(proc_table() if table is None else table)
+    found, todo = [], [(1, child) for child in reversed(children.get(pid, ()))]
+    while todo:
+        depth, child = todo.pop()
+        found.append((depth, child))
+        todo.extend((depth + 1, c) for c in reversed(children.get(child, ())))
+    return found
+
+
+def cmdline(pid):
+    """The process's command line ('sleep 5'); its '[name]' when it has
+    none (a kernel thread, a zombie); '' if it is gone."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            args = f.read().rstrip(b"\0").split(b"\0")
+    except OSError:
+        return ""
+    line = " ".join(a.decode(errors="replace") for a in args if a)
+    if line:
+        return line
+    name = comm(pid)
+    return f"[{name}]" if name else ""
 
 
 def alive(pid):

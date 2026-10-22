@@ -13,9 +13,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Markdown, Static, Tree
+from textual.widgets import Collapsible, Footer, Markdown, Static, Tree
 
-from .. import close
+from .. import close, proc
 from .._tmux import option
 from . import winhook
 from .control import describe, describe_long, read_status
@@ -37,6 +37,7 @@ type into it, run vim, scroll back.
 | `g` | go to the pane in its own window (`prefix g` comes back) |
 | `h` | select home: the script's output |
 | `c` | copy the pane's command (`prefix ]` pastes it) |
+| `p` | show / hide the pane's subprocesses (listed when it has any) |
 | `x` | stop the pane (SIGINT, then SIGTERM, SIGKILL) |
 | `r` | rerun the pane's command |
 | `X` `X` | stop **all** panes, same escalation; panes stay up to inspect |
@@ -134,6 +135,9 @@ class DashApp(App):
     #summary { height: auto; padding: 0 1; border-bottom: hkey $primary; }
     #panes { height: 1fr; scrollbar-size-vertical: 1; }
     #details { height: auto; max-height: 9; padding: 0 1; border-top: hkey $primary; }
+    #procs { display: none; height: auto; padding: 0; border-top: none; background: $background; }
+    #procs Contents { padding: 0 1; height: auto; max-height: 12; overflow-y: auto; }
+    #proc-tree { text-wrap: nowrap; text-overflow: ellipsis; }
     """
 
     BINDINGS = [
@@ -144,6 +148,7 @@ class DashApp(App):
         Binding("X", "stop_all", "Stop all", show=False),
         Binding("Q", "shutdown", "Shutdown", show=False),
         Binding("c", "copy_command", "Copy", show=False),
+        Binding("p", "toggle_procs", "Subprocesses", show=False),
         Binding("left_square_bracket", "resize(-4)", "Narrow", show=False),
         Binding("right_square_bracket", "resize(4)", "Widen", show=False),
         Binding("question_mark", "help", "Help"),
@@ -152,6 +157,7 @@ class DashApp(App):
 
     POLL_INTERVAL = 0.5
     ONLINE_INTERVAL = 2.0
+    PROCS_INTERVAL = 1.0
     CONFIRM_WINDOW = 3.0  # seconds to press X / Q a second time
     SHOW_DELAY = 0.15  # debounce: holding Down should not swap every pane in passing
 
@@ -170,6 +176,7 @@ class DashApp(App):
         self._armed = None  # (action, time) awaiting a confirming press
         self._active = True     # the dashboard window is the current one
         self._hook = None       # winhook index
+        self._procs = None      # the process tree shown last: (title, text)
 
     def compose(self) -> ComposeResult:
         tree = PaneTree("session", id="panes")
@@ -179,6 +186,8 @@ class DashApp(App):
         yield Static(id="summary")
         yield tree
         yield Static(id="details")
+        with Collapsible(title="", collapsed=True, id="procs"):
+            yield Static(id="proc-tree")
         yield Footer()
 
     def on_mount(self):
@@ -201,6 +210,8 @@ class DashApp(App):
             self.call_after_refresh(tree.move_cursor, initial_node)
         self.set_interval(self.POLL_INTERVAL, self.poll)
         self.set_interval(self.ONLINE_INTERVAL, self.check_online)
+        self.set_interval(self.PROCS_INTERVAL, self._show_procs)
+        self._show_procs()
 
     def _autosize(self):
         """Width AUTO: fit the widest pane row, once. Capped at half the
@@ -392,10 +403,44 @@ class DashApp(App):
         text.append(clip(entry.get("command", ""), details.content_size.width))
         details.update(text)
 
+    def _show_procs(self):
+        """The selected pane's process tree, as 'ps axf' draws it: each
+        target pid and its descendants. Hidden when there are none below.
+        For show only: the pane's command reaps them, not us."""
+        entry = self.entries.get(self._selected())
+        roots = (entry.get("target_pids") or ()) if entry and entry.get("running") else ()
+        table = proc.proc_table() if roots else {}
+        rows, count = [], 0
+        for root in roots:
+            if root in table:  # else it exited, or its pid is from an older status
+                below = proc.descendant_tree(root, table)
+                rows += [(0, root)] + below
+                count += len(below)
+        widget = self.query_one("#procs", Collapsible)
+        if not count:
+            widget.display = False
+            self._procs = None
+            return
+        width = max(len(str(pid)) for _, pid in rows)
+        text = Text()
+        for i, (depth, pid) in enumerate(rows):
+            if i:
+                text.append("\n")
+            text.append(str(pid).rjust(width), style="dim")
+            text.append((" " + "    " * (depth - 1) + " \\_ ") if depth else " ", style="dim")
+            text.append(proc.cmdline(pid) or "(exited)")
+        title = f"{count} subprocess{'es' if count > 1 else ''}"
+        if (title, text.plain) != self._procs:
+            self._procs = (title, text.plain)
+            widget.title = title
+            self.query_one("#proc-tree", Static).update(text)
+        widget.display = True
+
     # ---------- viewport ----------
 
     def on_tree_node_highlighted(self, event):
         self._show_details()
+        self._show_procs()
         self._cancel_show()
         self._show_timer = self.set_timer(self.SHOW_DELAY, self._show_selected)
 
@@ -449,6 +494,11 @@ class DashApp(App):
         # -w: also to the system clipboard, where tmux's set-clipboard allows.
         self.viewport.run("set-buffer", "-w", "--", entry["command"])
         self.notify("Copied the command. prefix ] pastes it.")
+
+    def action_toggle_procs(self):
+        widget = self.query_one("#procs", Collapsible)
+        if widget.display:
+            widget.collapsed = not widget.collapsed
 
     def action_resize(self, delta):
         self.viewport.run("resize-pane", "-t", self.viewport.sidebar,

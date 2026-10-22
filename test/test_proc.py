@@ -9,7 +9,8 @@ import os
 import subprocess
 
 from helpers import wait_until
-from libtmux_easy.proc import get_child_pids, pane_child_processes, get_session_pids
+from libtmux_easy.proc import (cmdline, descendant_tree, get_child_pids, get_session_pids,
+                               pane_child_processes)
 
 
 def test_get_child_pids():
@@ -34,6 +35,39 @@ def test_get_child_pids():
         proc.terminate()
         proc.wait()
     assert get_child_pids(2**30) == []
+
+
+def test_descendant_tree():
+    """
+    1 init
+      |-- 10 a
+      |     |-- 11 b
+      |     |     `-- 13 d
+      |     `-- 12 c
+      `-- 20 e
+
+    ps axf order: depth first, siblings by pid. Leaves and unknown pids give [].
+    """
+    table = {pid: ("S", ppid, pid) for pid, ppid in
+             ((1, 0), (20, 1), (12, 10), (10, 1), (13, 11), (11, 10))}
+    assert descendant_tree(10, table) == [(1, 11), (2, 13), (1, 12)]
+    assert descendant_tree(1, table) == [(1, 10), (2, 11), (3, 13), (2, 12), (1, 20)]
+    assert descendant_tree(13, table) == []
+    assert descendant_tree(99, table) == []
+
+
+def test_descendant_tree_and_cmdline_of_real_processes():
+    proc = subprocess.Popen(["sh", "-c", "sleep 5; true"])
+    try:
+        assert wait_until(lambda: descendant_tree(proc.pid) != [])
+        ((depth, sleeper),) = descendant_tree(proc.pid)
+        assert depth == 1
+        assert cmdline(proc.pid) == "sh -c sleep 5; true"
+        assert cmdline(sleeper) == "sleep 5"
+    finally:
+        proc.terminate()
+        proc.wait()
+    assert cmdline(2**30) == ""
 
 
 def test_pane_and_session_pids(session):
