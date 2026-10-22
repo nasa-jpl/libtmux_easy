@@ -64,7 +64,7 @@ def test_death_fails_the_test(tmp_path, mode):
             assert "processes kept" in proc.stdout  # kept on failure
             assert subprocess.run(["tmux", "has-session", "-t", session[1]]).returncode == 0
         else:
-            assert "[w:ok] hello_42" in proc.stdout  # output to the terminal
+            assert "[w:ok] hello_42" not in proc.stdout  # output only to the logs
     finally:
         if session:
             subprocess.run(["tmux", "kill-session", "-t", session[1]], capture_output=True)
@@ -74,9 +74,15 @@ def test_default_is_shell(tmp_path):
     proc = _pytest(tmp_path, "auto", False)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "lte mode: shell" in proc.stdout
+    assert "[w:ok] hello_42" not in proc.stdout
+    log_dir = re.findall(r"process logs: (\S+)", proc.stdout)[-1]  # header, then the group's
+    assert open(os.path.join(log_dir, "w.ok.log")).read() == "hello_42\n"
+
+
+def test_echo(tmp_path):
+    proc = _pytest(tmp_path, "shell", False, "--lte-echo")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "[w:ok] hello_42" in proc.stdout
-    log_dir = re.search(r"process logs: (\S+)", proc.stdout)[1]
-    assert open(os.path.join(log_dir, "test_inner0", "w.ok.log")).read() == "hello_42\n"
 
 
 def test_tmux_logs(tmp_path):
@@ -255,7 +261,7 @@ def test_unique_prefix():
 
 
 # setup_class / teardown_class with new_processes(); FAIL_ON functions;
-# wait_until; LTE_LOG_DIR.
+# wait_until; LTE_LOG_DIR; BASH_ENV not sourced.
 CLASS_TESTS = """
 import os, sys, time
 from libtmux_easy.testing import check_health, new_processes
@@ -269,14 +275,14 @@ class TestA:
         cls.procs = new_processes(cls)
         cls.procs.start("w:a", CMD, ready=r"hello_42")
         cls.procs.wait_until(lambda: "hello_42" in cls.procs.output("w:a"), timeout=5)
-        cls.procs.start("w:env", f"echo dir=$LTE_LOG_DIR; exec {CMD}")
+        cls.procs.start("w:env", f"echo dir=$LTE_LOG_DIR bash_env=${{BASH_ENV_RAN:-no}}; exec {CMD}")
 
     @classmethod
     def teardown_class(cls):
         cls.procs.close()
 
     def test_one(self):
-        self.procs.wait_for("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")))
+        self.procs.wait_for("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")) + " bash_env=no")
 
     def test_bad_line(self):
         self.procs.start("w:bad", f"echo BAD; exec {CMD}")
@@ -322,8 +328,10 @@ def test_setup_class(tmp_path, mode):
     (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
     (tmp_path / "proc.py").write_text(PROC)
     (tmp_path / "test_inner.py").write_text(CLASS_TESTS)
+    (tmp_path / "bash_env").write_text("export BASH_ENV_RAN=yes\n")
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     env["PYTHONPATH"] = SRC
+    env["BASH_ENV"] = str(tmp_path / "bash_env")
     proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
                            "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
                            "-rA", "test_inner.py"],

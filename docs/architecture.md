@@ -91,13 +91,14 @@ One copy each. The commands import them, so their modules stay light:
 
 ## Environment
 
-`env=` at three levels: `create()` / `copy_environment()` (session),
-`new_window()`, `new_pane()`; merged in that order in `_claim_pane()`.
+Exact per pane: `os.environ`, then `env=` at session (`create()` /
+`copy_environment()`), window and pane level (`_pane_environment()`).
+Each split or respawn sets it on the session, splits and restores, in one
+`source-file` call (`_spawn()`); shell panes run the user's rc, then
+restore the env (`lte_rc.bash`). See [environment.md](environment.md).
 
-- Created session: `set-environment`, so panes made by hand get it too.
-  Adopted (`current()`): only this script's panes get it.
-- Every library pane gets the merged env with `-e` when it is split, and
-  again on `respawn_pane()`.
+- Created session: `copy_environment()` also sets the session's tmux
+  environment, so panes made by hand get it. Adopted: left alone.
 - `_tmux.SKIP_ENV` is never copied: tmux sets `TMUX*`/`TERM` per pane, and a
   copied `LTE_DIR` would send `lte-run` to another session's socket.
 

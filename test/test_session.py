@@ -1,5 +1,6 @@
 """TmuxSession: sessions, windows and panes; exit status in shell and exec
 mode; stopping (stop_pane, stop_all) and the stopped state."""
+import json
 import os
 import time
 
@@ -9,6 +10,7 @@ from helpers import pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
 from libtmux_easy import dash
 from libtmux_easy._tmux import tmux
+from libtmux_easy.tmux_lib import _wrap_prefix
 
 
 def test_create_and_kill_existing(make_session):
@@ -94,6 +96,68 @@ class TestWindowsAndPanes:
             assert "term=bogus" not in pane_text(pane)
             assert f"pane={pane.id}" in pane_text(pane)
 
+    def test_big_environment(self, session):
+        """An environment past tmux's 16 KB command limit (a sourced ROS
+        workspace's is ~11 KB, plus a window's and a pane's) still reaches
+        every pane: 'command too long' before."""
+        big = {f"LTE_BIG_{i}": "x" * 1000 for i in range(20)}
+        first = session.new_pane("first", "echo n=${#LTE_BIG_0},${#LTE_BIG_19}", env=big)
+        second = session.new_pane("second", "echo n=${#LTE_BIG_0},${#LTE_BIG_19}", env=big)
+        for pane in (first, second):
+            assert wait_until(lambda: "n=1000,1000" in pane_text(pane))
+
+    @pytest.mark.parametrize("mode", ["shell", PANE_MODE_EXEC, PANE_MODE_WRAP])
+    def test_exact_environment(self, make_session, tmp_path, monkeypatch, mode):
+        """A pane's environment is exactly ours: nothing from the tmux
+        server's, None removes, PATH is ours, odd values survive, and the rc
+        file's exports are undone (its alias kept). The session's tmux
+        environment is as it was."""
+        monkeypatch.setenv("LTE_DROP", "x")
+        rc = tmp_path / "rc"
+        rc.write_text("export PATH=/rc/bin:$PATH LTE_RC=rc LTE_P=clobbered\n"
+                      "unset LTE_W\nalias lte_alias='echo alias_ok'\n")
+        session = make_session(env={"LTE_DROP": None}, rc=str(rc))
+        tmux("set-environment", "-g", "LTE_SERVER", "leak")
+        try:
+            path = f"/lte/bin:{os.environ['PATH']}"
+            session.new_window("w", env={"LTE_W": "w;", "PATH": path})
+            odd = "it's \"q\" $HOME #{pane_id} %if\nline2\\"
+            out = tmp_path / "env.json"
+            dump = (f"python3 -c 'import json,os; json.dump(dict(os.environ), "
+                    f"open(\"{out}\", \"w\"))'")
+            pane = session.new_pane("p", dump + ("; sleep 30" if mode == PANE_MODE_EXEC else ""),
+                                    mode=mode, env={"LTE_P": odd})
+            assert wait_until(lambda: out.exists() and out.stat().st_size)
+            got = json.loads(out.read_text())
+            want = session._pane_environment(session.current_window.id, {"LTE_P": odd})
+            ours = {"TMUX", "TMUX_PANE", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+                    "SHELL", "PWD", "OLDPWD", "SHLVL", "_", "LTE_DIR"}
+            if mode == PANE_MODE_WRAP and _wrap_prefix().startswith("env "):
+                ours.add("PYTHONPATH")  # lte-run from this source tree
+            assert {k: v for k, v in got.items() if k not in ours} == \
+                {k: v for k, v in want.items() if k not in ours}
+            assert got["LTE_P"] == odd and got["LTE_W"] == "w;" and got["PATH"] == path
+            assert "LTE_SERVER" not in got and "LTE_DROP" not in got and "LTE_RC" not in got
+            if mode != PANE_MODE_EXEC:
+                session.send_keys("lte_alias", target_pane=pane)
+                assert wait_until(lambda: "alias_ok" in pane_text(pane))
+            left = tmux("show-environment", "-t", session.id)
+            assert not [line for line in left if line.startswith(("LTE_P=", "LTE_W=", "-LTE"))]
+        finally:
+            tmux("set-environment", "-gu", "LTE_SERVER")
+
+    def test_shell_edits_survive_rerun(self, session, tmp_path):
+        """The env is put back once, at shell start: an export typed in the
+        pane reaches the next run."""
+        out = tmp_path / "v"
+        pane = session.new_pane("p", "echo ${LTE_E:-unset} > " + str(out) + "; true",
+                                mode=PANE_MODE_WRAP)  # an operator: run as bash -c, so the rerun expands it again
+        assert wait_until(lambda: out.exists() and out.read_text() == "unset\n")
+        session.send_keys("export LTE_E=edited", target_pane=pane)
+        session.wait_for_pane_idle(pane, timeout=10)
+        session.respawn_pane(pane)
+        assert wait_until(lambda: out.read_text() == "edited\n")
+
     def test_copy_environment(self, session):
         """Panes started afterwards get it, with no sourcing step; a hand-made
         pane too, as it is the session's tmux environment."""
@@ -114,11 +178,15 @@ class TestWindowsAndPanes:
 
     def test_layouts(self, make_session):
         session = make_session(window=None)
-        # The first window must get layout_str too, or splits are never
+        # The first window must keep its layout too, or splits are never
         # re-tiled and the 6th fails with 'no space for new pane'.
-        window = session.new_window("many", layout="main-horizontal")
-        assert window.layout_str == "main-horizontal"
-        for i in range(8):
+        session.new_window("many", layout="main-horizontal")
+        for i in range(4):
+            session.new_pane(f"p{i}", "sleep 30", target_pid_timeout=0.1)
+        session.new_window("other")
+        # Back by name: a new Window object, as testing's tmux backend does.
+        session.current_window = session.resolve_target_window("many")
+        for i in range(4, 8):
             session.new_pane(f"p{i}", "sleep 30", target_pid_timeout=0.1)
         assert len(session.get_window("many").panes) == 8
 
@@ -170,9 +238,9 @@ class TestShellMode:
         assert session.exit_status(pane).code == 7
 
     def test_slow_shell_start(self, session, tmp_path):
-        """The pane's login shell still runs ~/.profile when new_pane() is
-        called: the command is tracked, not the rc file's 'sleep'."""
-        (tmp_path / ".profile").write_text("sleep 1\nPS1='slow$ '\n")
+        """The pane's shell still runs ~/.bashrc when new_pane() is called:
+        the command is tracked, not the rc file's 'sleep'."""
+        (tmp_path / ".bashrc").write_text("sleep 1\nPS1='slow$ '\n")
         pane = session.new_pane("x", "sleep 100", env={"HOME": str(tmp_path)})
         time.sleep(0.5)
         assert session.is_running(pane)

@@ -122,8 +122,9 @@ gets `LTE_LOG_DIR`, its log's directory (e.g. for a tool's own logs).
 | `lte_pane_setup` | session | `None` | shell command before each process (`cd`, `export`) |
 | `lte_output_checks` | session | `[]` | `(name, output) -> [problems]` over whole outputs |
 
-Processes get pytest's environment in every mode (tmux panes via
-`env=os.environ`: the server's may predate a sourced workspace).
+Processes get exactly pytest's environment in every mode (tmux panes: see
+`environment.md`), minus `BASH_ENV`: a container's that sources ROS would
+drop the overlay.
 
 ## Design
 

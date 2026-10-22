@@ -61,6 +61,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+libtmux_easy = ["lte_rc.bash"]
+
 [project.urls]
 "Homepage" = "https://github.com/nasa-jpl/libtmux_easy"
 "Bug Tracker" = "https://github.com/nasa-jpl/libtmux_easy/issues"

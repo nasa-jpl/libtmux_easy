@@ -7,6 +7,7 @@ import shlex
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -25,7 +26,7 @@ from packaging import version
 
 from . import close as _close, dash, starter as _starter
 from .dash import keys as _keys
-from ._tmux import env_args, option, pane_env
+from ._tmux import SKIP_ENV, option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
 from .output import (POLL as _OUTPUT_POLL, QUIET as _OUTPUT_QUIET, Capture, OutputExpect,
                      OutputMatch, OutputReader, OutputWatch, PaneExited, file_size, plain_lines,
@@ -88,12 +89,44 @@ _SHELL_OPERATORS = ("&&", "||", ";", "|", "&")
 # sun_path is 108 bytes on Linux, including the terminating NUL.
 _MAX_SOCKET_PATH = 107
 
+# A shell or wrap pane's rc file: runs the user's, then restores the
+# environment tmux gave the shell (docs/environment.md).
+_RC_FILE = str(Path(__file__).with_name("lte_rc.bash"))
+
+# show-environment -s output: 'NAME="value"; export NAME;' (\ " $ ` escaped
+# with a backslash, newlines as they are) or 'unset NAME;'.
+_SHOWENV = re.compile(r'([^=\n]+)="((?:[^"\\]|\\.)*)"; export [^\n]*;\n|unset ([^\n]*);\n', re.S)
+
+
+def _tmux_word(text) -> str:
+    """'text' as one word of a tmux command file (source-file): single
+    quotes, in which nothing is special but the quote itself."""
+    return "'" + str(text).replace("'", "'\"'\"'") + "'"
+
+
+def _parse_env(lines):
+    """show-environment -s output -> {name: value, or None for removed}."""
+    text = "".join(line + "\n" for line in lines)
+    env, pos = {}, 0
+    while pos < len(text):
+        m = _SHOWENV.match(text, pos)
+        if m is None:  # not ours to parse: skip the line
+            pos = text.find("\n", pos) + 1 or len(text)
+            continue
+        if m.group(3) is not None:
+            env[m.group(3)] = None
+        else:
+            env[m.group(1)] = re.sub(r"\\(.)", r"\1", m.group(2), flags=re.S)
+        pos = m.end()
+    return env
+
 
 def _wrap_prefix() -> str:
-    """How the library invokes lte-run in a pane: the bare name if it is
-    installed, else this interpreter on this source tree (a plain checkout)."""
-    if shutil.which("lte-run"):
-        return "lte-run"
+    """How the library invokes lte-run in a pane: its full path if it is
+    installed (the pane's PATH is its environment's, which may lack a venv's
+    bin), else this interpreter on this source tree (a plain checkout)."""
+    if path := shutil.which("lte-run"):
+        return shlex.quote(path)
     src = Path(__file__).resolve().parents[1]
     return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m libtmux_easy.wrap"
 
@@ -255,6 +288,7 @@ class TmuxSession(Session):
         env: Optional[Mapping[str, str]] = None,
         capture: Union[None, bool, str] = None,
         mode: str = PANE_MODE_SHELL,
+        rc: Optional[str] = "~/.bashrc",
         **kwargs,
     ) -> "TmuxSession":
         """
@@ -268,9 +302,11 @@ class TmuxSession(Session):
         written to it as JSON on every pane state transition, so an external
         process can monitor pane state without any libtmux knowledge.
 
-        'env' (e.g. os.environ, or a dict of your own) goes into every pane;
-        see copy_environment(). Without it, panes get the tmux server's
-        environment, which may predate e.g. an activated venv.
+        'env' goes into every pane, on top of this process's os.environ;
+        see copy_environment() and docs/environment.md.
+
+        'rc' is the rc file a shell or wrap pane's bash runs, for aliases and
+        a prompt; the environment is put back afterwards. None: no rc file.
 
         'capture' (True, or a directory) saves every pane's output to a
         file: capture().
@@ -286,6 +322,7 @@ class TmuxSession(Session):
         session._adopted = False
         session.__post_init__(window, pane, title_status=title_status, status_file=status_file)
         session.default_mode = mode
+        session.rc = rc
         _starter.apply(run=session._tmux_run)
         session.bind_close_key()
         if env:
@@ -297,7 +334,8 @@ class TmuxSession(Session):
     @classmethod
     def current(cls, title_status: bool = True, status_file: Optional[str] = None,
                 env: Optional[Mapping[str, str]] = None,
-                mode: str = PANE_MODE_SHELL) -> "TmuxSession":
+                mode: str = PANE_MODE_SHELL,
+                rc: Optional[str] = "~/.bashrc") -> "TmuxSession":
         """Adopt the tmux session this process is running in ($TMUX_PANE),
         e.g. a test run by lte-session, or a script run in your own session.
 
@@ -309,7 +347,9 @@ class TmuxSession(Session):
         'status_file' defaults to one in the control dir when the session has
         a dashboard, so its sidebar lists this object's panes.
 
-        'mode' is new_pane()'s default mode: set_default_mode()."""
+        'mode' is new_pane()'s default mode: set_default_mode(). 'env' and
+        'rc': as for create(); the session's own tmux environment is left
+        alone."""
         _check_mode(mode)
         pane_id = os.environ.get("TMUX_PANE")
         tmux_env = os.environ.get("TMUX", "")
@@ -326,6 +366,7 @@ class TmuxSession(Session):
         window = session.windows[0]
         session.__post_init__(window, window.panes[0], title_status=title_status)
         session.default_mode = mode
+        session.rc = rc
         _starter.apply(run=session._tmux_run)
 
         session._adopted = True
@@ -401,8 +442,10 @@ class TmuxSession(Session):
 
         self.pane_modes = {}      # pane.id -> PANE_MODE_*
         self.default_mode = PANE_MODE_SHELL  # new_pane(mode=None), see set_default_mode()
+        self.rc = "~/.bashrc"     # see create(rc=)
         self._session_env = {}    # see create(env=)
         self._window_env = {}     # window.id -> env, see new_window(env=)
+        self._window_layout = {}  # window.id -> layout, see new_window(layout=)
         self._pane_env = {}       # pane.id -> the env it was started with
         self._pane_tee = {}       # pane.id -> lte-run --tee file, see new_pane(tee=)
         self._exit_status = {}    # pane.id -> ExitStatus (cached; see one-shot note)
@@ -461,8 +504,8 @@ class TmuxSession(Session):
         tmux's own).
 
         'env' goes into every pane new_pane() makes in this window, on top of
-        the session's (copy_environment()). tmux has no window environment,
-        so panes made by hand in it don't get it.
+        the session's (copy_environment()); None removes a variable. tmux has
+        no window environment, so panes made by hand in it don't get it.
 
         'capture' (True, or a directory) saves the output of every pane in
         it to a file: capture()."""
@@ -491,12 +534,12 @@ class TmuxSession(Session):
             self._window_env[window.id] = pane_env(env)
 
         if layout:
-            # 'layout' is an attribute already used by libtmux, hence layout_str.
-            # This must be set on the reused first window too: split_window()
-            # only re-tiles when it is present, and without that every split
-            # halves the previous pane (30 -> 14 -> 7 -> 3 -> 2 rows), so the
-            # sixth pane fails with 'no space for new pane'.
-            window.layout_str = layout
+            # By window id, not on the Window: resolve_target_window() makes a
+            # new one. This must be set for the reused first window too:
+            # split_window() only re-tiles when it is present, and without that
+            # every split halves the previous pane (30 -> 14 -> 7 -> 3 -> 2
+            # rows), so the sixth pane fails with 'no space for new pane'.
+            self._window_layout[window.id] = layout
 
         if capture:
             self.capture(window, None if capture is True else capture)
@@ -516,28 +559,98 @@ class TmuxSession(Session):
 
     def copy_environment(self, env: Optional[Mapping[str, str]] = None):
         """Give every pane started from now on 'env' (os.environ by default),
-        added to and overriding what was copied before. In a session of our
-        own (create()) it is the session's tmux environment, so panes made by
-        hand get it too; in an adopted one (current()), only ours do. For one
-        window or one pane, see new_window(env=) and new_pane(env=).
+        added to and overriding what was copied before; None removes a
+        variable. In a session of our own (create()) it is also the session's
+        tmux environment, so panes made by hand get it too; in an adopted one
+        (current()), only ours do. For one window or one pane, see
+        new_window(env=) and new_pane(env=).
 
         An alternative to send_command_before("source ...") for an
         environment that is already set up (an activated venv, a sourced ROS
-        workspace). _tmux.SKIP_ENV (TMUX, TERM, LTE_DIR, ...) is never copied."""
+        workspace). _tmux.SKIP_ENV (TMUX, TERM, BASH_ENV, ...) is never copied."""
         env = pane_env(os.environ if env is None else env)
         self._session_env.update(env)
         if not self._adopted:
-            for name, value in env.items():
-                self.server.cmd("set-environment", "-t", self.id, name, value)
+            script = "".join(
+                f"set-environment -t {self.id} -u {_tmux_word(k)}\n" if v is None else
+                f"set-environment -t {self.id} {_tmux_word(k)} {_tmux_word(v)}\n"
+                for k, v in env.items())
+            self._source(script)
 
-    def _claim_pane(self, name, env=None, **split_kwargs):
-        """Split the pane 'name' off the current window. Returns (pane, env):
-        'env' is the pane's, session, window and 'env' merged, which it
-        starts with. The window's placeholder is the first split's target,
-        then killed: every pane is made the same way, with its environment,
-        its command (exec mode) and its capture pipe from the start."""
+    def _pane_environment(self, window_id, env):
+        """A new pane's exact environment: this process's, then the
+        session's, the window's and 'env' (later wins, None removes)."""
+        merged = {**pane_env(os.environ), **self._session_env,
+                  **self._window_env.get(window_id, {}), **pane_env(env)}
+        return {k: v for k, v in merged.items() if v is not None}
+
+    def _source(self, script, env=None):
+        """Run tmux commands 'script' (one per line) in one call: source-file
+        reads them from stdin, so there is no command length limit, and no
+        other client's command runs in between. Its tmux client runs with
+        'env' (os.environ by default). Returns the commands' stdout lines;
+        LibTmuxException on an error (later commands still ran)."""
+        args = [shutil.which("tmux") or "tmux"]  # found on our PATH, not env's
+        if self.server.socket_path:
+            args.append(f"-S{self.server.socket_path}")
+        elif self.server.socket_name:
+            args.append(f"-L{self.server.socket_name}")
+        proc = subprocess.run([*args, "source-file", "-"], input=script.encode(),
+                              capture_output=True, env=env)
+        if proc.returncode:
+            raise exc.LibTmuxException(proc.stderr.decode(errors="replace").strip())
+        return proc.stdout.decode(errors="replace").splitlines()
+
+    def _spawn(self, env, command):
+        """Run the tmux command 'command' (a split-window or respawn-pane line
+        of a tmux command file) so that the process it starts gets exactly
+        'env', plus what tmux sets itself (TMUX, TMUX_PANE, TERM, SHELL, PWD,
+        SHLVL, TERM_PROGRAM*). In one source-file call: the session's tmux
+        environment set to 'env', every other variable marked removed (-r),
+        the command, then the session's environment put back. PATH comes from
+        the tmux client's own environment, so it runs with 'env's.
+        Returns the command's stdout lines."""
+        word = _tmux_word
+        target = f"-t {self.id}"
+        saved = _parse_env(self._tmux_run("show-environment", "-s", "-t", self.id))
+        hidden = _parse_env(self._tmux_run("show-environment", "-s", "-h", "-t", self.id))
+        names = set(saved) | set(_parse_env(self._tmux_run("show-environment", "-s", "-g")))
+        lines = [f"set-environment {target} {word(k)} {word(v)}" for k, v in env.items()]
+        lines += [f"set-environment {target} -r {word(k)}" for k in sorted(names - set(env))]
+        lines.append(command)
+        for k in sorted(names | set(env)):
+            if k in hidden:  # set without -h above: hidden again, as it was
+                if k in env:
+                    lines.append(f"set-environment {target} -h {word(k)} {word(hidden[k])}")
+            elif k not in saved:
+                lines.append(f"set-environment {target} -u {word(k)}")
+            elif saved[k] is None:
+                lines.append(f"set-environment {target} -r {word(k)}")
+            else:
+                lines.append(f"set-environment {target} {word(k)} {word(saved[k])}")
+        client = {k: v for k, v in os.environ.items() if k != "PATH"}
+        if "PATH" in env:
+            client["PATH"] = env["PATH"]
+        return self._source("".join(line + "\n" for line in lines), env=client)
+
+    def _shell_command(self):
+        """A shell or wrap pane's process: bash with our rc file (the user's
+        rc, then the environment put back), or plain sh without bash."""
+        bash = shutil.which("bash")
+        if not bash:
+            return "sh -i"
+        # '~' is expanded by lte_rc.bash, with the pane's HOME.
+        return shlex.join([bash, "--rcfile", _RC_FILE, "-i", "-s", "--", self.rc or ""])
+
+    def _claim_pane(self, name, env=None, shell=None, **split_kwargs):
+        """Split the pane 'name' off the current window, running 'shell' (an
+        exec pane's command) or an interactive shell. Returns (pane, env):
+        'env' is the exact environment it starts with
+        (_pane_environment()). The window's placeholder is the first split's
+        target, then killed: every pane is made the same way, with its
+        environment, its command and its capture pipe from the start."""
         window = self.current_window
-        env = {**self._session_env, **self._window_env.get(window.id, {}), **pane_env(env)}
+        env = self._pane_environment(window.id, env)
         capture = self._new_pane_file(name)
         full_name = self._full_pane_name(window, name)
         if full_name in self.pane_names:
@@ -545,12 +658,11 @@ class TmuxSession(Session):
         placeholder = window.panes[0].id if self.unnamed_pane.get(window.id) else None
         if placeholder:
             split_kwargs.setdefault("target", placeholder)
-        if env:
-            split_kwargs["environment"] = env
+        split_kwargs["shell"] = shell if shell is not None else self._shell_command()
         if capture:
             self._arm_pipe(capture)
         try:
-            pane = self.split_window(window, name, **split_kwargs)
+            pane = self.split_window(window, name, env=env, **split_kwargs)
         finally:
             if capture:
                 self._disarm_pipe()
@@ -561,8 +673,8 @@ class TmuxSession(Session):
             if path and os.path.isfile(path) and not os.path.getsize(path):
                 os.remove(path)
             self.unnamed_pane[window.id] = False
-            if getattr(window, "layout_str", None):
-                window.select_layout(window.layout_str)
+            if self._window_layout.get(window.id):
+                window.select_layout(self._window_layout[window.id])
         self._pane_env[pane.id] = env
         self._claimed(pane, capture)
         return pane, env
@@ -610,8 +722,9 @@ class TmuxSession(Session):
 
         'env' (e.g. os.environ, or a dict of your own) is this pane's
         environment, on top of the window's (new_window(env=)) and the
-        session's (copy_environment()); later levels win. It is added to the
-        tmux server's environment, not a replacement for it.
+        session's (copy_environment()) and this process's os.environ; later
+        levels win, None removes. Exact: nothing from the tmux server's, and
+        a shell pane's rc file can't change it (docs/environment.md).
 
         'tee' (wrap mode only) is a file that also gets the command's output,
         as plain text: 'lte-run --tee'. The pane still shows it. Complete by
@@ -786,11 +899,13 @@ class TmuxSession(Session):
         self._set_remain_on_exit(pane)  # the pane's own, from now on
         return pane
 
-    @staticmethod
-    def _respawn(pane, env, *command):
+    def _respawn(self, pane, env, *command):
         """respawn-pane -k: the pane's process replaced (by 'command', or a
-        fresh shell), with 'env'."""
-        _pane_cmd(pane, "respawn-pane", "-k", *env_args(env), *command)
+        fresh shell), with exactly 'env' (see _spawn())."""
+        if env is None:
+            env = self._pane_environment(pane.window_id, None)
+        args = ["respawn-pane", "-k", "-t", pane.id, *(command or (self._shell_command(),))]
+        self._spawn(env, " ".join(_tmux_word(a) for a in args))
         pane.refresh()  # pane_pid is a cached field: the old, dead pid otherwise
 
     def _set_remain_on_exit(self, pane):
@@ -808,30 +923,35 @@ class TmuxSession(Session):
         previous, self.default_mode = self.default_mode, _check_mode(mode)
         return previous
 
-    def split_window(self, window: Window, pane_name=None, **pane_kwargs) -> Pane:
-        """Add a pane to 'window', titled 'pane_name'."""
+    def split_window(self, window: Window, pane_name=None, env=None, target=None,
+                     shell=None, vertical=True, percent=None, size=None,
+                     start_directory=None, attach=False) -> Pane:
+        """Add a pane to 'window', titled 'pane_name', its process started
+        with exactly 'env' (default: _pane_environment()); see _spawn().
+        'shell' is its command (default: an interactive shell)."""
         # Other layouts can leave no room for a split: tile, split, then restore.
-        if hasattr(window, "layout_str"):
+        layout = self._window_layout.get(window.id)
+        if layout:
             window.select_layout("tiled")
 
-        if "target" in pane_kwargs:
-            pane_kwargs["target"] = self.resolve_target_pane(pane_kwargs["target"]).id
-        else:
-            pane_kwargs["target"] = window.panes[-1].id
-
-        # Window.split() (libtmux >= 0.33) when it takes the args: split_window()
-        # warns there (DeprecationWarning, in the caller's pytest output too).
-        if hasattr(window, "split") and not {"vertical", "percent"} & pane_kwargs.keys():
-            pane = window.split(**pane_kwargs)
-        else:
-            try:
-                pane = window.split_window(**pane_kwargs)
-            except DeprecatedError:  # an error, not a warning, in some versions
-                pane = window.split(**pane_kwargs)
+        target = self.resolve_target_pane(target).id if target else window.panes[-1].id
+        args = ["split-window", "-P", "-F", "#{pane_id}", "-t", target,
+                "-v" if vertical else "-h"]
+        if not attach:
+            args.append("-d")
+        if percent is not None or size is not None:
+            args += ["-l", f"{percent}%" if percent is not None else str(size)]
+        if start_directory:
+            args += ["-c", os.path.expanduser(start_directory)]
+        args.append(shell if shell is not None else self._shell_command())
+        if env is None:
+            env = self._pane_environment(window.id, None)
+        out = self._spawn(env, " ".join(_tmux_word(a) for a in args))
+        pane = Pane.from_pane_id(server=self.server, pane_id=out[-1].strip())
         self.set_pane_title(pane, pane_name)
 
-        if hasattr(window, "layout_str"):
-            window.select_layout(window.layout_str)
+        if layout:
+            window.select_layout(layout)
         return pane
 
     def send_keys(

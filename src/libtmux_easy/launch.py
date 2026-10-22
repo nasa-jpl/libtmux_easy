@@ -39,7 +39,9 @@ HISTORY_LIMIT = 100000     # scrollback lines kept for the copy printed at the e
 # Kept from the pane rather than the launching shell: they describe the
 # terminal the command now runs in.
 _PANE_ENV = ("TMUX", "TMUX_PANE", "TERM")
-_DROP_ENV = ("COLUMNS", "LINES")
+# BASH_ENV: a 'bash -c' command would source it, and one that sources ROS
+# again (e.g. a container's) drops the workspace overlay (see _tmux.SKIP_ENV).
+_DROP_ENV = ("COLUMNS", "LINES", "BASH_ENV")
 
 _DEAD_LINE = re.compile(r"^(\x1b\[[0-9;]*m)*Pane is dead \(")
 

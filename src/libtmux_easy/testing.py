@@ -64,7 +64,8 @@ Modes (--lte-mode; default auto: dash under lte-session, else shell;
 --tmux: dash, rerunning pytest under lte-session in a terminal and
 attaching; --tmux --no-attach, or no terminal: tmux):
 
-  shell  plain subprocesses; output to the terminal, prefixed '[name]'
+  shell  plain subprocesses; output only to their logs (--lte-echo: also
+         to the terminal, prefixed '[name]')
   tmux   one wrap-mode pane each, in a detached session for the run; only
          test output in the terminal. Kept on failure (--lte-keep)
   dash   under lte-session: the panes join its session and dashboard. Kept
@@ -72,8 +73,8 @@ attaching; --tmux --no-attach, or no terminal: tmux):
 
 Each process's output, as plain text, also goes to a log file under
 pytest's temp dir: '<module>N/<window>.<name>.log' for 'processes', the
-test's tmp_path for 'launcher'. The summary prints where. Each process
-gets LTE_LOG_DIR, its log's directory.
+test's tmp_path for 'launcher'. The header and the summary print where.
+Each process gets LTE_LOG_DIR, its log's directory.
 
 --keep-open (tmux modes; implies --tmux): processes are never stopped, and
 the session or windows stay up, to look at after the run.
@@ -132,6 +133,8 @@ def pytest_addoption(parser):
     group.addoption("--arg", action="append", default=[], metavar="NAME=VALUE",
                     help="a value for the tests to read with arg(NAME), like launch_test's "
                          "NAME:=VALUE (repeatable)")
+    group.addoption("--lte-echo", action="store_true",
+                    help="shell mode: also print each process's output, prefixed [name]")
     group.addoption("--lte-close-windows", action="store_true",
                     help="close each test's tmux windows after it, even under lte-session")
 
@@ -204,9 +207,10 @@ def pytest_configure(config):
                                if mode == "tmux" else None)
     config.lte_kept = False
     config.lte_log_dirs = []
-    # The real terminal, for shell mode's output: pytest captures fd 1 during
-    # tests, but not here.
-    config.lte_tty = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+    # The real terminal, for shell mode's --lte-echo: pytest captures fd 1
+    # during tests, but not here.
+    config.lte_tty = (os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+                      if config.getoption("lte_echo") else None)
 
 
 def _free_session_name(base):
@@ -221,9 +225,10 @@ def _free_session_name(base):
 
 
 def pytest_report_header(config):
+    logs = f"process logs: {config._tmp_path_factory.getbasetemp()}"
     if config.lte_mode == "tmux":
-        return f"lte mode: tmux (watch: tmux attach -t {config.lte_session_name})"
-    return f"lte mode: {config.lte_mode}"
+        return [f"lte mode: tmux (watch: tmux attach -t {config.lte_session_name})", logs]
+    return [f"lte mode: {config.lte_mode}", logs]
 
 
 def _run_session(config):
@@ -284,9 +289,8 @@ def pytest_terminal_summary(terminalreporter, config):
     unread = sorted(set(_args) - _args_read)
     if unread:
         terminalreporter.write_line(f"warning: no test read --arg {', '.join(unread)}", yellow=True)
-    # Each a directory of pytest's basetemp: name that.
-    for base in sorted({os.path.dirname(d) for d in getattr(config, "lte_log_dirs", ())}):
-        terminalreporter.write_line(f"process logs: {base}")
+    for d in getattr(config, "lte_log_dirs", ()):
+        terminalreporter.write_line(f"process logs: {d}")
     if getattr(config, "lte_kept", False):
         state = "still running" if config.lte_keep_open else "kept"
         terminalreporter.write_sep(
@@ -393,11 +397,13 @@ class _Subprocess:
         # launch' with a non-tty stdin re-sends SIGINT to children that
         # already got the group's, and Python children die of the second.
         tty_in, stdin = os.openpty()
+        # Without BASH_ENV, as for panes (see _tmux.SKIP_ENV).
+        env = {k: v for k, v in os.environ.items() if k != "BASH_ENV"}
         self.proc = subprocess.Popen(
             ["bash", "-c", command], stdin=stdin, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, errors="replace",
             start_new_session=True,  # a process group of its own, for SIGINT
-            env=dict(os.environ, PYTHONUNBUFFERED="1",
+            env=dict(env, PYTHONUNBUFFERED="1",
                      **({"LTE_LOG_DIR": os.path.dirname(log)} if log else {})))
         os.close(stdin)
         log_file = open(log, "a", buffering=1) if log else None  # line-buffered: tail -f
@@ -411,8 +417,9 @@ class _Subprocess:
                     self.lines.append(line)
                     self.plain.append(plain)
                     self.cond.notify_all()
-                with lock:
-                    tty.write(f"[{name}] {line}")
+                if tty:
+                    with lock:
+                        tty.write(f"[{name}] {line}")
                 if on_line:
                     on_line(plain)
             if log_file:
@@ -475,8 +482,8 @@ class _Subprocess:
 
 
 class _ShellBackend:
-    """Plain subprocesses, their output in the terminal. A restart replaces
-    the old one."""
+    """Plain subprocesses, their output in their logs ('tty': and there).
+    A restart replaces the old one."""
 
     def __init__(self, tty):
         self.tty = tty
@@ -653,6 +660,7 @@ class Processes:
                 else:
                     what = check.search(line) and f"{name} printed {line!r} (FAIL_ON {check.pattern!r})"
                 if what:
+                    what += f" (log: {self.log(name)})" if self.log_dir else ""
                     self.failed_on.append((what, self.stopping or self._runs[name].stopping))
         return on_line
 

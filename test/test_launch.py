@@ -15,6 +15,8 @@ import pytest
 from libtmux_easy import TmuxSession, PANE_MODE_WRAP
 from libtmux_easy import dash
 
+from helpers import wait_until
+
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 
 
@@ -114,6 +116,18 @@ class TestCurrent:
         assert _has_session("lte-test-current")
         assert [w.name for w in inside.windows] == ["host"]
         assert inside._session_option("@lte_dir") == ""
+
+    def test_env_leaves_session_alone(self, inside, tmp_path):
+        """current() writes nothing to the session's tmux environment, even
+        for an environment past tmux's 16 KB command limit."""
+        before = inside.server.cmd("show-environment", "-t", inside.id).stdout
+        adopted = TmuxSession.current(env={"LTE_ADOPT": "x" * 20000})
+        adopted.new_window("mine")
+        out = tmp_path / "v"
+        adopted.new_pane("p", f"echo $LTE_ADOPT > {out}")
+        assert wait_until(lambda: out.exists() and len(out.read_text()) == 20001)
+        assert inside.server.cmd("show-environment", "-t", inside.id).stdout == before
+        adopted.kill_session()
 
     def test_reuses_dashboard_and_publishes_status(self, inside):
         window, _ = dash.open_window(inside.id, None, None, None, home_cmd="cat",

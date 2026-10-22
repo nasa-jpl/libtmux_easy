@@ -7,6 +7,7 @@ Linux 6.x); don't re-research them.
 | doc | covers |
 |---|---|
 | [architecture.md](architecture.md) | modules, sessions (created vs adopted), tmux access rules |
+| [environment.md](environment.md) | a pane's exact environment: levels, `None`, rc files, how it is set |
 | [exit-status.md](exit-status.md) | pane modes, target pids, exit events, stopping, status surfaces |
 | [wrap-mode.md](wrap-mode.md) | `lte-run`: signals and the wrap protocol (public) |
 | [dashboard.md](dashboard.md) | `lte-dash`: swap-pane viewport, state in tmux options, borrowed keys |

@@ -137,8 +137,8 @@ reruns typed by hand).
 
 | method | |
 |---|---|
-| `TmuxSession.create(name, env=None, mode="shell", capture=None, status_file=None)` | a new session (replaces one of that name) |
-| `TmuxSession.current(env=None, mode="shell")` | adopt the session this process runs in |
+| `TmuxSession.create(name, env=None, mode="shell", capture=None, status_file=None, rc="~/.bashrc")` | a new session (replaces one of that name) |
+| `TmuxSession.current(env=None, mode="shell", rc="~/.bashrc")` | adopt the session this process runs in |
 | `new_window(name, layout="tiled", env=None, capture=None)` | a window; the next panes go in it |
 | `new_pane(name, cmd, mode=None, on_exit=None, on_output=None, env=None, capture=None, tee=None)` | a pane running `cmd` |
 | `send_keys(cmd, target_pane=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
@@ -154,9 +154,10 @@ reruns typed by hand).
 | `kill_session()`, `release(keep_windows=False)` | end, or let go and leave windows up |
 | `select_window()`, `select_pane()`, `attach()` | |
 
-`env=` (e.g. `os.environ`) works at session, window and pane level, later
-levels winning: panes otherwise get the tmux *server's* environment, which
-may predate an activated venv. `status_file=` writes `status()` as JSON on
+A pane's environment is exactly `os.environ` plus `env=` at session,
+window and pane level (later wins, `None` removes): nothing from the tmux
+server's. Shell panes run `rc` (aliases, prompt), then get their exact
+environment back. No size limit. See `docs/environment.md`. `status_file=` writes `status()` as JSON on
 every change, for other programs.
 
 `kill_session()` only sends SIGHUP: `stop_all()` or `close()` first for a
