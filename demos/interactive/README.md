@@ -21,7 +21,6 @@ cd demos/interactive
 | `04_dashboard.py` | the sidebar: browse, focus, `x` / `r` actions, `dashboard_pane`, many panes |
 | `05_monitoring.py` | the status file read by another program; a supervisor whose exit status hides failures |
 | `06_output.py` | output: `on_output` events, `wait_for_output`, `capture` and `search_output`, `expect`, `lte-run --tee`, a session-wide watch |
-| `pytest_plugin/` | the pytest plugin in shell, tmux and dash mode (see its docstring) |
 
 ## How a tour runs
 

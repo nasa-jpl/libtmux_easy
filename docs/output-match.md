@@ -84,9 +84,11 @@ def test_x(processes):
     port = processes.wait_for("servers:web", r"port (\d+)").group(1)
 ```
 
-`READY` errors the fixture with the last output; `FAIL_ON` is recorded like
-a death; `wait_for` fails on a timeout or an exit. Shell mode matches in its
-reader thread, same text rules.
+`READY` errors the fixture with the last output; `FAIL_ON` (a regex or a
+function `line -> problem or None`) is recorded like a death; `wait_for`
+fails on a timeout or an exit. Also `wait_for("*", ...)` (any process) and
+`wait_for_in_order()`. Shell mode matches in its reader thread, tmux mode
+reads the `--tee` log; same text rules. See [pytest-plugin.md](pytest-plugin.md).
 
 ## Limits
 

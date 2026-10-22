@@ -95,9 +95,7 @@ then an upload to TestPyPI instead of 3-4.
 
 ## Releases
 
-1. Bump the version (table above); push to `main`.
-2. Optional: the TestPyPI dry run.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+Step by step: [releasing.md](releasing.md).
 
 ## Development
 

@@ -1,9 +1,9 @@
 """Processes a test module needs, started once and watched by the plugin.
 
-    pytest demos/examples/pytest_plugin/test_web.py              # subprocesses
-    pytest demos/examples/pytest_plugin/test_web.py --tmux       # in tmux: attach to watch
-    pytest demos/examples/pytest_plugin/test_web.py --keep-open  # leave them running after
-    lte-session -- pytest -s demos/examples/pytest_plugin        # with the dashboard
+    pytest demos/pytest/basic/test_web.py              # subprocesses
+    pytest demos/pytest/basic/test_web.py --tmux       # in tmux: attach to watch
+    pytest demos/pytest/basic/test_web.py --keep-open  # leave them running after
+    lte-session -- pytest -s demos/pytest/basic        # with the dashboard
 """
 import os
 import sys

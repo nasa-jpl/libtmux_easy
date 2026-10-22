@@ -14,8 +14,9 @@ Linux 6.x); don't re-research them.
 | [output-match.md](output-match.md) | pane output: `capture()` to files, `search_output()`, `watch_output()`, `expect()`, `READY` / `FAIL_ON` |
 | [tmux-defaults.md](tmux-defaults.md) | starter tmux settings for a server with no config; the library's keys (`g`, `Q`) and how to change them |
 | [session-close.md](session-close.md) | every way to stop panes and close a session; `lte-close`, close actions, the close key |
-| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: modes, health checks, hooks |
+| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: options, declaring processes, health and failure, logs, design |
 | [packaging.md](packaging.md) | installs, the `.deb`s, `uv.lock` and when to update it, CI and releases |
+| [releasing.md](releasing.md) | bumping the version and tagging a release |
 | [races.md](races.md) | every race we hit, and the rule that avoids it |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | tmux bugs, limits, open bugs |
 
@@ -30,7 +31,8 @@ drowns test output and whose exit codes miss node death. Requirements:
 4. see everything at once (dashboard);
 5. pytest on top.
 
-The library itself stays generic: nothing ROS-specific outside the demos.
+The library itself stays generic: the ROS parts live in a separate
+project, `lte_launch_test`.
 
 To see the features run, take the tours in `demos/interactive/` (start with
 `demos/interactive/01_session.py`).

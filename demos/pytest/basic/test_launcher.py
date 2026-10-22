@@ -1,8 +1,8 @@
 """Tests that bring their own processes up and down: the 'launcher' fixture.
 
-    pytest demos/examples/pytest_plugin/test_launcher.py
-    pytest demos/examples/pytest_plugin/test_launcher.py --tmux
-    LTE_DEMO_CRASH=1 pytest demos/examples/pytest_plugin/test_launcher.py  # a worker dies
+    pytest demos/pytest/basic/test_launcher.py
+    pytest demos/pytest/basic/test_launcher.py --tmux
+    LTE_DEMO_CRASH=1 pytest demos/pytest/basic/test_launcher.py  # a worker dies
 
 Each test's processes are stopped after it (a clean SIGINT exit, or the
 test errors), and their logs go to the test's tmp_path.

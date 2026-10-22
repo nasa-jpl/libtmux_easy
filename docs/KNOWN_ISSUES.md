@@ -42,6 +42,15 @@
 | A watch keeps its last 1000 matches (`.count` has all) | a callback |
 | `refresh-client -A '%id:off'` (per-pane output filter) segfaults tmux 3.4 with a normal client attached | not used: pipes instead |
 
+## pytest plugin
+
+| limit | workaround |
+|---|---|
+| A restarted process's log: shell mode appends, tmux mode rewrites it | `output()` is the latest start in both |
+| No stdout/stderr split: a pty (tmux) or one pipe (shell) merges them | match on content |
+| The `--tmux` session closes when pytest ends, even on failure | `--keep-open` |
+| `pytest.skip` after an abort reports the plugin's file as its location | the reason names the failed test |
+
 ## Open bugs
 
 - Shell mode, `enter=False`: still probed for `$?`, which submits the

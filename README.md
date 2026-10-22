@@ -1,17 +1,72 @@
 # libtmux-easy
 
-Build tmux sessions from Python and supervise what runs in them:
+Build tmux sessions from Python and monitor/control what runs in them. 
 
-- **exact exit status** for every pane, and an event the moment one exits;
-- panes stay **interactive**: attach, type, Ctrl-C, pdb;
-- a live **dashboard** of every pane;
-- **output** captured to files, searched, and watched for patterns;
-- a **pytest plugin** that launches the processes a test needs and fails
-  the test if one dies.
+## Overview
 
-Linux only.
+Built on top of the `libtmux` library, this library handles common boilerplate when programatically creating a tmux session. The library features fall primarily into a few categories:
+
+1. **Simplify creating a tmux session** - minimal code is required for creating a session. As easy as:
+
+    ```python
+    from libtmux_easy import TmuxSession
+    session = TmuxSession.create("example")
+    session.new_window("work")
+    session.new_pane("shell", cmd="echo 'a plain shell'")
+    session.new_window("play")
+    session.new_pane("top", cmd="top")
+    session.attach()
+    ```
+
+    In this example, we create a session named "example", and then create 2 windows, each with a single pane running a command. Notice that:
+    - Windows and panes get names. `libtmux_easy` requires that windows/panes are named. These names are visible in the tmux session.
+    - The setup is "stateful". E.g. `new_pane()` will be create a new pane in the last window that was created, unless a specific target window is specified.
+
+2. **Process monitoring and control** - each pane tracks the process its command started, not just the pane. From Python you can ask whether that process is running, how it exited, and what it printed, and you can stop or rerun it:
+
+    ```python
+    server = session.new_pane("server", cmd="python3 -m http.server", mode="wrap",
+                              on_exit=lambda status: print(status))
+    session.wait_for_output(server, "Serving HTTP", timeout=5)
+    session.is_running(server)   # True
+    session.stop_pane(server)    # Ctrl-C, escalating if ignored
+    session.exit_status(server)  # exact code, or the signal
+    ```
+
+    Each pane runs in one of three modes: `shell`, `wrap` or `exec`. The mode trades exit-status accuracy against interactivity; `wrap` gives both. See [Pane modes](#pane-modes).
+
+3. **Dashboard** - a TUI that lists every pane by window with the live status of its process. The selected pane is swapped into the viewport on the right. It is the real pane, not a copy, so you can type into it, scroll it or Ctrl-C it. Open it from a script with `session.dashboard()`, or wrap a script/command with `lte-session -- CMD`  to watch the panes it starts.
+
+    In the example below, `servers:clock` is selected and it's pane is swapped into view. We can also immediately see that `jobs:passes` exited 0 and `jobs:fails` exited 1.
+
+    <img src="docs/lte-dash.png" width="600" alt="lte-dash: pane list with statuses on the left, the selected pane on the right">
+
+    See [Dashboard](#dashboard) and [lte-session](#lte-session) for more information.
+
+4. **Pytest integration** - a **pytest plugin** that launches the processes a test needs and fails the test if one dies. A test module declares its processes in a dict, and the `processes` fixture starts them, waits until they are ready, and stops them at teardown:
+
+    ```python
+    # conftest.py
+    pytest_plugins = ["libtmux_easy.testing"]
+
+    # test_web.py
+    PROCESSES = {"servers:web": "python3 -m http.server 8000"}
+    READY = {"servers:web": r"Serving HTTP"}
+
+    def test_serves(processes):
+        ...
+    ```
+
+    - **fails on its own**: a test fails if a process exits early or prints a `FAIL_ON` line, even when the test never checked;
+    - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
+    - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
+
+    See [Testing with pytest](#testing-with-pytest).
+
 
 ## Install
+
+Linux only.
 
 | you want | install |
 |---|---|
@@ -146,6 +201,27 @@ it is fully interactive. `home` shows the script's stdout and logging.
 Needs Textual. Options: `width=`, `initial=pane`, `mouse=`. More:
 [docs/dashboard.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/dashboard.md).
 
+## lte-session
+
+The same dashboard around a command, with no session code of your own:
+
+```bash
+lte-session -- pytest -s tests/      # or any script that starts panes
+lte-session --keep -- ./bringup.py   # stay up after it ends, to inspect panes
+```
+
+- CMD runs in the dashboard's **home** pane: a real terminal, so `print()`,
+  `input()`, pdb and Ctrl-C work. Leaving prints its scrollback in your
+  terminal; the exit code is CMD's.
+- Scripts inside it join the session with `TmuxSession.current()`; their
+  panes appear in the sidebar. The pytest plugin does this for you (dash mode).
+- Inside tmux it switches your client over and back; with no TTY (CI) it
+  follows the transcript.
+- `--name N`, `--width N`, `--no-dash` (home pane only; also the fallback
+  without Textual).
+
+More: [docs/lte-session.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/lte-session.md).
+
 ## Testing with pytest
 
 ```python
@@ -171,11 +247,14 @@ noticed. Teardown stops them, and errors unless each exited 0 on SIGINT.
 | `tmux` | wrap panes in a detached session | kept on failure (`--lte-keep`) |
 | `dash` | panes in `lte-session`'s session and dashboard | kept with `lte-session --keep` |
 
-Default: dash under lte-session, else shell; `--tmux` for tmux.
+Default: dash under lte-session, else shell. `--tmux` reruns pytest under
+`lte-session` and attaches: the dashboard, test output in the home pane
+(`--no-attach`: a detached tmux session).
 `--keep-open` never stops processes and leaves the session up. A test can
-start and stop its own with `launcher`. Logs go to pytest's temp dir. Fixtures to
-override, and `tmux_session` for a test's own session:
-[docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
+start and stop its own with `launcher`, and a test class from
+`setup_class` with `new_processes(cls)`. Logs go to pytest's temp dir.
+Demos: [demos/pytest](https://github.com/nasa-jpl/libtmux_easy/blob/main/demos/pytest).
+Reference: [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 
 ## Closing a session
 

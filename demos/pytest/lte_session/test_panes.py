@@ -1,6 +1,6 @@
 """Tests that start their own panes, run under lte-session:
 
-    lte-session -- pytest -s demos/examples/lte_session
+    lte-session -- pytest -s demos/pytest/lte_session
 
 Each test's panes appear in the dashboard while it runs, and stay after it
 as '<test>/<window>', showing how each one ended. -s: input() and pdb work
