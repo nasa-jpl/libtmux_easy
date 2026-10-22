@@ -570,7 +570,7 @@ class TmuxSession(Session):
     def new_pane(
         self,
         name: str,
-        command: str,
+        cmd: str,
         enter: bool = True,
         mode: Optional[str] = None,
         on_exit=None,
@@ -581,18 +581,18 @@ class TmuxSession(Session):
         capture: Union[None, bool, str] = None,
         **pane_kwargs,
     ) -> Pane:
-        """Create a new pane named 'name' and run 'command' in it.
+        """Create a new pane named 'name' and run 'cmd' in it.
 
         mode=None (default) uses the session's default: set_default_mode(),
         shell unless changed.
 
         mode=PANE_MODE_SHELL
-            The pane runs a shell and 'command' is typed into it. The shell
+            The pane runs a shell and 'cmd' is typed into it. The shell
             survives the command, so the pane stays interactive -- you can stop,
             edit and rerun by hand. exit_status() reads the shell's '$?'.
 
         mode=PANE_MODE_EXEC
-            'command' becomes the pane's own process, which lets tmux record its
+            'cmd' becomes the pane's own process, which lets tmux record its
             exit status directly (see exit_status()). The pane has no shell, so it
             cannot be typed into; with remain-on-exit it stays visible after the
             command ends, showing its final output, and respawn_pane() can rerun it.
@@ -657,15 +657,15 @@ class TmuxSession(Session):
         self._pending_capture = capture
         try:
             if mode == PANE_MODE_EXEC:
-                pane = self._new_exec_pane(name, command, before, env, **pane_kwargs)
+                pane = self._new_exec_pane(name, cmd, before, env, **pane_kwargs)
             else:
-                pane = self._new_shell_pane(name, command, before, enter, mode, env,
+                pane = self._new_shell_pane(name, cmd, before, enter, mode, env,
                                             **pane_kwargs)
         finally:
             self._pending_output = self._pending_capture = None
 
         self.pane_modes[pane.id] = mode
-        self.commands[self.get_pane_name(pane)] = [command]
+        self.commands[self.get_pane_name(pane)] = [cmd]
         self.current_pane = pane
 
         if mode == PANE_MODE_WRAP and not enter:
