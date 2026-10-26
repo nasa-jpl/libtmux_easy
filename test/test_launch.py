@@ -78,6 +78,35 @@ class TestLauncher:
                     self.procs.start("inner:p", "sleep 30")
                     assert self.procs.status("inner:p").running
                     print("INNER_OK")
+
+            def build(session):
+                session.new_window("w")
+                session.new_pane("x", "sleep 30")
+
+            class TestBuilt:
+                def test_build(self):
+                    with Processes() as procs:
+                        procs.build(build)
+                        assert procs["w:x"].status().running
+                        assert procs.session.get_window("w").name.endswith("/w")
+                        procs.close(check=False)
+                    print("BUILD_OK")
+
+            class TestScript:
+                def test_adopt(self):
+                    import sys
+                    with Processes() as procs:
+                        [x] = procs.adopt(f"{sys.executable} script.py")
+                        assert x.name == "w:x" and x.status().running
+                        procs.close(check=False)
+                    print("ADOPT_OK")
+        """))
+        (tmp_path / "script.py").write_text(textwrap.dedent("""
+            from libtmux_easy import TmuxSession
+            s = TmuxSession.create("scripted", mode="wrap")
+            s.new_window("w")
+            s.new_pane("x", "sleep 30")
+            s.attach()
         """))
         proc = _launch("--name", "lte-test-launch-e", "--", sys.executable, "-m", "pytest",
                        "-q", "-s", "-p", "no:cacheprovider", "-p", "no:libtmux",
@@ -85,6 +114,7 @@ class TestLauncher:
 
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "INNER_OK" in proc.stdout
+        assert "BUILD_OK" in proc.stdout and "ADOPT_OK" in proc.stdout, proc.stdout
 
 
 @pytest.fixture

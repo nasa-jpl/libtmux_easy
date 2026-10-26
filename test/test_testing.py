@@ -2,6 +2,7 @@
 subprocesses and in a detached tmux session."""
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,11 +45,16 @@ def run(tmp_path):
                               timeout=120)
         out = proc.stdout + proc.stderr
         sessions.extend(re.findall(r"tmux attach -t ([\w-]+)", out))
+        servers.extend(re.findall(r"tmux -S (\S+) attach", out))
         return proc, out
 
+    servers = []
     yield run
     for session in set(sessions):
         subprocess.run(["tmux", "kill-session", "-t", f"={session}"], capture_output=True)
+    for server in set(servers):  # adopt()'s, kept on failure
+        subprocess.run(["tmux", "-S", server, "kill-server"], capture_output=True)
+        shutil.rmtree(Path(server).parents[1], ignore_errors=True)
 
 
 TESTS = """
@@ -525,3 +531,146 @@ def test_features(run, mode):
     assert "w:job: no line matching 'three' after 'one'" in out, out
     assert "warning: no test read --arg unused" in out, out
     assert "ERROR" not in out, out
+
+
+# A session script: build() for Processes.build(); run as it is, for adopt().
+SCRIPT = """
+import sys
+from libtmux_easy import TmuxSession
+CMD = f"{sys.executable} proc.py"
+
+def build(session):
+    session.new_window("sim")
+    session.new_pane("a", CMD)
+    session.wait_for_output("sim:a", "hello_42", timeout=10)  # its own gate
+    session.new_pane("b", CMD, mode="shell")
+    session.new_window("ctl")
+    session.new_pane("job", "echo done; exit 4")
+
+def monitor(session, alert):
+    session.watch_pane("sim:a", on_exit=lambda status: alert(str(status)))
+
+if __name__ == "__main__":
+    session = TmuxSession.create("scripted", mode="wrap")
+    build(session)
+    print("built", flush=True)
+    session.dashboard()   # nothing under LTE_HEADLESS
+    session.attach()      # nor this
+    if "--stay" in sys.argv:
+        import time
+        time.sleep(600)
+"""
+
+BUILD_TESTS = """
+import pytest, script
+from libtmux_easy.testing import Processes
+
+class TestBuild:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.build(script.build, exits={"ctl:job": 4})
+        cls.alerts = []
+        script.monitor(cls.procs.session, cls.alerts.append)
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_names(self):
+        assert self.procs.names == ["sim:a", "sim:b", "ctl:job"]
+        self.procs["sim:b"].wait_for("hello_42")
+        assert "hello_42" in open(self.procs["sim:a"].log()).read()
+
+    def test_monitor_sees_a_kill(self):
+        with self.procs.expect_exit("sim:a"):
+            self.procs["sim:a"].kill()
+        self.procs.wait_until(lambda: self.alerts, timeout=5)
+        assert "signal 9" in self.alerts[0]
+
+    def test_restart(self):
+        self.procs["sim:a"].start()
+        self.procs["sim:a"].wait_for("hello_42")
+
+    def test_names_unique_in_the_class(self):
+        with pytest.raises(ValueError, match="sim:a is taken"):
+            Processes().start("sim:a", "sleep 1")
+
+    def test_job_finished(self):
+        assert self.procs["ctl:job"].wait_for_exit(5).exit_status.code == 4
+"""
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_build(run, mode):
+    proc, out = run(BUILD_TESTS, mode=mode, files={"script.py": SCRIPT})
+    for test in ("test_names", "test_monitor_sees_a_kill", "test_restart",
+                 "test_names_unique_in_the_class", "test_job_finished"):
+        assert f"PASSED test_inner.py::TestBuild::{test}" in out, out
+    assert "ERROR" not in out.split("short test summary")[-1], out
+
+
+ADOPT_TESTS = """
+import sys
+from libtmux_easy.testing import Processes
+
+class TestAdopt:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.panes = cls.procs.adopt(f"{sys.executable} script.py", exits={"ctl:job": 4})
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_names(self):
+        assert [p.name for p in self.panes] == ["sim:a", "sim:b", "ctl:job"]
+        assert "built" in self.procs.output("script")
+        self.procs["sim:b"].wait_for("hello_42")
+        assert self.procs["ctl:job"].wait_for_exit(5).exit_status.code == 4
+
+    def test_kill(self):
+        with self.procs.expect_exit("sim:a"):
+            self.procs["sim:a"].kill()
+        assert self.procs["sim:a"].status().exit_status.signal == 9
+
+    def test_shell_pane_stops(self):
+        assert not self.procs["sim:b"].stop().running
+
+class TestStays:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
+        cls.procs.adopt(f"{sys.executable} script.py --stay", ready="built",
+                        exits={"ctl:job": 4})
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_script_runs(self):
+        assert self.procs["script"].status().running
+
+class TestDies:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.adopt(f"{sys.executable} script.py")  # ctl:job's exit 4: a death
+
+    def test_job(self):
+        import time; time.sleep(1)
+"""
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_adopt(run, mode):
+    proc, out = run(ADOPT_TESTS, mode=mode, files={"script.py": SCRIPT})
+    assert "PASSED test_inner.py::TestAdopt::test_names" in out, out
+    assert "PASSED test_inner.py::TestAdopt::test_kill" in out, out
+    assert "PASSED test_inner.py::TestAdopt::test_shell_pane_stops" in out, out
+    assert "PASSED test_inner.py::TestStays::test_script_runs" in out, out
+    assert "ERROR test_inner.py::TestStays" not in out, out
+    assert "FAILED test_inner.py::TestDies::test_job" in out, out
+    assert "ctl:job exited 4" in out, out
+    assert "script's session kept: tmux -S" in out, out

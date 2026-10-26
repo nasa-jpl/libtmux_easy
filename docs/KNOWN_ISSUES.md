@@ -53,6 +53,13 @@
 
 ## Open bugs
 
+- `wait_for_output()` on a pane nobody watched or captured from its start
+  can miss a line printed before the call (about 1 in 6: a fresh wrap pane,
+  `http.server`'s first line; also on `main`). The late pipe's `cat` is
+  gone and its file stays empty, though tmux shows the pane piped. Panes
+  piped from creation (`capture=`, `on_output=`, `tee=`, or a watch made
+  first) never miss it (0 in 16).
+
 - Shell mode, `enter=False`: still probed for `$?`, which submits the
   half-typed line. Wrap mode handles it.
 - `PaneStatus.command` is stale after a rerun typed by hand.

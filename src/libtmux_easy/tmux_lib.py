@@ -35,9 +35,13 @@ from .proc import pane_child_processes, pane_process, proc_alive, proc_stat
 from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _WrapRun
 from .wrap import (DIR_OPTION, PIPE_FILE_OPTION as PIPE_FILE, PIPE_FROM_OPTION as PIPE_FROM,
-                   PIPE_ID_OPTION as PIPE_ID, PIPE_TEE_OPTION,
+                   PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_ID_OPTION as PIPE_ID, PIPE_TEE_OPTION,
                    PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION, SOCKET_NAME, guarded_pipe,
                    guarded_unpipe, tmux_literal)
+
+# Set by a test that runs a session script as it is (testing.py, adopt()):
+# attach() and dashboard() do nothing, so the script doesn't block.
+HEADLESS_ENV = "LTE_HEADLESS"
 
 libtmux_version = version.parse(libtmux.__version__)
 
@@ -778,6 +782,9 @@ class TmuxSession(Session):
             self._pending_output = self._pending_capture = None
 
         self.pane_modes[pane.id] = mode
+        # For a process that adopts the session later (see testing.py).
+        _pane_cmd(pane, "set-option", "-p", PANE_NAME_OPTION, name)
+        _pane_cmd(pane, "set-option", "-p", PANE_MODE_OPTION, mode)
         self.commands[self.get_pane_name(pane)] = [cmd]
         self.current_pane = pane
 
@@ -1046,7 +1053,10 @@ class TmuxSession(Session):
         return super().select_window(window.id).select_pane(window.panes[0].id)
 
     def attach(self) -> Session:
-        """Attach this terminal to the session."""
+        """Attach this terminal to the session. Under $LTE_HEADLESS (a test
+        running the script): nothing."""
+        if os.environ.get(HEADLESS_ENV):
+            return None
         try:
             return self.attach_session()
         except DeprecatedError:  # attach_session() deprecated in 0.30.0
@@ -2363,7 +2373,10 @@ class TmuxSession(Session):
         Needs Textual, here or in an installed lte-dash; raises RuntimeError
         with install instructions otherwise. Uses the status file, so one is
         created in the session's control dir if none was configured. Calling
-        it again reuses the open dashboard."""
+        it again reuses the open dashboard. Under $LTE_HEADLESS (a test
+        running the script): nothing; returns None."""
+        if os.environ.get(HEADLESS_ENV):
+            return None
         run = self._tmux_run
         if not self._dash_open():
             launcher = dash.launcher()  # fail before touching the session

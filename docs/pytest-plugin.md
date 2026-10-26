@@ -123,12 +123,63 @@ methods, no decorators, no `yield`.
 | `wait_until(fn, timeout)` | `fn()` until truthy, checking health between calls |
 | `output(name)`, `log(name)`, `status(name)` | what it printed (latest start), its log file, its `PaneStatus` |
 | `check()` | raise if anything died or matched `fail_on` since the last check |
+| `build(fn, ..., exits=)`, `adopt(cmd, ...)` | a session script's processes: see below |
+| `procs["window:pane"]` | its `Process` |
+| `kill(name)` | SIGKILL: a death, unless in `expect_exit` |
+| `with expect_exit(name, timeout=10):` | an exit you cause on purpose (a kill, a bad input) is no death; fails if it hasn't exited by the end |
 
-`Process`, from `start()`: the methods above for its name, without it:
-`stop()`, `wait_for(regex)`, `wait_for_in_order()`, `wait_for_exit()`,
-`output()`, `log()`, `status()`, and `.name`; `start()` starts it again
-with the same command and options. It follows the name, so it stays valid
-after a stop and a new start.
+`Process`, from `start()` or `procs[name]`: the methods above for its name,
+without it: `stop()`, `kill()`, `wait_for(regex)`, `wait_for_in_order()`,
+`wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`; `start()`
+starts it again with the same command and options. It follows the name, so
+it stays valid after a stop and a new start.
+
+## Testing a session script
+
+A session script (a libtmux_easy script that builds a tmux session) is
+like a `ros2 launch` file: it brings a system up. Three ways to test one,
+from most control to least:
+
+| method | the script | the test | demo |
+|---|---|---|---|
+| 1. layout | `panes()` returns `[("window:pane", cmd), ...]`; `main()` lays it out | `start()` each: `ready=`, gates, restarts; any mode | `demos/pytest/script_layout` |
+| 2. build | `build(session)` makes the windows and panes; `main()` adds runtime extras (dashboard, watches) | `procs.build(build)`: the script's own code on a session the plugin controls | `demos/pytest/script_build` |
+| 3. adopt | anything that makes a tmux session, unchanged | `procs.adopt("python3 launch.py")`: run it, watch what it made | `demos/pytest/script_adopt` |
+
+**2. `build(fn, *args, exits=None, **kwargs)`** calls `fn(session, *args,
+**kwargs)`. Each `new_pane()` becomes a process of the group, named by the
+script (`sim:gazebo`), logged from its first byte; windows are
+`<Class>/<window>` in the run's tmux session (always tmux). Panes default
+to wrap mode. `attach()`, `dashboard()` and the kill/close calls do
+nothing; `send_command_before()`, `copy_environment()` and
+`set_default_mode()` apply to the script's windows only. `procs.session`
+is that session, for the script's other functions:
+
+```python
+cls.procs.build(launch.build, port=PORT, exits={"jobs:migrate": 0})
+launch.monitor(cls.procs.session, alert=cls.alerts.append)   # the script's own watches
+with cls.procs.expect_exit("workers:ticker"):
+    cls.procs["workers:ticker"].kill()                       # does monitor() notice?
+```
+
+**3. `adopt(cmd, name="script", ready=None, timeout=60, exits=None)`** runs
+`cmd` as process `name` on a tmux server of its own (`TMUX_TMPDIR`): its
+session names can't clash with yours, and none of it shows in the run's
+dashboard. `LTE_HEADLESS=1` makes `attach()` and `dashboard()` do nothing.
+The script must exit 0 within `timeout`; or, with `ready=`, print a
+matching line, and it stays a process of the group. Then every pane on
+that server is a process, named `window:pane` (`new_pane()`'s name, else
+the pane index). Returns their `Process`es.
+
+| what adopt knows | wrap pane | exec pane | shell pane, plain tmux |
+|---|---|---|---|
+| running, deaths | yes | yes | yes (the shell has children) |
+| exit code | exact (lte-run writes it to `$LTE_RUN_STATUS_DIR`) | exact (tmux; see KNOWN_ISSUES) | unknown; a SIGINT stop counts as clean |
+| output | from the first byte if the script captures (`capture=True`), else the pane's history, then a pipe | same | same |
+| stop | Ctrl-C into the pane, then SIGTERM, SIGKILL | same | same |
+| restart | no | no | no |
+
+On failure the server is kept: `tmux -S <socket> attach`, printed at the end.
 
 Module functions: `check_health()` (every open group), `arg(name,
 default)`, `parametrize(names, values)`.

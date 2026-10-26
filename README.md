@@ -265,6 +265,10 @@ procs:` in the test. Logs go to pytest's temp dir.
 | `--tmux --no-attach` | panes in a detached session, kept on failure | test output; `tmux attach -t ...` |
 | `--keep-open` | as `--tmux`, never stopped | inspect after the run |
 
+To test a session script: `procs.build(launch.build)` runs its
+`build(session)` function, and `procs.adopt("python3 launch.py")` runs an
+unchanged script and adopts the panes it made.
+
 Demos: [demos/pytest](https://github.com/nasa-jpl/libtmux_easy/blob/main/demos/pytest).
 Reference: [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 

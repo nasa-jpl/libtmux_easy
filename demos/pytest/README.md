@@ -71,6 +71,9 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
 | `basic/test_web.py` | the smallest class: one server |
 | `basic/test_tour.py` | staged start, gates, `fail_on`, long tests, logs |
 | `basic/test_per_test.py` | `Processes()` in a test: processes per test, restarts |
+| `script_layout/` | a session script's system as data; the test `start()`s it |
+| `script_build/` | the test runs the script's `build(session)`; also tests its runtime watches |
+| `script_adopt/` | the script run as it is; the test adopts the panes it made |
 | `dashboard/` | with `--tmux -s`: pdb, `input()`, the dashboard (see its docstring) |
 
 ROS 2 (a `launch_test` replacement on this plugin): the separate

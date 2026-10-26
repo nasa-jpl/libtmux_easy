@@ -49,6 +49,9 @@ PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capt
 PIPE_TEE_OPTION = "@lte_pipe_tee"    # pane option: lte-run --tee has the pipe
 PIPE_ID_OPTION = "@lte_pipe_id"      # pane option: new for each pipe (a rerun's same file)
 _PIPE_REQ = "@lte_pipe_req"          # pane options: a pipe request, see guarded_pipe()
+PANE_NAME_OPTION = "@lte_name"      # pane option: its new_pane() name
+PANE_MODE_OPTION = "@lte_mode"      # pane option: its new_pane() mode
+STATUS_DIR_ENV = "LTE_RUN_STATUS_DIR"  # if set: each run's pid and exit, in <dir>/<pane>.json
 
 # When a pane may be piped: not piped, or piped by a capture (it has a file).
 # A capture of the library's, unless lte-run --tee has it; with_tee, either.
@@ -65,6 +68,24 @@ def _on_own_server(pane, commands):
     if not server_pid.isdigit():
         return [part for c in commands for part in (*shlex.split(c), ";")][:-1]
     return ["if", "-F", "-t", pane, f"#{{==:#{{pid}},{server_pid}}}", " ; ".join(commands)]
+
+
+def record_run(**fields):
+    """With $LTE_RUN_STATUS_DIR (a test adopting the session, see
+    testing.py): write this pane's run -- target pid, then how it ended --
+    to <dir>/<pane id>.json, for a process that didn't start it. A file,
+    not a pane option: a tmux call from here loses the command's first
+    output. Best effort."""
+    directory, pane = os.environ.get(STATUS_DIR_ENV), os.environ.get("TMUX_PANE")
+    if not directory or not pane:
+        return
+    path = os.path.join(directory, pane + ".json")
+    try:
+        with open(path + ".tmp", "w") as f:
+            json.dump(fields, f)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
 
 
 def tmux_literal(text):
@@ -474,6 +495,7 @@ def main(argv=None, channel=None):
     channel.send(event="started", version=PROTOCOL_VERSION,
                  pane=os.environ.get("TMUX_PANE"), wrapper_pid=os.getpid(),
                  target_pid=pid, argv=argv, time=time.time())
+    record_run(pid=pid)
 
     for s in _FORWARDED_SIGNALS:
         signal.signal(s, lambda signum, _frame: signal_target(signum, pid))
@@ -497,6 +519,7 @@ def main(argv=None, channel=None):
     if tee is not None:
         tee.finish()  # before 'exited': whoever acts on that reads a whole file
     channel.send(event="exited", target_pid=pid, code=code, signal=sig, time=time.time())
+    record_run(pid=pid, code=code, signal=sig)
 
     if sig is not None:
         # Die the same way, so a calling shell sees a signal death rather than
