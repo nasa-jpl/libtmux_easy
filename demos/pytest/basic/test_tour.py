@@ -1,19 +1,19 @@
 """A tour of the plugin, no ROS: bring a system up once for the class,
 run tests against it, shut it down.
 
-    pytest demos/pytest/basic/test_tour.py -v               # subprocesses, output here
+    pytest demos/pytest/basic/test_tour.py -v               # subprocesses, output in logs
     pytest demos/pytest/basic/test_tour.py -v --tmux        # the dashboard; --no-attach: detached
     pytest demos/pytest/basic/test_tour.py -v --keep-open   # leave it all running after
     LTE_DEMO_CRASH=1 pytest demos/pytest/basic/test_tour.py -v   # a worker dies mid-test
 
 What it shows:
   setup_class      start in stages: a server, a gate (any code), then workers
-  READY / ready=   wait for a line in a process's output before going on
-  FAIL_ON          a line that fails the test (a regex, or a function)
+  ready=           wait for a line in a process's output before going on
+  fail_on          a line that fails the test (a regex, or a function)
   every test       checked after it ran: a death fails it, not a later one
   test_long_run    a long test calling check_health(), so a death fails it
                    within half a second, not at the end
-  launcher         a process just one test needs, stopped after it
+  Processes()      in a test: a process just that test needs, stopped after it
   teardown_class   close(): stop everything, fail unless each exits 0 on SIGINT
   logs             each process's output in a file: 'process logs:' at the end
 """
@@ -23,7 +23,7 @@ import tempfile
 import time
 import urllib.request
 
-from libtmux_easy.testing import check_health, new_processes
+from libtmux_easy.testing import Processes, check_health
 
 PY = sys.executable
 PORT = 8700 + os.getpid() % 500  # two runs at once don't share a port
@@ -45,23 +45,28 @@ def server_answers():
         return False
 
 
+# A line that fails the test: a regex, or a function line -> problem or None.
+FAIL_ON = {
+    "*": r"Traceback",  # any process
+    "workers:w1": lambda line: "w1 is sad" if "sad" in line else None,
+}
+
+
 class TestTour:
-    # Read by new_processes() (a class attribute, else the module's).
-    FAIL_ON = {
-        "*": r"Traceback", # any process
-        "workers:w1": lambda line: "w1 is sad" if "sad" in line else None
-    }
+    # pytest makes a new TestTour for every test: what the tests share goes
+    # on the class (cls.procs), set once in setup_class.
 
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)  # empty; logs in a tmp dir of its own
+        cls.procs = Processes(cls, fail_on=FAIL_ON)  # empty; logs in a tmp dir of its own
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
-        cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
+        # start() returns a handle: cls.web.wait_for(...), cls.web.stop().
+        cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
         # Gate: any code. wait_until() fails at once if something died.
         cls.procs.wait_until(server_answers, timeout=10)
         # Stage 2.
-        for n in range(2):
-            cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0")
+        cls.w0, cls.w1 = (cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0")
+                          for n in range(2))
 
     @classmethod
     def teardown_class(cls):
@@ -71,20 +76,24 @@ class TestTour:
 
     def test_server(self):
         assert server_answers()
-        self.procs.wait_for("servers:web", r'"GET / HTTP/1\.\d" 200')  # its output
+        self.web.wait_for(r'"GET / HTTP/1\.\d" 200')  # its output
 
     def test_output_and_logs(self):
-        self.procs.wait_for("workers:w0", r"tick 5")
-        assert "w0 tick 0" in self.procs.output("workers:w0")
-        assert "w0 tick 0" in open(self.procs.log("workers:w0")).read()
+        self.w0.wait_for(r"tick 5")
+        assert "w0 tick 0" in self.w0.output()
+        assert "w0 tick 0" in open(self.w0.log()).read()
 
     def test_stop_and_restart(self):
-        status = self.procs.stop("workers:w1")  # fails unless it exits 0 on SIGINT
+        status = self.w1.stop()  # fails unless it exits 0 on SIGINT
         assert status.exit_status.ok
-        self.procs.start("workers:w1", worker("w1"), ready=r"tick 0")  # fresh output
+        self.w1.start()  # the same command again; fresh output
 
-    def test_a_process_of_its_own(self, launcher):
-        launcher.start("tools:helper", worker("helper"), ready=r"tick 0")  # stopped after this test
+    def test_a_process_of_its_own(self):
+        # A second group, for this test only: stopped and checked at the end
+        # of the 'with'. The class's processes keep running. Names are
+        # unique within the class: "workers:w0" here would be an error.
+        with Processes() as procs:
+            procs.start("tools:helper", worker("helper"), ready=r"tick 0")
 
     def test_long_run(self):
         """10 s of work. With LTE_DEMO_CRASH=1, the workers die at 3 s."""

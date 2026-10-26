@@ -58,18 +58,26 @@ class TestLauncher:
         finally:
             subprocess.run(["tmux", "kill-session", "-t", "lte-test-launch-d"])
 
-    def test_pytest_fixture_adopts_the_session(self, tmp_path):
+    def test_pytest_plugin_adopts_the_session(self, tmp_path):
         (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
         (tmp_path / "test_inner.py").write_text(textwrap.dedent("""
             import os
+            from libtmux_easy.testing import Processes
 
-            def test_adopted(tmux_session):
-                assert os.environ.get("TMUX_PANE")
-                assert tmux_session._adopted
-                tmux_session.new_window("inner")
-                pane = tmux_session.new_pane("p", "sleep 30", mode="wrap")
-                assert tmux_session.is_running(pane)
-                print("INNER_OK")
+            class TestAdopted:
+                @classmethod
+                def setup_class(cls):
+                    cls.procs = Processes(cls)
+
+                @classmethod
+                def teardown_class(cls):
+                    cls.procs.close(check=False)
+
+                def test_adopted(self):
+                    assert os.environ.get("TMUX_PANE")
+                    self.procs.start("inner:p", "sleep 30")
+                    assert self.procs.status("inner:p").running
+                    print("INNER_OK")
         """))
         proc = _launch("--name", "lte-test-launch-e", "--", sys.executable, "-m", "pytest",
                        "-q", "-s", "-p", "no:cacheprovider", "-p", "no:libtmux",

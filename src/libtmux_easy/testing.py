@@ -4,98 +4,40 @@ Enable it in conftest.py:
 
     pytest_plugins = ["libtmux_easy.testing"]
 
-A test module says what to launch, as 'window:name' -> command:
+A test class brings its processes up in setup_class and down in
+teardown_class:
 
-    PROCESSES = {"servers:web": "python3 -m http.server 8000"}
-
-    READY = {"servers:web": r"Serving HTTP"}       # optional: wait for these
-    FAIL_ON = {"*": [r"Traceback", r"ERROR"]}      # optional: a match fails the test
-
-    def test_serves(processes):
-        ...                      # processes.output("servers:web"), .wait_for(), .check()
-
-The 'processes' fixture (module scope) starts them, and waits for each
-READY line (READY_TIMEOUT, default 30 s). A test fails if one exits before
-teardown, or prints a FAIL_ON line ("*": every process; a regex, or a
-function line -> problem or None), even if the test never noticed. Each
-problem fails one test: the one running. check_health() checks now. Teardown stops them (SIGINT, then SIGTERM, SIGKILL) and
-errors unless each exited 0 on SIGINT; SIGINT_TIMEOUT (default 10 s) is how
-long SIGINT gets.
-
-Or a test class brings up its own, from plain setup/teardown code:
+    from libtmux_easy.testing import Processes, check_health
 
     class TestSystem:
         @classmethod
         def setup_class(cls):
-            cls.procs = new_processes(cls)   # FAIL_ON etc. from the class
+            cls.procs = Processes(cls, fail_on={"*": r"Traceback"})
             cls.procs.start("sim:server", "./server", ready=r"listening")
             cls.procs.wait_until(server_answers)   # any gate
+
         @classmethod
         def teardown_class(cls):
-            cls.procs.close()
+            cls.procs.close()      # fails unless each exits 0 on SIGINT
 
-A test can also bring its own up and down, with the same checks:
+        def test_x(self):
+            with Processes() as procs:   # this test's own, stopped after it
+                procs.start("tools:probe", "./probe")
 
-    def test_restart(launcher):  # function scope; stops what is left after
-        launcher.start("clients:c", "./client", ready=r"connected")
-        launcher.stop("clients:c")   # fails unless it exits 0 on SIGINT
-        launcher.start("clients:c", "./client")   # a stopped name restarts
+A process that dies, or prints a fail_on line, fails the test running
+when it happened. A failed test stops the class's processes at once and
+skips the rest of the class.
 
-More, for any of these:
+Where processes run: subprocesses (default; output to log files,
+--echo PATTERN: also to the terminal), --tmux (the dashboard,
+attached), --tmux --no-attach (a detached tmux session). --keep-open: never
+stop anything. --arg NAME=VALUE: read with arg().
 
-  start(..., exits=0)          a process that finishes on its own; that exit
-                               is no death. wait_for_exit(name) waits for it
-  start(..., stop_codes=...)   exit codes allowed when stopped (default 0;
-                               130: died of SIGINT). EXITS / STOP_CODES =
-                               {name or "*": codes} on the module or class
-  wait_for("*", regex)         a line from any process
-  wait_for_in_order(name, [regex, ...])   lines in that order
-  arg("rate", 10)              --arg rate=20 on the command line (typed
-                               like the default; usable in PROCESSES)
-  @parametrize("rate", [5, 10])   a class, setup to teardown, per value
-                               (cls.rate)
-
-A failed test stops its class's, module's and own processes at once
-(SIGINT, escalating; no shutdown checks), and skips the rest of that
-class or module. A class (or module) can define abort() to bring them down
-its own way first. Not with --keep-open.
-
-Modes (--lte-mode; default auto: dash under lte-session, else shell;
---tmux: dash, rerunning pytest under lte-session in a terminal and
-attaching; --tmux --no-attach, or no terminal: tmux):
-
-  shell  plain subprocesses; output only to their logs (--lte-echo: also
-         to the terminal, prefixed '[name]')
-  tmux   one wrap-mode pane each, in a detached session for the run; only
-         test output in the terminal. Kept on failure (--lte-keep)
-  dash   under lte-session: the panes join its session and dashboard. Kept
-         to inspect with 'lte-session --keep'
-
-Each process's output, as plain text, also goes to a log file under
-pytest's temp dir: '<module>N/<window>.<name>.log' for 'processes', the
-test's tmp_path for 'launcher'. The header and the summary print where.
-Each process gets LTE_LOG_DIR, its log's directory.
-
---keep-open (tmux modes; implies --tmux): processes are never stopped, and
-the session or windows stay up, to look at after the run.
-
-Override these fixtures in conftest.py to adapt it:
-
-  lte_pane_setup     a shell command run before each process, e.g. to
-                     source an environment (panes start a fresh login shell)
-  lte_output_checks  callables (name, output) -> [problem, ...], for deaths
-                     only the output shows, e.g. a child of a launcher
-
-Also 'tmux_session' (function scope, tmux only): a TmuxSession for the
-test to fill itself; under lte-session its windows are kept, renamed
-'<test>/<window>', unless --lte-close-windows.
-
-Two runs at once don't clash: tmux sessions are 'lte_test_<pid>[-N]', never
-killing one that exists, and windows '<prefix>#N/...' if '<prefix>/...'
-is taken (another run in lte-session's session, or kept windows).
+Reference: docs/pytest-plugin.md.
 """
 
 import contextlib
+import fnmatch
 import os
 import re
 import shutil
@@ -114,29 +56,22 @@ from .status import ExitStatus, PaneStatus
 from .tmux_lib import PANE_MODE_WRAP, TmuxSession, _pane_cmd
 from .wrap import plain_line
 
-MODES = ("shell", "tmux", "dash")
-
 
 def pytest_addoption(parser):
     group = parser.getgroup("libtmux_easy")
-    group.addoption("--lte-mode", choices=("auto",) + MODES, default="auto",
-                    help="where 'processes' run (default: auto)")
     group.addoption("--tmux", action="store_true",
-                    help="run 'processes' in tmux and attach: pytest reruns under lte-session, "
+                    help="run processes in tmux and attach: pytest reruns under lte-session, "
                          "in the dashboard's home pane")
     group.addoption("--no-attach", action="store_true",
-                    help="with --tmux: a detached tmux session instead (tmux attach to watch)")
+                    help="as --tmux, in a detached tmux session instead (tmux attach to watch)")
     group.addoption("--keep-open", action="store_true",
                     help="never stop processes; leave the tmux session up (implies --tmux)")
-    group.addoption("--lte-keep", choices=("failure", "always", "never"), default="failure",
-                    help="tmux mode: when to leave the session up after the run")
     group.addoption("--arg", action="append", default=[], metavar="NAME=VALUE",
                     help="a value for the tests to read with arg(NAME), like launch_test's "
                          "NAME:=VALUE (repeatable)")
-    group.addoption("--lte-echo", action="store_true",
-                    help="shell mode: also print each process's output, prefixed [name]")
-    group.addoption("--lte-close-windows", action="store_true",
-                    help="close each test's tmux windows after it, even under lte-session")
+    group.addoption("--echo", action="append", default=[], metavar="PATTERN",
+                    help="subprocesses: also print the output of those whose 'window:name' "
+                         "matches, prefixed [name]; '*' for all (repeatable)")
 
 
 def under_lte_session() -> bool:
@@ -145,12 +80,15 @@ def under_lte_session() -> bool:
     return bool(pane) and bool(option(pane, dash.WINDOW_OPTION))
 
 
+def _wants_tmux(config):
+    return any(config.getoption(o) for o in ("tmux", "no_attach", "keep_open"))
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config):
     """--tmux in a terminal: rerun this pytest under lte-session, as the
     dashboard's home pane, and attach. Its exit status is pytest's."""
-    wants_tmux = config.getoption("tmux") or config.getoption("keep_open")
-    if (not wants_tmux or config.getoption("no_attach") or config.getoption("lte_mode") != "auto"
+    if (not _wants_tmux(config) or config.getoption("no_attach")
             or under_lte_session() or not shutil.which("tmux")):
         return None
     # pytest captures fds 0-2 by now: look at, and exec with, the real ones.
@@ -189,28 +127,29 @@ def pytest_configure(config):
         if not (eq and name):
             raise pytest.UsageError(f"--arg {item}: expected NAME=VALUE")
         _args[name] = value
-    mode = config.getoption("lte_mode")
-    keep_open = config.getoption("keep_open")
-    if mode == "auto":
-        tmux = config.getoption("tmux") or keep_open
-        mode = "dash" if under_lte_session() else "tmux" if tmux else "shell"
-    elif mode == "dash" and not under_lte_session():
-        raise pytest.UsageError("--lte-mode=dash needs lte-session: lte-session -- pytest ...")
-    if mode == "shell" and keep_open:
-        raise pytest.UsageError("--keep-open needs tmux: subprocesses can't outlive pytest")
-    if mode == "tmux" and not shutil.which("tmux"):
-        raise pytest.UsageError("--lte-mode=tmux: tmux is not installed")
+    # Under lte-session: its session and dashboard. Else --tmux & co: a
+    # detached session ('--tmux' in a terminal reran pytest under
+    # lte-session already). Else subprocesses.
+    if under_lte_session():
+        mode = "dash"
+    elif _wants_tmux(config):
+        if not shutil.which("tmux"):
+            raise pytest.UsageError("--tmux: tmux is not installed")
+        mode = "tmux"
+    else:
+        mode = "subprocess"
     config.lte_mode = mode
-    config.lte_keep_open = keep_open
+    config.lte_keep_open = config.getoption("keep_open")
     config.lte_session = None  # the run's TmuxSession, made on first use
     config.lte_session_name = (_free_session_name(f"lte_test_{os.getpid()}")
                                if mode == "tmux" else None)
     config.lte_kept = False
     config.lte_log_dirs = []
-    # The real terminal, for shell mode's --lte-echo: pytest captures fd 1
-    # during tests, but not here.
+    config.lte_echo = config.getoption("echo")
+    # The real terminal, for --echo: pytest captures fd 1 during tests,
+    # but not here.
     config.lte_tty = (os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
-                      if config.getoption("lte_echo") else None)
+                      if config.lte_echo else None)
 
 
 def _free_session_name(base):
@@ -232,8 +171,8 @@ def pytest_report_header(config):
 
 
 def _run_session(config):
-    # Processes get pytest's environment, as in shell mode: the tmux server's
-    # may predate an activated venv or a sourced workspace.
+    # Processes get pytest's environment, as subprocesses do: the tmux
+    # server's may predate an activated venv or a sourced workspace.
     if config.lte_session is None:
         config.lte_session = (TmuxSession.current(env=os.environ) if config.lte_mode == "dash"
                               else TmuxSession.create(config.lte_session_name, kill_existing=False,
@@ -244,14 +183,12 @@ def _run_session(config):
 def pytest_sessionfinish(session, exitstatus):
     config = session.config
     for procs in list(_open):  # never closed: don't leave them running
-        _open.remove(procs)
-        if not procs.keep_open:
-            procs.shutdown()
+        procs.close(check=False)
     tmux = getattr(config, "lte_session", None)
     if tmux is None:
         return
-    keep = "always" if config.lte_keep_open else config.getoption("lte_keep")
-    if config.lte_mode == "dash" or keep == "always" or (keep == "failure" and exitstatus):
+    # A detached session is kept on failure, to attach and look.
+    if config.lte_mode == "dash" or config.lte_keep_open or exitstatus:
         tmux.release(keep_windows=True)
         config.lte_kept = config.lte_mode == "tmux"
     else:
@@ -266,7 +203,7 @@ def arg(name, default=None):
     """The value of --arg NAME=VALUE, converted to the type of 'default'
     if one is given (bools take 1/0, true/false, yes/no). Without the
     option: 'default', or a usage error if there is none. Usable at
-    import time, e.g. in PROCESSES."""
+    import time."""
     _args_read.add(name)
     if name not in _args:
         if default is None:
@@ -312,8 +249,9 @@ def _unique_prefix(session, prefix):
 
 class _TmuxBackend:
     """Each process in a wrap-mode pane; one window per 'window' group, named
-    '<prefix>/<window>' so fixtures sharing the session don't clash. A
-    restart gets a new pane, '<name>~N', next to the old one's output."""
+    '<prefix>/<window>' so classes sharing the session don't clash. All
+    groups of a class share one. A restart gets a new pane, '<name>~N',
+    next to the old one's output."""
 
     def __init__(self, session, prefix):
         self.session = session
@@ -326,7 +264,7 @@ class _TmuxBackend:
     def start(self, name, command, setup, on_exit, on_line=None, log=None):
         window, _, pane_name = name.partition(":")
         full_window = f"{self.prefix}/{window}"
-        if window not in self.windows:
+        if window not in self.windows:  # this class's: its groups share this backend
             self.session.new_window(full_window)
             self.session.send_command_before(setup, window=full_window)
             self.windows.add(window)
@@ -365,8 +303,8 @@ class _TmuxBackend:
     def stop(self, name, sigint_timeout):
         self.session.stop_pane(self.panes[name], sigint_timeout=sigint_timeout)
 
-    def stop_all(self, sigint_timeout):
-        _parallel(self.stop, [n for n, p in self.panes.items() if self.session.is_running(p)],
+    def stop_all(self, names, sigint_timeout):
+        _parallel(self.stop, [n for n in names if self.session.is_running(self.panes[n])],
                   sigint_timeout)
 
     def status(self, name):
@@ -481,19 +419,21 @@ class _Subprocess:
         self.waiter.join(1)  # on_exit has fired
 
 
-class _ShellBackend:
-    """Plain subprocesses, their output in their logs ('tty': and there).
-    A restart replaces the old one."""
+class _SubprocessBackend:
+    """Plain subprocesses, their output in their logs; also on 'tty' for
+    names matching an 'echo' pattern. A restart replaces the old one."""
 
-    def __init__(self, tty):
+    def __init__(self, tty, echo):
         self.tty = tty
+        self.echo = echo
         self.lock = threading.Lock()
         self.procs = {}
 
     def start(self, name, command, setup, on_exit, on_line=None, log=None):
         if setup:
             command = f"{setup} && {command}"
-        self.procs[name] = _Subprocess(name, command, on_exit, self.tty, self.lock, on_line, log)
+        tty = self.tty if any(fnmatch.fnmatchcase(name, p) for p in self.echo) else None
+        self.procs[name] = _Subprocess(name, command, on_exit, tty, self.lock, on_line, log)
 
     def wait_for(self, name, regex, timeout):
         return self.procs[name].wait_for(regex, timeout)
@@ -507,8 +447,8 @@ class _ShellBackend:
     def stop(self, name, sigint_timeout):
         self.procs[name].stop(sigint_timeout)
 
-    def stop_all(self, sigint_timeout):
-        _parallel(self.stop, list(self.procs), sigint_timeout)
+    def stop_all(self, names, sigint_timeout):
+        _parallel(self.stop, names, sigint_timeout)
 
     def status(self, name):
         return self.procs[name].status()
@@ -541,61 +481,147 @@ def _exit_code(status):
     return e.code if e.code is not None else None if e.signal is None else 128 + e.signal
 
 
+class Process:
+    """One process of a group, as start() returns it: the group's methods
+    for its name, and start() to start it again. It follows the name: still
+    valid after a stop() and a start()."""
+
+    def __init__(self, group, name):
+        self.group = group
+        self.name = name
+
+    def __repr__(self):
+        return f"<Process {self.name}>"
+
+    def start(self):
+        """Start it again: the same command and start() options."""
+        command, options = self.group._commands[self.name]
+        return self.group.start(self.name, command, **options)
+
+    def stop(self, sigint_timeout=None, check=True) -> PaneStatus:
+        return self.group.stop(self.name, sigint_timeout, check)
+
+    def wait_for(self, pattern, timeout=10.0) -> "re.Match":
+        return self.group.wait_for(self.name, pattern, timeout)
+
+    def wait_for_in_order(self, patterns, timeout=10.0) -> list:
+        return self.group.wait_for_in_order(self.name, patterns, timeout)
+
+    def wait_for_exit(self, timeout=10.0) -> PaneStatus:
+        return self.group.wait_for_exit(self.name, timeout)
+
+    def status(self) -> PaneStatus:
+        return self.group.status(self.name)
+
+    def log(self):
+        return self.group.log(self.name)
+
+    def output(self) -> str:
+        return self.group.output(self.name)
+
+
 class Processes:
-    """Processes under test and their health, whatever the mode.
+    """A group of processes under test and their health, in any mode.
 
-    The 'processes' fixture fills one from the module's PROCESSES; the
-    'launcher' fixture gives a test an empty one to start() and stop()."""
+    Make one in setup_class, close() it in teardown_class:
 
-    def __init__(self, backend, commands=None, setup=None, checks=(), fail_on=None,
-                 log_dir=None, ready_timeout=30.0, sigint_timeout=10.0, keep_open=False,
-                 owner=None, exits=None, stop_codes=None):
-        self.backend = backend
-        self.keep_open = keep_open
-        self.owner = owner  # the class or module whose setup made it, for new_processes()
-        self.setup = setup
-        self.names = []
-        self.checks = list(checks)
-        self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
-        self.failed_on = []  # (problem, during a stop) of each FAIL_ON hit
-        self.stopping = False
-        self.log_dir = log_dir
-        self.ready_timeout = ready_timeout
-        self.sigint_timeout = sigint_timeout
+        cls.procs = Processes(cls, fail_on={"*": r"Traceback"})
+
+    or in a test, for that test alone; closed at the end of the 'with', or
+    else after the test:
+
+        with Processes() as procs:
+
+    'owner': the test class; None in a test: that test. A failed test of
+    the owner stops the group at once, after on_abort() if given; a class
+    also skips its remaining tests. Names (window:pane) are unique within a
+    class: across its groups, and its tmux windows are '<Class>/<window>'.
+    'fail_on': {name or "*": a regex, a function line -> problem or None,
+    or a list of them}; a match is a death.
+    'stop_codes': {name or "*": codes} allowed when stopped (default 0; a
+    signal N is 128+N, so 130 allows dying of SIGINT).
+    'sigint_timeout': seconds SIGINT gets before SIGTERM.
+    'log_dir': where the logs go; default a temp dir named after the owner.
+    """
+
+    def __init__(self, owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10.0,
+                 on_abort=None, log_dir=None):
+        if not _plugin:
+            raise RuntimeError("Processes() needs the plugin: "
+                               'pytest_plugins = ["libtmux_easy.testing"] in conftest.py')
+        if owner is None:
+            owner = _plugin.get("item")
+            if owner is None:
+                raise TypeError("Processes() outside a test: in setup_class, Processes(cls)")
+        if isinstance(owner, pytest.Item):
+            self.scope = owner.cls or owner  # whose names and windows it shares
+            test = re.sub(r"[^\w-]", "_", owner.name)
+            prefix = owner.cls.__name__ if owner.cls else test
+            log_name = f"{prefix}.{test}" if owner.cls else test
+        elif isinstance(owner, type):
+            self.scope = owner
+            prefix = log_name = owner.__name__
+        else:
+            raise TypeError(f"Processes(owner): a test class, e.g. Processes(cls) in "
+                            f"setup_class; got {owner!r}")
+        config = _plugin["config"]
+        if log_dir is None:
+            log_dir = _plugin["tmp_path_factory"].mktemp(log_name)
+        if config.lte_mode == "subprocess":
+            self.backend = _SubprocessBackend(config.lte_tty, config.lte_echo)
+        else:
+            if self.scope not in _tmux_backends:
+                _tmux_backends[self.scope] = _TmuxBackend(_run_session(config), prefix)
+            self.backend = _tmux_backends[self.scope]
+        config.lte_log_dirs.append(str(log_dir))
+        self.owner = owner
+        self.prefix = prefix
+        self.log_dir = str(log_dir)
+        self.keep_open = config.lte_keep_open
+        self.setup = _plugin["setup"]
         self.fail_on = {name: [p] if isinstance(p, str) or callable(p) else list(p)
                         for name, p in (fail_on or {}).items()}
-        self.exits = dict(exits or {})  # name -> codes it may finish with (EXITS)
-        self.stop_codes = dict(stop_codes or {})  # name or "*" -> codes when stopped (STOP_CODES)
-        self.aborted = None  # why abort() stopped everything
-        self.fixture = None  # the fixture that made it, if one did
+        self.stop_codes = dict(stop_codes or {})
+        self.sigint_timeout = sigint_timeout
+        self.on_abort = on_abort
+        self.names = []
+        self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
+        self.failed_on = []  # (problem, during a stop) of each fail_on hit
+        self.stopping = False
+        self._aborted = None  # why a failed test stopped everything
         self._runs = {}  # name -> _Run of its latest start
-        self._reported = set()  # output-check problems check() raised
+        self._commands = {}  # name -> (command, start()'s options): for Process.start()
         self._raised_died = self._raised_failed_on = 0  # how many check() raised
         _open.append(self)
-        for name, command in (commands or {}).items():
-            self.start(name, command)
 
-    def start(self, name, command, ready=None, timeout=None, fail_on=(), exits=None,
-              stop_codes=None) -> None:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:  # else the test failed: the plugin stops it, after on_abort()
+            self.close()
+
+    def start(self, name, command, ready=None, timeout=30.0, fail_on=(), exits=None,
+              stop_codes=None) -> Process:
         """Start 'command' as 'window:name' (a name without ':' goes in a
-        window of its own). With 'ready' (a regex), wait for a line matching
-        it, as wait_for() does. 'fail_on': more FAIL_ON patterns for it.
-        'exits': a code (or several) it finishes with on its own, so that
-        exit is no death; wait_for_exit() waits for it. 'stop_codes': the
-        codes it may exit with when stopped (default 0; a signal N is
-        128+N, so 130 allows dying of SIGINT). A stopped name can be
-        started again."""
+        window of its own). With 'ready' (a regex), wait up to 'timeout' s
+        for a line matching it, as wait_for() does. 'fail_on': more fail_on
+        patterns for it. 'exits': a code (or several) it finishes with on
+        its own, so that exit is no death; wait_for_exit() waits for it.
+        'stop_codes': the codes it may exit with when stopped (default: the
+        group's). A stopped name can be started again. Returns its Process."""
+        name = self._name(name)
         if name in self._runs and self.status(name).running:
             raise ValueError(f"{name} is already running")
-        if ":" not in name:
-            name = f"{name}:{name}"
+        if any(name in p._runs for p in _open if p is not self and p.scope is self.scope):
+            raise ValueError(f"{name} is taken: another open Processes of {self.prefix} has it")
         patterns = self.fail_on.get("*", []) + self.fail_on.get(name, [])
         patterns += [fail_on] if isinstance(fail_on, str) or callable(fail_on) else list(fail_on)
-        if exits is None:
-            exits = self.exits.get(name)
         if stop_codes is None:
             stop_codes = self.stop_codes.get(name, self.stop_codes.get("*", 0))
         run = self._runs[name] = _Run(_codes(exits), _codes(stop_codes))
+        self._commands[name] = (command, dict(ready=ready, timeout=timeout, fail_on=fail_on,
+                                               exits=exits, stop_codes=stop_codes))
         if name not in self.names:
             self.names.append(name)
         self.backend.start(name, command, self.setup,
@@ -603,12 +629,13 @@ class Processes:
                            self._on_line(name, [p if callable(p) else re.compile(p) for p in patterns]),
                            self.log(name))
         if ready is not None:
-            self.wait_for(name, ready, self.ready_timeout if timeout is None else timeout)
+            self.wait_for(name, ready, timeout)
+        return Process(self, name)
 
     def stop(self, name, sigint_timeout=None, check=True):
         """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
         With 'check', fail unless SIGINT stopped it, with one of its
-        stop_codes (default 0). Returns its PaneStatus."""
+        stop_codes. Returns its PaneStatus."""
         name = self._name(name)
         run = self._runs[name]
         run.stopping = True
@@ -618,6 +645,34 @@ class Processes:
         if check and not run.finished and not self._clean(status, run):
             raise AssertionError(f"{name} did not stop cleanly: {status}\n    " + self._tail(name))
         return status
+
+    def close(self, check=True):
+        """Stop everything still running (SIGINT, then SIGTERM, SIGKILL).
+        With 'check', fail unless each stopped cleanly: SIGINT was enough,
+        with one of its stop_codes, and no fail_on line while stopping.
+        A second close() does nothing; nor does --keep-open."""
+        if self not in _open:
+            return
+        _open.remove(self)
+        if self.keep_open:
+            return
+        judged = [(name, run) for name, run in self._runs.items()
+                  if not (run.died or run.stopping or run.finished)]
+        self.stopping = True
+        self.backend.stop_all(self.names, self.sigint_timeout)
+        if not check:
+            return
+        unclean = [f"{name}: {status}" for name, run in judged
+                   for status in [self.backend.status(name)]
+                   if not run.finished and not self._clean(status, run)]
+        unclean += [f"while stopping: {what}" for what, late in self.failed_on if late]
+        if unclean:
+            pytest.fail("did not shut down cleanly:\n" + "\n".join(unclean), pytrace=False)
+
+    def _abort(self, why):
+        """A test failed: stop everything now, without checks."""
+        self._aborted = why
+        self.close(check=False)
 
     def _name(self, name):
         return name if ":" in name else f"{name}:{name}"
@@ -658,9 +713,9 @@ class Processes:
                     problem = check(line)
                     what = problem and f"{name}: {problem}"
                 else:
-                    what = check.search(line) and f"{name} printed {line!r} (FAIL_ON {check.pattern!r})"
+                    what = check.search(line) and f"{name} printed {line!r} (fail_on {check.pattern!r})"
                 if what:
-                    what += f" (log: {self.log(name)})" if self.log_dir else ""
+                    what += f" (log: {self.log(name)})"
                     self.failed_on.append((what, self.stopping or self._runs[name].stopping))
         return on_line
 
@@ -712,66 +767,6 @@ class Processes:
             time.sleep(0.1)
         return list(found)
 
-    def status(self, name) -> PaneStatus:
-        return self.backend.status(self._name(name))
-
-    def log(self, name):
-        """The file the process's output goes to, as plain text; None: none."""
-        if self.log_dir is None:
-            return None
-        return os.path.join(self.log_dir, re.sub(r"[^A-Za-z0-9_.-]", ".", self._name(name)) + ".log")
-
-    def output(self, name) -> str:
-        """Everything the process has printed so far (its latest start)."""
-        return self.backend.output(self._name(name))
-
-    def _tail(self, name, lines=8):
-        return "\n    ".join(self.output(name).strip().splitlines()[-lines:])
-
-    def _check_output(self):
-        return [problem for name in self.names for check in self.checks
-                for problem in check(name, self.output(name))]
-
-    def problems(self, new_only=False) -> list:
-        """Deaths, FAIL_ON hits and output-check problems; 'new_only': those
-        check() hasn't raised yet."""
-        died = self.died[self._raised_died:] if new_only else self.died
-        failed_on = self.failed_on[self._raised_failed_on:] if new_only else self.failed_on
-        found = [f"{name} {status.exit_status}" + ("" if run.exits is None else
-                                                    f" (expected exit {', '.join(map(str, run.exits))})")
-                 for name, status, run in died]
-        found += [what for what, late in failed_on if not late]
-        found += [p for p in self._check_output() if not (new_only and p in self._reported)]
-        for name, _, _ in died:
-            found.append(f"  last output of {name} ({self.log(name)}):\n    " + self._tail(name))
-        return found
-
-    def check(self):
-        """Raise AssertionError if anything died since the last check() that
-        did. Each problem fails one test: the one it happened in. Runs
-        after every test; call it while waiting to fail fast."""
-        died, failed_on = len(self.died), len(self.failed_on)
-        problems = self.problems(new_only=True)
-        self._raised_died, self._raised_failed_on = died, failed_on
-        if problems:
-            self._reported.update(problems)
-            raise AssertionError("launched process died early:\n" + "\n".join(problems))
-
-    def shutdown(self, sigint_timeout=None) -> list:
-        """Stop everything; return what did not shut down cleanly: needed
-        more than SIGINT, exited with a code not in its stop_codes, or failed
-        an output check. A death, a stop(), or an expected exit was reported
-        already."""
-        judged = [(name, run) for name, run in self._runs.items()
-                  if not (run.died or run.stopping or run.finished)]
-        self.stopping = True
-        self.backend.stop_all(self.sigint_timeout if sigint_timeout is None else sigint_timeout)
-        unclean = [f"{name}: {status}" for name, run in judged
-                   for status in [self.backend.status(name)]
-                   if not run.finished and not self._clean(status, run)]
-        unclean += [f"while stopping: {what}" for what, late in self.failed_on if late]
-        return unclean + [p for p in self._check_output() if p not in self._reported]
-
     def wait_until(self, predicate, timeout=30.0, poll=0.2, what=None):
         """Call predicate() until it returns something true, and return
         that; check() between calls, so a death fails now, not at the
@@ -787,37 +782,45 @@ class Processes:
                                      f"{what or getattr(predicate, '__name__', 'a condition')}")
             time.sleep(poll)
 
-    def abort(self, why="aborted"):
-        """Stop everything now (SIGINT, then SIGTERM, SIGKILL), without the
-        shutdown checks; later close() calls do nothing. The plugin calls it
-        when a test fails, unless the owner defines abort() (see below)."""
-        if self in _open:
-            _open.remove(self)
-        self.aborted = why
-        if not self.keep_open:
-            self.stopping = True
-            self.backend.stop_all(self.sigint_timeout)
+    def status(self, name) -> PaneStatus:
+        return self.backend.status(self._name(name))
 
-    def close(self):
-        """Stop what is still running (not with --keep-open) and fail if
-        anything did not stop cleanly. Fixtures call it after their tests;
-        call it from teardown_class / teardown_module for new_processes()."""
-        if self not in _open:
-            return
-        _open.remove(self)
-        if self.keep_open:
-            return
-        unclean = self.shutdown()
-        if unclean:
-            pytest.fail("did not shut down cleanly:\n" + "\n".join(unclean), pytrace=False)
+    def log(self, name):
+        """The file the process's output goes to, as plain text."""
+        return os.path.join(self.log_dir, re.sub(r"[^A-Za-z0-9_.-]", ".", self._name(name)) + ".log")
+
+    def output(self, name) -> str:
+        """Everything the process has printed so far (its latest start)."""
+        return self.backend.output(self._name(name))
+
+    def _tail(self, name, lines=8):
+        return "\n    ".join(self.output(name).strip().splitlines()[-lines:])
+
+    def check(self):
+        """Raise AssertionError if anything died, or printed a fail_on line,
+        since the last check(). Each problem fails one test: the one it
+        happened in. Runs after every test; call it while waiting to fail
+        fast."""
+        died = self.died[self._raised_died:]
+        failed_on = self.failed_on[self._raised_failed_on:]
+        self._raised_died, self._raised_failed_on = len(self.died), len(self.failed_on)
+        problems = [f"{name} {status.exit_status}" + ("" if run.exits is None else
+                                                       f" (expected exit {', '.join(map(str, run.exits))})")
+                    for name, status, run in died]
+        problems += [what for what, late in failed_on if not late]
+        for name, _, _ in died:
+            problems.append(f"  last output of {name} ({self.log(name)}):\n    " + self._tail(name))
+        if problems:
+            raise AssertionError("launched process died early:\n" + "\n".join(problems))
 
 
 _open = []  # every Processes not closed yet: what check_health() and the hooks check
+_tmux_backends = {}  # test class (or test) -> the _TmuxBackend its groups share
 
 
 def check_health():
-    """Raise AssertionError if any running Processes saw a death. For
-    helpers deep in test code that weren't handed one, e.g. a polling loop."""
+    """Raise AssertionError if any open Processes saw a death. For helpers
+    deep in test code that weren't handed one, e.g. a polling loop."""
     for procs in list(_open):
         procs.check()
 
@@ -828,142 +831,77 @@ def lte_pane_setup():
     return None
 
 
-@pytest.fixture(scope="session")
-def lte_output_checks():
-    """Callables (name, output) -> list of problems."""
-    return []
-
-
-_plugin = {}  # what new_processes() needs outside a fixture; see _lte_plugin
+_plugin = {}  # what Processes() needs outside a fixture; see _lte_plugin
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _lte_plugin(request, tmp_path_factory, lte_pane_setup, lte_output_checks):
-    """Before any setup_class / setup_module: they can't take fixtures."""
+def _lte_plugin(request, tmp_path_factory, lte_pane_setup):
+    """Before any setup_class: it can't take fixtures."""
     _plugin.update(config=request.config, tmp_path_factory=tmp_path_factory,
-                   setup=lte_pane_setup, checks=lte_output_checks)
+                   setup=lte_pane_setup)
     yield
     _plugin.clear()
 
 
-def _module_name(module):
-    return module.__name__.rpartition(".")[2]
-
-
-def _make_processes(sources, prefix, log_dir, commands=None, owner=None):
-    """A Processes for the run's mode; FAIL_ON, READY_TIMEOUT,
-    SIGINT_TIMEOUT, EXITS and STOP_CODES from the first of 'sources'
-    (class, module) that has it."""
-    config = _plugin["config"]
-    attr = lambda name, default: next((getattr(o, name) for o in sources if hasattr(o, name)),
-                                      default)
-    if config.lte_mode == "shell":
-        backend = _ShellBackend(config.lte_tty)
-    else:
-        backend = _TmuxBackend(_run_session(config), prefix)
-    config.lte_log_dirs.append(str(log_dir))
-    return Processes(backend, commands, _plugin["setup"], _plugin["checks"],
-                     attr("FAIL_ON", None), str(log_dir), attr("READY_TIMEOUT", 30.0),
-                     attr("SIGINT_TIMEOUT", 10.0), config.lte_keep_open, owner,
-                     attr("EXITS", None), attr("STOP_CODES", None))
-
-
-def new_processes(owner) -> Processes:
-    """An empty Processes for setup_class / setup_module to start() into;
-    close() it in teardown_class / teardown_module. 'owner' is the class
-    (or module): its FAIL_ON, READY_TIMEOUT, SIGINT_TIMEOUT apply, then its
-    module's. Logs go to a tmp dir named after it. Every test checks it,
-    as for the fixtures; if setup fails, it is stopped when the class ends."""
-    if not _plugin:
-        raise RuntimeError("new_processes() needs the plugin: "
-                           'pytest_plugins = ["libtmux_easy.testing"] in conftest.py')
-    if isinstance(owner, type):
-        module = sys.modules[owner.__module__]
-        sources, prefix = (owner, module), f"{_module_name(module)}.{owner.__name__}"
-    else:
-        sources, prefix = (owner,), _module_name(owner)
-    return _make_processes(sources, prefix, _plugin["tmp_path_factory"].mktemp(prefix),
-                           owner=owner)
-
-
-@pytest.fixture(scope="module")
-def processes(request, tmp_path_factory):
-    """The module's PROCESSES, started and READY; stopped after its last test."""
-    commands = getattr(request.module, "PROCESSES", None)
-    if not commands:
-        raise pytest.UsageError(f"{request.module.__name__}: no PROCESSES to launch")
-    module = _module_name(request.module)
-    procs = _make_processes((request.module,), module, tmp_path_factory.mktemp(module), commands,
-                            owner=request.module)
-    procs.fixture = "processes"
-    try:
-        for name, pattern in getattr(request.module, "READY", {}).items():
-            procs.wait_for(name, pattern, procs.ready_timeout)
-    except AssertionError as exc:
-        _open.remove(procs)
-        if not procs.keep_open:
-            procs.shutdown()
-        pytest.fail(f"not ready: {exc}", pytrace=False)
-    yield procs
-    procs.close()
-
-
-@pytest.fixture
-def launcher(request, tmp_path):
-    """An empty Processes for the test to start() and stop() its own; what
-    is left running is stopped after the test. Logs go to tmp_path."""
-    prefix = re.sub(r"[^\w-]", "_", f"{_module_name(request.module)}.{request.node.name}")
-    procs = _make_processes((request.cls, request.module) if request.cls else (request.module,),
-                            prefix, tmp_path, owner=request.node)
-    yield procs
-    procs.close()
-
-
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
-    """Fail the test itself, not just teardown, if a process died while it ran."""
-    outcome = yield
+    """Fail the test itself, not just teardown, if a process died while it
+    ran, or one of its own groups doesn't close cleanly. (A failed test's
+    are stopped by pytest_runtest_makereport.) Processes() in the test is
+    owned by it."""
+    _plugin["item"] = item
+    try:
+        outcome = yield
+    finally:
+        _plugin.pop("item", None)
     if outcome.excinfo is None:
         try:
             check_health()
-        except AssertionError as exc:
+            for procs in [p for p in _open if p.owner is item]:
+                procs.close()
+        except (AssertionError, pytest.fail.Exception) as exc:
             outcome.force_exception(exc)
 
 
-_aborted = {}  # owner (class or module) -> (why, the fixture that made its Processes)
+_aborted = {}  # test class -> why its processes were stopped
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """A failed test (or setup) stops its class's, module's and own
-    processes at once: the owner's abort() if it defines one, then
-    Processes.abort(). Not with --keep-open."""
+    """A failed test (or setup) stops its class's and its own processes at
+    once, each group's on_abort() first. Not with --keep-open."""
     report = (yield).get_result()
     if not report.failed or call.when == "teardown" or item.config.lte_keep_open:
         return
-    groups = [p for p in _open if p.owner in (item, item.cls, item.module)]
     why = f"{item.name} failed"
-    for owner in dict.fromkeys(p.owner for p in groups):
-        custom = None if owner is item else getattr(owner, "abort", None)
-        if callable(custom):
+    for procs in [p for p in _open if p.owner in (item, item.cls)]:
+        if procs.on_abort is not None:
             try:
-                custom()
+                procs.on_abort()
             except Exception as exc:  # noqa: BLE001 -- still stop them below
-                item.warn(pytest.PytestWarning(f"{owner.__name__}.abort() raised {exc!r}"))
-    for procs in groups:
-        procs.abort(why)
+                item.warn(pytest.PytestWarning(f"on_abort() raised {exc!r}"))
+        procs._abort(why)
         if procs.owner is not item:
-            _aborted[procs.owner] = (why, procs.fixture)
+            _aborted[procs.owner] = why
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    """Skip what is left of a class or module whose processes were aborted."""
-    for owner in (item.cls, item.module):
-        if owner in _aborted:
-            why, fixture = _aborted[owner]
-            if fixture is None or fixture in item.fixturenames:
-                pytest.skip(f"processes stopped: {why}")
+    """Skip what is left of a class whose processes were aborted."""
+    if item.cls in _aborted:
+        pytest.skip(f"processes stopped: {_aborted[item.cls]}")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """After a class's last test: stop a group its teardown_class didn't
+    close, e.g. because setup_class failed (pytest then skips the teardown)."""
+    yield
+    for procs in [p for p in _open if p.owner is item]:  # e.g. the test never ran
+        procs.close(check=False)
+    if nextitem is None or nextitem.cls is not item.cls:
+        for procs in [p for p in _open if p.owner is item.cls]:
+            procs.close(check=False)
 
 
 def parametrize(argnames, argvalues):
@@ -1007,37 +945,3 @@ class _ParametrizedClass(pytest.Class):
 
     def _getobj(self):
         return self._lte_cls
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_teardown(item, nextitem):
-    """After a class's (or module's) last test: stop a new_processes() its
-    teardown didn't close, e.g. because its setup failed (pytest then skips
-    the teardown)."""
-    yield
-    for procs in [p for p in _open if p.owner in (item.cls, item.module)]:
-        if nextitem is None or procs.owner not in (nextitem.cls, nextitem.module):
-            _open.remove(procs)
-            if not procs.keep_open:
-                procs.shutdown()
-
-
-@pytest.fixture
-def tmux_session(request):
-    if os.environ.get("TMUX_PANE"):
-        session = TmuxSession.current(env=os.environ)
-    else:
-        name = re.sub(r"[^A-Za-z0-9_-]", "_", f"lte_test_{os.getpid()}_{request.node.name}")
-        session = TmuxSession.create(name, kill_existing=False, env=os.environ)
-    try:
-        yield session
-    finally:
-        keep_open = request.config.lte_keep_open
-        if not keep_open:
-            session.stop_all()
-        keep = keep_open or (session._adopted and session._dash_window is not None
-                             and not request.config.getoption("lte_close_windows"))
-        if keep:
-            session.release(keep_windows=True, label=request.node.name)
-        else:
-            session.kill_session()

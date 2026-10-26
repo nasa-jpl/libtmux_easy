@@ -77,17 +77,15 @@ watch follows it), `-a` appends.
 ## pytest plugin
 
 ```python
-READY = {"servers:web": r"Serving HTTP"}  # waited for before the first test
-FAIL_ON = {"*": [r"Traceback"], "servers:web": r"ERROR"}  # a match fails the test
-
-def test_x(processes):
-    port = processes.wait_for("servers:web", r"port (\d+)").group(1)
+cls.procs = Processes(cls, fail_on={"*": [r"Traceback"], "servers:web": r"ERROR"})  # a match fails the test
+cls.procs.start("servers:web", cmd, ready=r"Serving HTTP")   # waits for it
+port = cls.procs.wait_for("servers:web", r"port (\d+)").group(1)
 ```
 
-`READY` errors the fixture with the last output; `FAIL_ON` (a regex or a
+`ready` fails `start()` with the last output; `fail_on` (a regex or a
 function `line -> problem or None`) is recorded like a death; `wait_for`
 fails on a timeout or an exit. Also `wait_for("*", ...)` (any process) and
-`wait_for_in_order()`. Shell mode matches in its reader thread, tmux mode
+`wait_for_in_order()`. Subprocesses match in their reader thread, tmux
 reads the `--tee` log; same text rules. See [pytest-plugin.md](pytest-plugin.md).
 
 ## Limits

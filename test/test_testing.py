@@ -1,5 +1,5 @@
-"""The pytest plugin (libtmux_easy.testing): 'processes' in shell and tmux
-mode, run in an inner pytest."""
+"""The pytest plugin (libtmux_easy.testing), run in an inner pytest, with
+subprocesses and in a detached tmux session."""
 import os
 import re
 import subprocess
@@ -9,116 +9,146 @@ from pathlib import Path
 import pytest
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
+MODES = {"subprocess": [], "tmux": ["--tmux", "--no-attach"]}
 
 # Prints, then runs until SIGINT and exits 0 -- or with 'die', exits 3 first.
 PROC = """
 import sys, time
-print("hello_" + str(6 * 7), flush=True)
 try:
+    print("hello_" + str(6 * 7), flush=True)
     time.sleep(0.5 if "die" in sys.argv else 60)
 except KeyboardInterrupt:
     sys.exit(0)
 sys.exit(3)
 """
 
+
+@pytest.fixture
+def run(tmp_path):
+    """run(tests, *args, mode=, env=): an inner pytest of 'tests' in
+    tmp_path; returns (proc, its output). Kills the tmux sessions it names
+    (kept on failure) afterwards."""
+    sessions = []
+
+    def run(tests, *args, mode="subprocess", env=None, files=None):
+        (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
+        (tmp_path / "proc.py").write_text(PROC)
+        for name, text in (files or {}).items():
+            (tmp_path / name).write_text(text)
+        (tmp_path / "test_inner.py").write_text(tests)
+        full_env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+        full_env.update(env or {}, PYTHONPATH=SRC)
+        proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+                               "-p", "no:libtmux", "-rA", *MODES[mode], *args, "test_inner.py"],
+                              cwd=tmp_path, env=full_env, capture_output=True, text=True,
+                              timeout=120)
+        out = proc.stdout + proc.stderr
+        sessions.extend(re.findall(r"tmux attach -t ([\w-]+)", out))
+        return proc, out
+
+    yield run
+    for session in set(sessions):
+        subprocess.run(["tmux", "kill-session", "-t", f"={session}"], capture_output=True)
+
+
 TESTS = """
 import sys, time
-PROCESSES = {"w:ok": f"{sys.executable} proc.py", "w:other": f"{sys.executable} proc.py %s"}
+from libtmux_easy.testing import Processes
+CMD = f"{sys.executable} proc.py"
 
-def test_output(processes):
-    deadline = time.time() + 5
-    while "hello_42" not in processes.output("w:ok") and time.time() < deadline:
-        time.sleep(0.1)
-    assert "hello_42" in processes.output("w:ok")
-    time.sleep(%s)
+class TestRun:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.start("w:ok", CMD, ready="hello_42")
+        cls.procs.start("w:other", CMD + " %s", ready="hello_42")
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_output(self):
+        self.procs.wait_for("w:ok", "hello_42", timeout=5)
+        time.sleep(%s)
 """
+PASSES = TESTS % ("", 0)
+DIES = TESTS % ("die", 2)
 
 
-def _pytest(tmp_path, mode, die, *args):
-    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-    (tmp_path / "proc.py").write_text(PROC)
-    (tmp_path / "test_inner.py").write_text(TESTS % ("die" if die else "", 2 if die else 0))
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PYTHONPATH"] = SRC
-    return subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           "-p", "no:libtmux", f"--lte-mode={mode}", *args, "test_inner.py"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+@pytest.mark.parametrize("mode", MODES)
+def test_passes_and_shuts_down_cleanly(run, mode):
+    proc, out = run(PASSES, mode=mode)
+    assert proc.returncode == 0, out
+    assert "processes kept" not in out
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_passes_and_shuts_down_cleanly(tmp_path, mode):
-    proc = _pytest(tmp_path, mode, die=False)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "processes kept" not in proc.stdout
+@pytest.mark.parametrize("mode", MODES)
+def test_death_fails_the_test(run, mode):
+    proc, out = run(DIES, mode=mode)
+    assert proc.returncode == 1, out
+    assert "FAILED test_inner.py::TestRun::test_output" in out
+    assert "w:other exited 3" in out
+    if mode == "tmux":
+        session = re.search(r"processes kept: tmux attach -t ([\w-]+)", out)
+        assert session, out  # kept on failure
+        assert subprocess.run(["tmux", "has-session", "-t", session[1]]).returncode == 0
+    else:
+        assert "[w:ok] hello_42" not in out  # output only to the logs
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_death_fails_the_test(tmp_path, mode):
-    proc = _pytest(tmp_path, mode, die=True)
-    session = re.search(r"tmux attach -t ([\w-]+)", proc.stdout)
-    try:
-        assert proc.returncode == 1, proc.stdout + proc.stderr
-        assert "FAILED test_inner.py::test_output" in proc.stdout
-        assert "w:other exited 3" in proc.stdout
-        if mode == "tmux":
-            assert "processes kept" in proc.stdout  # kept on failure
-            assert subprocess.run(["tmux", "has-session", "-t", session[1]]).returncode == 0
-        else:
-            assert "[w:ok] hello_42" not in proc.stdout  # output only to the logs
-    finally:
-        if session:
-            subprocess.run(["tmux", "kill-session", "-t", session[1]], capture_output=True)
-
-
-def test_default_is_shell(tmp_path):
-    proc = _pytest(tmp_path, "auto", False)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "lte mode: shell" in proc.stdout
-    assert "[w:ok] hello_42" not in proc.stdout
-    log_dir = re.findall(r"process logs: (\S+)", proc.stdout)[-1]  # header, then the group's
+def test_default_is_subprocess(run):
+    proc, out = run(PASSES)
+    assert proc.returncode == 0, out
+    assert "lte mode: subprocess" in out
+    assert "[w:ok] hello_42" not in out
+    log_dir = re.findall(r"process logs: (\S+)", out)[-1]  # header, then the group's
     assert open(os.path.join(log_dir, "w.ok.log")).read() == "hello_42\n"
 
 
-def test_echo(tmp_path):
-    proc = _pytest(tmp_path, "shell", False, "--lte-echo")
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "[w:ok] hello_42" in proc.stdout
+def test_echo_all(run):
+    proc, out = run(PASSES, "--echo", "*")
+    assert proc.returncode == 0, out
+    assert "[w:ok] hello_42" in out and "[w:other] hello_42" in out
 
 
-def test_tmux_logs(tmp_path):
-    proc = _pytest(tmp_path, "tmux", False)
-    log_dir = re.search(r"process logs: (\S+)", proc.stdout)[1]
-    assert "hello_42" in open(os.path.join(log_dir, "test_inner0", "w.ok.log")).read()
+def test_echo_some(run):
+    proc, out = run(PASSES, "--echo", "w:o?")
+    assert proc.returncode == 0, out
+    assert "[w:ok] hello_42" in out and "[w:other]" not in out
 
 
-def test_tmux_flag(tmp_path):
-    proc = _pytest(tmp_path, "auto", False, "--tmux")
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "lte mode: tmux" in proc.stdout
+def test_tmux_logs(run):
+    proc, out = run(PASSES, mode="tmux")
+    log_dir = re.search(r"process logs: (\S+)", out)[1]
+    assert "hello_42" in open(os.path.join(log_dir, "TestRun0", "w.ok.log")).read()
 
 
-def test_keep_open_leaves_processes_running(tmp_path):
-    proc = _pytest(tmp_path, "auto", False, "--keep-open")
-    session = re.search(r"tmux attach -t ([\w-]+)", proc.stdout)
-    try:
-        assert proc.returncode == 0, proc.stdout + proc.stderr
-        assert "processes still running" in proc.stdout
-        panes = subprocess.run(["tmux", "list-panes", "-s", "-t", session[1], "-F",
-                                "#{pane_dead} #{pane_current_command}"],
-                               capture_output=True, text=True).stdout
-        assert panes.count("0 ") >= 2 and "python" in panes, panes
-    finally:
-        if session:
-            subprocess.run(["tmux", "kill-session", "-t", session[1]], capture_output=True)
+@pytest.mark.parametrize("flags", [["--tmux"], ["--no-attach"]])
+def test_tmux_without_a_terminal_is_detached(run, flags):
+    proc, out = run(PASSES, *flags)
+    assert proc.returncode == 0, out
+    assert "lte mode: tmux" in out
 
 
-def test_keep_open_needs_tmux(tmp_path):
-    proc = _pytest(tmp_path, "shell", False, "--keep-open")
-    assert proc.returncode == 4, proc.stdout + proc.stderr
-    assert "--keep-open needs tmux" in proc.stderr
+def test_keep_open_leaves_processes_running(run):
+    proc, out = run(PASSES, "--keep-open")
+    assert proc.returncode == 0, out
+    session = re.search(r"processes still running: tmux attach -t ([\w-]+)", out)
+    assert session, out
+    panes = subprocess.run(["tmux", "list-panes", "-s", "-t", session[1], "-F",
+                            "#{pane_dead} #{pane_current_command}"],
+                           capture_output=True, text=True).stdout
+    assert panes.count("0 ") >= 2 and "python" in panes, panes
 
 
-# Ready once it says so; later prints a line FAIL_ON catches.
+def test_tmux_not_installed(run, tmp_path):
+    (tmp_path / "bin").mkdir()
+    proc, out = run(PASSES, "--keep-open", env={"PATH": str(tmp_path / "bin")})
+    assert proc.returncode == 4, out
+    assert "--tmux: tmux is not installed" in out
+
+
+# Ready once it says so; later prints a line fail_on catches.
 SERVER = """
 import sys, time
 print("listening on 8080", flush=True)
@@ -134,96 +164,128 @@ except KeyboardInterrupt:
 
 OUTPUT_TESTS = """
 import sys
-PROCESSES = {"w:srv": f"{sys.executable} srv.py"}
-READY = {"w:srv": %r}
-READY_TIMEOUT = 2
-FAIL_ON = {"*": "BOOM"}
+from libtmux_easy.testing import Processes
 
-def test_ready(processes):
-    assert "listening on 8080" in processes.output("w:srv")
-    assert processes.wait_for("w:srv", r"tick (\\d)").group(1) == "1"
+class TestSrv:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls, fail_on={"*": "BOOM"})
+        cls.procs.start("w:srv", f"{sys.executable} srv.py", ready=%r, timeout=2)
 
-def test_fail_on(processes):
-    processes.wait_for("w:srv", "BOOM")
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_ready(self):
+        assert "listening on 8080" in self.procs.output("w:srv")
+        assert self.procs.wait_for("w:srv", r"tick (\\d)").group(1) == "1"
+
+    def test_fail_on(self):
+        self.procs.wait_for("w:srv", "BOOM")
 """
 
 
-def _pytest_output(tmp_path, mode, ready):
-    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-    (tmp_path / "srv.py").write_text(SERVER)
-    (tmp_path / "test_inner.py").write_text(OUTPUT_TESTS % ready)
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PYTHONPATH"] = SRC
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
-                           "test_inner.py"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
-    return proc, proc.stdout + proc.stderr
-
-
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_ready_wait_for_and_fail_on(tmp_path, mode):
-    proc, out = _pytest_output(tmp_path, mode, r"listening on \d+")
+@pytest.mark.parametrize("mode", MODES)
+def test_ready_wait_for_and_fail_on(run, mode):
+    proc, out = run(OUTPUT_TESTS % r"listening on \d+", mode=mode, files={"srv.py": SERVER})
     assert proc.returncode == 1, out
     assert "1 failed, 1 passed in" in out  # and no teardown error
-    assert "FAILED test_inner.py::test_fail_on" in out
-    assert "w:srv printed 'BOOM' (FAIL_ON 'BOOM')" in out
+    assert "FAILED test_inner.py::TestSrv::test_fail_on" in out
+    assert "w:srv printed 'BOOM' (fail_on 'BOOM')" in out
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_not_ready(tmp_path, mode):
-    proc, out = _pytest_output(tmp_path, mode, "never printed")
+@pytest.mark.parametrize("mode", MODES)
+def test_not_ready(run, mode):
+    proc, out = run(OUTPUT_TESTS % "never printed", mode=mode, files={"srv.py": SERVER})
     assert proc.returncode == 1, out
-    assert "not ready: w:srv printed no line matching 'never printed' within 2s" in out
+    assert "ERROR test_inner.py::TestSrv::test_ready" in out
+    assert "w:srv printed no line matching 'never printed' within 2s" in out
 
 
 # A test of its own processes: start, stop, restart; then a death.
 LAUNCHER_TESTS = """
-import sys
+import sys, time
+import pytest
+from libtmux_easy.testing import Processes
 CMD = f"{sys.executable} proc.py"
 
-def test_start_stop_restart(launcher):
-    launcher.start("w:a", CMD, ready=r"hello_42")
-    launcher.start("w:b", CMD, ready=r"hello_42")   # same window
-    launcher.start("other:c", CMD, ready=r"hello_42")
-    assert launcher.stop("w:a").exit_status.ok      # a clean stop is not a death
-    launcher.start("w:a", CMD, ready=r"hello_42")   # and the name can start again
-    assert launcher.output("w:a").count("hello_42") == 1
-    assert "hello_42" in open(launcher.log("w:a")).read()
+def test_start_stop_restart():
+    procs = Processes()
+    procs.start("w:a", CMD, ready=r"hello_42")
+    procs.start("w:b", CMD, ready=r"hello_42")   # same window
+    procs.start("other:c", CMD, ready=r"hello_42")
+    assert procs.stop("w:a").exit_status.ok      # a clean stop is not a death
+    procs.start("w:a", CMD, ready=r"hello_42")   # and the name can start again
+    assert procs.output("w:a").count("hello_42") == 1
+    assert "hello_42" in open(procs.log("w:a")).read()
 
-def test_with_module_processes(processes, launcher):
-    launcher.start("solo", CMD, ready=r"hello_42")
-    assert "hello_42" in processes.output("m:ok") or processes.wait_for("m:ok", "hello_42")
+def test_handle():
+    procs = Processes()
+    a = procs.start("w:a", CMD, ready=r"hello_42")
+    assert a.name == "w:a" and a.status().running
+    assert a.wait_for(r"hello_([0-9]+)").group(1) == "42"
+    assert "hello_42" in a.output() and "hello_42" in open(a.log()).read()
+    assert a.stop().exit_status.ok and not a.status().running
+    procs.start("w:a", CMD, ready=r"hello_42")   # the handle follows the name
+    assert a.status().running
+    a.stop()
+    a.start()                                       # same command, ready= too
+    assert a.output().count("hello_42") == 1
 
-def test_death(launcher):
-    launcher.start("w:dies", CMD + " die", ready=r"hello_42")
-    import time; time.sleep(2)
+def test_with():
+    with Processes() as procs:
+        a = procs.start("w:a", CMD, ready=r"hello_42")
+    assert not a.status().running                   # closed, and checked, at the end
 
-def test_unclean_stop(launcher):
-    launcher.start("w:a", CMD, ready=r"hello_42")
-    launcher.start("w:stubborn", "trap '' INT; sleep 60")
-    launcher.stop("w:stubborn", sigint_timeout=0.5)
+def test_with_unclean():
+    with Processes(sigint_timeout=0.5) as procs:
+        procs.start("w:stubborn", "trap '' INT; sleep 60")
 
-PROCESSES = {"m:ok": CMD}
+@pytest.fixture
+def made_in_a_fixture():
+    with pytest.raises(TypeError, match="outside a test"):
+        Processes()
+
+def test_outside_a_test(made_in_a_fixture):
+    pass
+
+def test_already_running():
+    procs = Processes()
+    procs.start("solo", CMD, ready=r"hello_42")
+    procs.start("solo", CMD)
+
+def test_death():
+    procs = Processes()
+    procs.start("w:dies", CMD + " die", ready=r"hello_42")
+    time.sleep(2)
+
+def test_fail_on_per_start():
+    procs = Processes()
+    procs.start("w:bad", f"echo BAD; exec {CMD}", fail_on="BAD")
+    time.sleep(1)
+
+def test_unclean_stop():
+    procs = Processes()
+    procs.start("w:a", CMD, ready=r"hello_42")
+    procs.start("w:stubborn", "trap '' INT; sleep 60")
+    procs.stop("w:stubborn", sigint_timeout=0.5)
 """
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_launcher(tmp_path, mode):
-    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-    (tmp_path / "proc.py").write_text(PROC)
-    (tmp_path / "test_inner.py").write_text(LAUNCHER_TESTS)
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PYTHONPATH"] = SRC
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
-                           "-rA", "test_inner.py"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
-    out = proc.stdout + proc.stderr
+@pytest.mark.parametrize("mode", MODES)
+def test_own_processes(run, mode):
+    proc, out = run(LAUNCHER_TESTS, mode=mode)
     assert "PASSED test_inner.py::test_start_stop_restart" in out, out
-    assert "PASSED test_inner.py::test_with_module_processes" in out, out
+    assert "PASSED test_inner.py::test_handle" in out, out
+    assert "PASSED test_inner.py::test_with" in out, out
+    assert "FAILED test_inner.py::test_with_unclean" in out, out
+    assert "PASSED test_inner.py::test_outside_a_test" in out, out
+    assert "FAILED test_inner.py::test_already_running" in out, out
+    assert "solo:solo is already running" in out, out
     assert "FAILED test_inner.py::test_death" in out, out
     assert "w:dies exited 3" in out, out
+    assert "FAILED test_inner.py::test_fail_on_per_start" in out, out
+    assert "w:bad printed 'BAD' (fail_on 'BAD')" in out, out
     assert "FAILED test_inner.py::test_unclean_stop" in out, out
     assert "w:stubborn did not stop cleanly" in out, out
     assert "ERROR" not in out.split("short test summary")[-1], out  # teardowns clean
@@ -243,9 +305,9 @@ def test_concurrent_tmux_runs_dont_clash(tmp_path):
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:libtmux",
              "--tmux", "test_inner.py"], cwd=d, env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True))
-    for run in runs:
-        out = run.communicate(timeout=60)[0]
-        assert run.returncode == 0, out
+    for proc in runs:
+        out = proc.communicate(timeout=60)[0]
+        assert proc.returncode == 0, out
 
 
 class _FakeSession:
@@ -260,19 +322,18 @@ def test_unique_prefix():
     assert _unique_prefix(_FakeSession("module/w"), "mod") == "mod"
 
 
-# setup_class / teardown_class with new_processes(); FAIL_ON functions;
-# wait_until; LTE_LOG_DIR; BASH_ENV not sourced.
+# setup_class / teardown_class; fail_on functions; wait_until; Processes()
+# in a test beside the class's group; LTE_LOG_DIR; BASH_ENV not sourced.
 CLASS_TESTS = """
 import os, sys, time
-from libtmux_easy.testing import check_health, new_processes
+import pytest
+from libtmux_easy.testing import Processes, check_health
 CMD = f"{sys.executable} proc.py"
 
 class TestA:
-    FAIL_ON = {"*": lambda line: "saw BAD" if "BAD" in line else None}
-
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)
+        cls.procs = Processes(cls, fail_on={"*": lambda line: "saw BAD" if "BAD" in line else None})
         cls.procs.start("w:a", CMD, ready=r"hello_42")
         cls.procs.wait_until(lambda: "hello_42" in cls.procs.output("w:a"), timeout=5)
         cls.procs.start("w:env", f"echo dir=$LTE_LOG_DIR bash_env=${{BASH_ENV_RAN:-no}}; exec {CMD}")
@@ -284,6 +345,13 @@ class TestA:
     def test_one(self):
         self.procs.wait_for("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")) + " bash_env=no")
 
+    def test_own_processes(self):
+        procs = Processes()
+        procs.start("w:solo", CMD, ready=r"hello_42")  # the class's window w
+        assert self.procs.status("w:a").running
+        with pytest.raises(ValueError, match="w:a is taken"):
+            procs.start("w:a", CMD)
+
     def test_bad_line(self):
         self.procs.start("w:bad", f"echo BAD; exec {CMD}")
         time.sleep(1)
@@ -294,7 +362,7 @@ class TestA:
 class TestLong:
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)
+        cls.procs = Processes(cls)
 
     @classmethod
     def teardown_class(cls):
@@ -309,7 +377,7 @@ class TestLong:
 class TestSetupFails:
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)
+        cls.procs = Processes(cls)
         cls.procs.start("w:x", CMD)
         cls.procs.start("w:y", CMD, ready="never", timeout=0.5)
 
@@ -323,21 +391,12 @@ def test_after_classes():
 """
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_setup_class(tmp_path, mode):
-    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-    (tmp_path / "proc.py").write_text(PROC)
-    (tmp_path / "test_inner.py").write_text(CLASS_TESTS)
+@pytest.mark.parametrize("mode", MODES)
+def test_setup_class(run, tmp_path, mode):
     (tmp_path / "bash_env").write_text("export BASH_ENV_RAN=yes\n")
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PYTHONPATH"] = SRC
-    env["BASH_ENV"] = str(tmp_path / "bash_env")
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
-                           "-rA", "test_inner.py"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
-    out = proc.stdout + proc.stderr
+    proc, out = run(CLASS_TESTS, mode=mode, env={"BASH_ENV": str(tmp_path / "bash_env")})
     assert "PASSED test_inner.py::TestA::test_one" in out, out
+    assert "PASSED test_inner.py::TestA::test_own_processes" in out, out
     assert "FAILED test_inner.py::TestA::test_bad_line" in out, out
     assert "w:bad: saw BAD" in out, out
     assert "processes stopped: test_bad_line failed" in out, out
@@ -353,36 +412,52 @@ def test_setup_class(tmp_path, mode):
 
 FEATURE_TESTS = """
 import os, sys
-from libtmux_easy.testing import arg, new_processes, parametrize
+import pytest
+from libtmux_easy.testing import Processes, arg, parametrize
 CMD = f"{sys.executable} proc.py"
 RATE = arg("rate", 1)
 
 def test_arg():
     assert RATE == 7 and arg("name", "x") == "x"
 
-def test_exits(launcher):
-    launcher.start("w:job", "echo one; echo two; echo three; exit 4", exits=4)
-    assert launcher.wait_for_exit("w:job").exit_status.code == 4
-    launcher.wait_for_in_order("w:job", ["one", "three"])
-    launcher.wait_for("*", "two")
+def test_owner_is_a_class():
+    with pytest.raises(TypeError, match="a test class"):
+        Processes(sys.modules[__name__])
 
-def test_wrong_exit(launcher):
-    launcher.start("w:job", "echo bye; exit 5", exits=0)
-    launcher.wait_for_exit("w:job")
+def test_exits():
+    procs = Processes()
+    procs.start("w:job", "echo one; echo two; echo three; exit 4", exits=4)
+    assert procs.wait_for_exit("w:job").exit_status.code == 4
+    procs.wait_for_in_order("w:job", ["one", "three"])
+    procs.wait_for("*", "two")
 
-def test_out_of_order(launcher):
-    launcher.start("w:job", f"echo three; echo one; exec {CMD}")
-    launcher.wait_for_in_order("w:job", ["one", "three"], timeout=1)
+def test_wrong_exit():
+    procs = Processes()
+    procs.start("w:job", "echo bye; exit 5", exits=0)
+    procs.wait_for_exit("w:job")
 
-def test_stop_codes(launcher):
-    launcher.start("w:s", "sleep 60", stop_codes=(0, 130))
-    launcher.stop("w:s")
+def test_out_of_order():
+    procs = Processes()
+    procs.start("w:job", f"echo three; echo one; exec {CMD}")
+    procs.wait_for_in_order("w:job", ["one", "three"], timeout=1)
+
+def test_stop_codes():
+    procs = Processes()
+    procs.start("w:s", "sleep 60", stop_codes=(0, 130))
+    procs.stop("w:s")
+
+def test_close_without_checks():
+    procs = Processes()
+    procs.start("w:stubborn", "trap '' INT; sleep 60")
+    procs.sigint_timeout = 0.5
+    procs.close(check=False)
+    assert not procs.status("w:stubborn").running
 
 @parametrize("n", [1, 2])
 class TestParams:
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)
+        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
         cls.procs.start("w:p", f"echo n={cls.n}; exec {CMD}", ready="hello_42")
 
     @classmethod
@@ -392,15 +467,28 @@ class TestParams:
     def test_n(self):
         self.procs.wait_for("w:p", f"n={self.n}")
 
+@parametrize("n", [1, 2])
+class TestParamFails:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.start("w:p", CMD, ready="hello_42")
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_fails_at_1(self):
+        assert self.n == 2
+
+    def test_after(self):
+        pass  # skipped at n=1 only
+
 class TestAbort:
     @classmethod
     def setup_class(cls):
-        cls.procs = new_processes(cls)
+        cls.procs = Processes(cls, on_abort=lambda: open("abort_called", "w").close())
         cls.procs.start("w:a", CMD, ready="hello_42")
-
-    @classmethod
-    def abort(cls):
-        open("abort_called", "w").close()
 
     @classmethod
     def teardown_class(cls):
@@ -420,25 +508,20 @@ def test_after_abort():
 """
 
 
-@pytest.mark.parametrize("mode", ["shell", "tmux"])
-def test_features(tmp_path, mode):
-    (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-    (tmp_path / "proc.py").write_text(PROC)
-    (tmp_path / "test_inner.py").write_text(FEATURE_TESTS)
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    env["PYTHONPATH"] = SRC
-    proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                           "-p", "no:libtmux", f"--lte-mode={mode}", "--lte-keep=never",
-                           "--arg", "rate=7", "--arg", "unused=1", "-rA", "test_inner.py"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
-    out = proc.stdout + proc.stderr
-    for test in ("test_arg", "test_exits", "test_stop_codes", "TestParams[n=1]::test_n",
-                 "TestParams[n=2]::test_n", "test_after_abort"):
+@pytest.mark.parametrize("mode", MODES)
+def test_features(run, mode):
+    proc, out = run(FEATURE_TESTS, "--arg", "rate=7", "--arg", "unused=1", mode=mode)
+    for test in ("test_arg", "test_owner_is_a_class", "test_exits", "test_stop_codes",
+                 "test_close_without_checks", "TestParams[n=1]::test_n",
+                 "TestParams[n=2]::test_n", "TestParamFails[n=2]::test_after",
+                 "test_after_abort"):
         assert f"PASSED test_inner.py::{test}" in out, out
-    for test in ("test_wrong_exit", "test_out_of_order", "TestAbort::test_fails"):
+    for test in ("test_wrong_exit", "test_out_of_order", "TestAbort::test_fails",
+                 "TestParamFails[n=1]::test_fails_at_1"):
         assert f"FAILED test_inner.py::{test}" in out, out
+    assert "processes stopped: test_fails failed" in out, out
+    assert "processes stopped: test_fails_at_1 failed" in out, out
     assert "w:job exited 5 (expected exit 0)" in out, out
     assert "w:job: no line matching 'three' after 'one'" in out, out
-    assert "processes stopped: test_fails failed" in out, out
     assert "warning: no test read --arg unused" in out, out
     assert "ERROR" not in out, out

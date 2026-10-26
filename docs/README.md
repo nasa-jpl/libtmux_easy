@@ -12,10 +12,10 @@ Linux 6.x); don't re-research them.
 | [wrap-mode.md](wrap-mode.md) | `lte-run`: signals and the wrap protocol (public) |
 | [dashboard.md](dashboard.md) | `lte-dash`: swap-pane viewport, state in tmux options, borrowed keys |
 | [lte-session.md](lte-session.md) | running a command as the dashboard's home pane |
-| [output-match.md](output-match.md) | pane output: `capture()` to files, `search_output()`, `watch_output()`, `expect()`, `READY` / `FAIL_ON` |
+| [output-match.md](output-match.md) | pane output: `capture()` to files, `search_output()`, `watch_output()`, `expect()`, the plugin's `ready=` / `fail_on` |
 | [tmux-defaults.md](tmux-defaults.md) | starter tmux settings for a server with no config; the library's keys (`g`, `Q`) and how to change them |
 | [session-close.md](session-close.md) | every way to stop panes and close a session; `lte-close`, close actions, the close key |
-| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: options, declaring processes, health and failure, logs, design |
+| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: options, `Processes`, how a test class runs, health and failure, logs, design |
 | [packaging.md](packaging.md) | installs, the `.deb`s, `uv.lock` and when to update it, CI and releases |
 | [releasing.md](releasing.md) | bumping the version and tagging a release |
 | [races.md](races.md) | every race we hit, and the rule that avoids it |

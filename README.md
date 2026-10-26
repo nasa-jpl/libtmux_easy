@@ -43,21 +43,27 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
 
     See [Dashboard](#dashboard) and [lte-session](#lte-session) for more information.
 
-4. **Pytest integration** - a **pytest plugin** that launches the processes a test needs and fails the test if one dies. A test module declares its processes in a dict, and the `processes` fixture starts them, waits until they are ready, and stops them at teardown:
+4. **Pytest integration** - a **pytest plugin** that launches the processes a test needs and fails the test if one dies. A test class starts them in `setup_class`, waits until they are ready, and stops them in `teardown_class`:
 
     ```python
     # conftest.py
     pytest_plugins = ["libtmux_easy.testing"]
 
     # test_web.py
-    PROCESSES = {"servers:web": "python3 -m http.server 8000"}
-    READY = {"servers:web": r"Serving HTTP"}
+    from libtmux_easy.testing import Processes
 
-    def test_serves(processes):
-        ...
+    class TestWeb:
+        @classmethod
+        def setup_class(cls):
+            cls.procs = Processes(cls)
+            cls.procs.start("servers:web", "python3 -m http.server 8000", ready=r"Serving HTTP")
+
+        @classmethod
+        def teardown_class(cls):
+            cls.procs.close()
     ```
 
-    - **fails on its own**: a test fails if a process exits early or prints a `FAIL_ON` line, even when the test never checked;
+    - **fails on its own**: a test fails if a process exits early or prints a `fail_on` line, even when the test never checked;
     - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
     - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
 
@@ -230,30 +236,35 @@ More: [docs/lte-session.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/d
 pytest_plugins = ["libtmux_easy.testing"]
 
 # test_web.py
-PROCESSES = {"servers:web": "python3 -m http.server 8000"}
-READY = {"servers:web": r"Serving HTTP"}  # optional: wait for it first
-FAIL_ON = {"*": r"Traceback"}             # optional: a match fails the test
+from libtmux_easy.testing import Processes
 
-def test_serves(processes):
-    ...          # processes.output("servers:web"), .wait_for(name, pattern), .check()
+class TestWeb:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls, fail_on={"*": r"Traceback"})   # a match fails the test
+        cls.web = cls.procs.start("servers:web", "python3 -m http.server 8000", ready=r"Serving HTTP")
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()      # errors unless each exits 0 on SIGINT
+
+    def test_serves(self):
+        ...      # self.web.output(), .wait_for(pattern), .stop()
 ```
 
-`processes` (module scope) starts them and waits for `READY`. A test fails
-if a process exits early or prints a `FAIL_ON` line, even if the test never
-noticed. Teardown stops them, and errors unless each exited 0 on SIGINT.
+pytest makes a new instance of the class for every test, so what the tests
+share goes on `cls`. A test fails if a process exits early or prints a
+`fail_on` line, even if the test never noticed; the rest of the class is
+then skipped. A test can start and stop its own: `with Processes() as
+procs:` in the test. Logs go to pytest's temp dir.
 
-| `--lte-mode` | processes run as | after the run |
+| flags | processes run as | you see |
 |---|---|---|
-| `shell` | subprocesses, output prefixed `[name]` | stopped |
-| `tmux` | wrap panes in a detached session | kept on failure (`--lte-keep`) |
-| `dash` | panes in `lte-session`'s session and dashboard | kept with `lte-session --keep` |
+| (none) | subprocesses | test output; process output in the logs (`--echo PATTERN`: here too) |
+| `--tmux` | panes under `lte-session`, attached | the dashboard; test output in the home pane |
+| `--tmux --no-attach` | panes in a detached session, kept on failure | test output; `tmux attach -t ...` |
+| `--keep-open` | as `--tmux`, never stopped | inspect after the run |
 
-Default: dash under lte-session, else shell. `--tmux` reruns pytest under
-`lte-session` and attaches: the dashboard, test output in the home pane
-(`--no-attach`: a detached tmux session).
-`--keep-open` never stops processes and leaves the session up. A test can
-start and stop its own with `launcher`, and a test class from
-`setup_class` with `new_processes(cls)`. Logs go to pytest's temp dir.
 Demos: [demos/pytest](https://github.com/nasa-jpl/libtmux_easy/blob/main/demos/pytest).
 Reference: [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 
