@@ -896,8 +896,10 @@ class TmuxSession(Session):
         early = mode == PANE_MODE_WRAP and enter and not wait_start
         if not early:
             self._wait_shell_ready(pane)
+        # Typed early, a line echoes twice: as it is typed, then at the prompt.
+        echoes = 2 if early else 1
         if before:
-            self._type(pane, before, enter=True)
+            self._type(pane, before, enter=True, echoes=echoes)
             if not early:
                 # Let setup finish, so _capture_target_pids() snapshots the target
                 # command and not the setup command. Uses the any-children test
@@ -910,7 +912,7 @@ class TmuxSession(Session):
                 self._wrap_starting.add(pane.id)
                 self.pane_targets[pane.id] = ()
         if mode == PANE_MODE_WRAP:
-            self._send_wrapped(pane, command, enter)
+            self._send_wrapped(pane, command, enter, echoes)
         else:
             self._type(pane, command, enter)
         return pane
@@ -1147,6 +1149,8 @@ class TmuxSession(Session):
             return False  # pane is gone (e.g. the user typed 'exit')
 
         if self._pane_mode(pane) == PANE_MODE_WRAP:
+            if pane.id in self._wrap_starting:
+                return True  # typed by new_pane(wait_start=False), not reported yet
             run = self._wrap_runs.get(pane.id)
             if run is not None and not run.lost:
                 return run.status is None
@@ -1733,7 +1737,7 @@ class TmuxSession(Session):
         cmds = self.commands.setdefault(name, [command])
         cmds[0] = command
 
-    def _send_wrapped(self, pane, command, enter=True):
+    def _send_wrapped(self, pane, command, enter=True, echoes=1):
         """Type 'command' into a shell pane under lte-run."""
         target = command
         if any(op in command for op in _SHELL_OPERATORS):
@@ -1744,7 +1748,7 @@ class TmuxSession(Session):
         self.pane_modes[pane.id] = PANE_MODE_WRAP
         tee = self._pane_tee.get(pane.id)
         options = f"--tee {shlex.quote(tee)} -- " if tee else ""
-        self._type(pane, f"{_wrap_prefix()} {options}{target}", enter)
+        self._type(pane, f"{_wrap_prefix()} {options}{target}", enter, echoes)
 
     def _wrap_signal(self, pane, sig) -> bool:
         """Ask the pane's lte-run to signal its target. False if there is no
@@ -1790,11 +1794,13 @@ class TmuxSession(Session):
 
     # =============== Output: capture, search, watch ===============
 
-    def _type(self, pane, text, enter=True):
-        """Type 'text' into the pane, noted so its echo isn't taken as output."""
+    def _type(self, pane, text, enter=True, echoes=1):
+        """Type 'text' into the pane, noted so its echo isn't taken as output.
+        Typed before the shell reads it, it echoes twice: 'echoes=2'."""
         self._typed.setdefault(pane.id, collections.deque(maxlen=32)).append(text)
         if self._reader is not None:
-            self._reader.expect_echo(pane.id, text)
+            for _ in range(echoes):
+                self._reader.expect_echo(pane.id, text)
         _type(pane, text, enter)
 
     def _typed_texts(self, pane_id):

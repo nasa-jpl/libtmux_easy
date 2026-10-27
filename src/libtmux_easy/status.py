@@ -59,6 +59,7 @@ class PaneStatus:
     # ended on its own -- including a Ctrl-C typed into the pane.
     stopped: Optional[str] = None
     # Typed by new_pane(wait_start=False); lte-run has not reported yet.
+    # 'running' is True meanwhile: the command is on its way.
     starting: bool = False
 
     @property

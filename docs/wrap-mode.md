@@ -91,7 +91,7 @@ so all rc files run at once. `lte-run` reports the pid, so nothing is lost.
 | `wait_start=True` (default) | 29 s | 29 s |
 | `wait_start=False` | 2.5 s | 2.9 s |
 
-- Status is `starting` until `started` arrives; `wait_started()` waits for
+- Status is `starting` (`is_running()` True) until `started` arrives; `wait_started()` waits for
   all (returns the names still starting). `stop_pane()` waits for it first.
 - The typed line shows twice (once above the rc output). An rc file that
   reads stdin swallows it.

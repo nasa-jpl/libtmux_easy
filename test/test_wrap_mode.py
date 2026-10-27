@@ -255,6 +255,7 @@ class TestWrapMode:
         slow = [session.new_pane(f"p{i}", "sleep 60") for i in range(3)]
         assert time.monotonic() - start < 1.0
         assert session.pane_status(slow[0]).state == "starting"
+        assert session.is_running(slow[0])  # on its way
         assert "starting" in _pane_title(slow[0])
 
         assert session.wait_started(timeout=10) == []
@@ -262,6 +263,19 @@ class TestWrapMode:
         assert _wait_until(lambda: exits)
         assert exits[0].exit_status.code == 3
         assert session.exit_status(quick).code == 3
+
+    def test_wait_start_false_echo_is_not_output(self, make_session, tmp_path):
+        """Typed early, the command echoes twice: neither is output."""
+        rc = tmp_path / "rc"
+        rc.write_text("sleep 0.5\necho from-rc\n")
+        session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
+        lines = []
+        pane = session.new_pane("x", "echo hello; sleep 60",
+                                on_output={"": lambda m: lines.append(m.line)})
+
+        session.wait_for_output(pane, "hello", timeout=10)
+        assert _wait_until(lambda: "hello" in lines)
+        assert [line for line in lines if "lte-run" in line] == []
 
     def test_stop_pane_while_starting(self, make_session, tmp_path):
         rc = tmp_path / "rc"

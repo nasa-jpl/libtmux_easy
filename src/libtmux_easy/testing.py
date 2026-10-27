@@ -180,13 +180,15 @@ def pytest_report_header(config):
 
 def _run_session(config):
     # Processes get pytest's environment, as subprocesses do: the tmux
-    # server's may predate an activated venv or a sourced workspace.
+    # server's may predate an activated venv or a sourced workspace. Panes
+    # don't wait for their shells (wait_start=False): rc files run at once.
     if config.lte_session is None:
         if config.lte_mode != "dash" and config.lte_session_name is None:  # build() without --tmux
             config.lte_session_name = _free_session_name(f"lte_test_{os.getpid()}")
-        config.lte_session = (TmuxSession.current(env=os.environ) if config.lte_mode == "dash"
+        config.lte_session = (TmuxSession.current(env=os.environ, wait_start=False)
+                              if config.lte_mode == "dash"
                               else TmuxSession.create(config.lte_session_name, kill_existing=False,
-                                                   env=os.environ))
+                                                      env=os.environ, wait_start=False))
     return config.lte_session
 
 
@@ -323,6 +325,7 @@ class _TmuxBackend:
         return _read_plain(self.logs[name])
 
     def kill(self, name):
+        self.session.wait_started(self.panes[name], timeout=5.0)  # its pid, once known
         _kill(self.status(name).target_pids)
 
     def stop(self, name, sigint_timeout):

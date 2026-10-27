@@ -224,7 +224,10 @@ drop the overlay.
 - **Backends.** `_SubprocessBackend`: `Popen(["bash", "-c", cmd])` per
   process, a reader thread (plain text, log, `fail_on`, `--echo`) and a
   waiter thread (exit). `_TmuxBackend`: wrap-mode panes (`lte-run --tee
-  <log>`), exit and output watches from `TmuxSession`. `Processes` holds
+  <log>`), exit and output watches from `TmuxSession`. The session has
+  `wait_start=False`: `start()` returns at once and all rc files run in
+  parallel; a process is `starting` until lte-run reports (docs/wrap-mode.md).
+  `Processes` holds
   what is common: names, `_Run` per start (stopping, died, finished),
   deaths, `fail_on` hits, report-once counters.
 - **Reading output.** Subprocess: the reader's lines. tmux: the `--tee`
