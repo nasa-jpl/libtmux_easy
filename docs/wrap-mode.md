@@ -79,6 +79,25 @@ the library's watches and `search_output()` follow it
   the FIFO path are escaped.
 - tmux calls: 2 at the start (check the pipe; pipe plus publish), 1 at the end.
 
+## Fast bringup (`wait_start=False`)
+
+`create(..., mode=PANE_MODE_WRAP, wait_start=False)` (or per pane,
+`new_pane(wait_start=False)`) types each command without waiting for the
+shell, like a tmux shell script: tmux holds the keys until bash reads them,
+so all rc files run at once. `lte-run` reports the pid, so nothing is lost.
+
+| 40 panes, 0.5 s rc | build | all running |
+|---|---|---|
+| `wait_start=True` (default) | 29 s | 29 s |
+| `wait_start=False` | 2.5 s | 2.9 s |
+
+- Status is `starting` until `started` arrives; `wait_started()` waits for
+  all (returns the names still starting). `stop_pane()` waits for it first.
+- The typed line shows twice (once above the rc output). An rc file that
+  reads stdin swallows it.
+- Shell and exec panes ignore it: shell mode needs the shell up to find the
+  command's pid.
+
 ## Details that matter
 
 - The library sets the pane's mode **before** typing the command, or a fast

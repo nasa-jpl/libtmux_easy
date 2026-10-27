@@ -13,7 +13,7 @@ import time
 import psutil
 import pytest
 
-from helpers import pane_text as _pane_text, wait_until as _wait_until
+from helpers import pane_text as _pane_text, title as _pane_title, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
 from libtmux_easy import wrap
 from libtmux_easy.tmux_lib import _wrap_prefix
@@ -241,6 +241,45 @@ class TestWrapMode:
 
         assert _wait_until(lambda: session.pane_status(pane).target_pids != ())
         assert session.wait_for_exit(pane, timeout=5.0).code == 2
+
+    def test_wait_start_false(self, make_session, tmp_path):
+        """Typed before the shell is up: a slow rc file of each pane runs at
+        the same time, and each command once it is done."""
+        rc = tmp_path / "rc"
+        rc.write_text("sleep 1\n")
+        session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
+        exits = []
+
+        start = time.monotonic()
+        quick = session.new_pane("quick", "sh -c 'exit 3'", on_exit=exits.append)
+        slow = [session.new_pane(f"p{i}", "sleep 60") for i in range(3)]
+        assert time.monotonic() - start < 1.0
+        assert session.pane_status(slow[0]).state == "starting"
+        assert "starting" in _pane_title(slow[0])
+
+        assert session.wait_started(timeout=10) == []
+        assert all(session.pane_status(p).state == "running" for p in slow)
+        assert _wait_until(lambda: exits)
+        assert exits[0].exit_status.code == 3
+        assert session.exit_status(quick).code == 3
+
+    def test_stop_pane_while_starting(self, make_session, tmp_path):
+        rc = tmp_path / "rc"
+        rc.write_text("sleep 0.5\n")
+        session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
+        pane = session.new_pane("x", "sleep 60")
+
+        assert session.stop_pane(pane, sigint_timeout=5.0) is True
+        assert session.exit_status(pane).signal == signal.SIGINT
+
+    def test_wait_started_reports_late_panes(self, make_session, tmp_path, caplog):
+        rc = tmp_path / "rc"
+        rc.write_text("exec sleep 60\n")  # never reads what is typed
+        session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
+        session.new_pane("x", "true")
+
+        assert session.wait_started(timeout=0.5) == ["main:x"]
+        assert "lte-run never reported from main:x" in caplog.text
 
     def test_wrap_teardown(self, session):
         directory = session._wrap_dir

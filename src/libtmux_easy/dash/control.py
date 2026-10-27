@@ -51,6 +51,8 @@ def read_status(path):
 
 def describe(entry):
     """(short label, color class) for one status-file entry."""
+    if entry.get("starting"):
+        return "starting", "starting"
     if entry.get("running"):
         return "running", "running"
     stopped = entry.get("stopped")
@@ -71,6 +73,8 @@ def describe(entry):
 
 
 def describe_long(entry):
+    if entry.get("starting"):
+        return "starting: typed, lte-run has not reported yet"
     if entry.get("running"):
         return "running"
     if entry.get("stopped"):

@@ -82,6 +82,7 @@ which stop to use when: [session-close.md](session-close.md).
 | `status()` / `print_status()` | list of `PaneStatus` / a table |
 | status file (`status_file=`) | JSON list of `PaneStatus`, replaced atomically on every transition |
 
-`PaneStatus.state`: running, stopped, ok, failed, unknown. A Ctrl-C typed by
+`PaneStatus.state`: starting (`wait_start=False`, see wrap-mode.md), running,
+stopped, ok, failed, unknown. A Ctrl-C typed by
 hand counts as failed: nothing can tell intent. `ExitStatus.known` is false
 while running or when the status was lost; check it before `.code` / `.ok`.

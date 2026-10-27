@@ -58,11 +58,15 @@ class PaneStatus:
     # had to send, 'SIGINT' / 'SIGTERM' / 'SIGKILL'. None for a run that
     # ended on its own -- including a Ctrl-C typed into the pane.
     stopped: Optional[str] = None
+    # Typed by new_pane(wait_start=False); lte-run has not reported yet.
+    starting: bool = False
 
     @property
     def state(self) -> str:
-        """'running', 'stopped' (by request), 'ok' (exit 0), 'failed', or
-        'unknown'."""
+        """'starting', 'running', 'stopped' (by request), 'ok' (exit 0),
+        'failed', or 'unknown'."""
+        if self.starting:
+            return "starting"
         if self.running:
             return "running"
         if self.stopped:
@@ -72,6 +76,8 @@ class PaneStatus:
         return "failed" if self.exit_status.known else "unknown"
 
     def __str__(self) -> str:
+        if self.starting:
+            return "starting"
         if self.running:
             return "running"
         if self.stopped:

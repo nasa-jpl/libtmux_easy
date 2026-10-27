@@ -77,7 +77,7 @@ terminal's own selection).
 ROW_EXTRA = 4 + 1 + 2
 STATUS_WIDTH = 12
 
-STATUS_COLORS = {"running": "green", "ok": "green", "failed": "red",
+STATUS_COLORS = {"starting": "cyan", "running": "green", "ok": "green", "failed": "red",
                  "stopped": "#e5c847", "unknown": "magenta"}  # hex: the theme maps "yellow" to orange
 
 
@@ -359,12 +359,12 @@ class DashApp(App):
         self._summarize(total)
 
     def _summarize(self, counts):
-        """The top line: running, stopped and failed always; exit 0 and
-        unknown when there are any."""
+        """The top line: running, stopped and failed always; exit 0,
+        starting and unknown when there are any."""
         text = Text()
         for kind, word, always in (("running", "running", True), ("stopped", "stopped", True),
                                    ("failed", "failed", True), ("ok", "ok", False),
-                                   ("unknown", "unknown", False)):
+                                   ("starting", "starting", False), ("unknown", "unknown", False)):
             n = counts.get(kind, 0)
             if n or always:
                 if text:

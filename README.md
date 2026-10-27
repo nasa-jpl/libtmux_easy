@@ -143,13 +143,14 @@ reruns typed by hand).
 
 | method | |
 |---|---|
-| `TmuxSession.create(name, env=None, mode="shell", capture=None, status_file=None, rc="~/.bashrc")` | a new session (replaces one of that name) |
-| `TmuxSession.current(env=None, mode="shell", rc="~/.bashrc")` | adopt the session this process runs in |
+| `TmuxSession.create(name, env=None, mode="shell", capture=None, status_file=None, rc="~/.bashrc", wait_start=True)` | a new session (replaces one of that name) |
+| `TmuxSession.current(env=None, mode="shell", rc="~/.bashrc", wait_start=True)` | adopt the session this process runs in |
 | `new_window(name, layout="tiled", env=None, capture=None)` | a window; the next panes go in it |
-| `new_pane(name, cmd, mode=None, on_exit=None, on_output=None, env=None, capture=None, tee=None)` | a pane running `cmd` |
+| `new_pane(name, cmd, mode=None, on_exit=None, on_output=None, env=None, capture=None, tee=None, wait_start=None)` | a pane running `cmd` |
+| `wait_started(target=None, timeout=30)` | wait for `wait_start=False` panes to start (fast bringup, `docs/wrap-mode.md`) |
 | `send_keys(cmd, target_pane=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
 | `copy_environment(env=None)` | `env` (default `os.environ`) for every later pane |
-| `is_running(pane)`, `exit_status(pane)`, `pane_status(pane)`, `status()`, `print_status()` | state: `ExitStatus` (`.code`, `.signal`, `.ok`), `PaneStatus` (`.state`: running / stopped / ok / failed / unknown) |
+| `is_running(pane)`, `exit_status(pane)`, `pane_status(pane)`, `status()`, `print_status()` | state: `ExitStatus` (`.code`, `.signal`, `.ok`), `PaneStatus` (`.state`: starting / running / stopped / ok / failed / unknown) |
 | `watch_pane(pane, on_exit)`, `wait_for_exit(pane, timeout)` | exit events |
 | `stop_pane(pane)`, `stop_all()` | SIGINT, then SIGTERM, then SIGKILL; `stop_all()` in parallel |
 | `respawn_pane(pane, cmd=None)` | rerun in place, any mode |
