@@ -65,6 +65,19 @@
 - `PaneStatus.command` is stale after a rerun typed by hand.
 - `wait_for_exit()` registers a callback per call; they accumulate on the pane.
 
+`wait_start=False` (fast bringup, docs/wrap-mode.md):
+- `send_command_before()` isn't waited for: the setup line and `lte-run
+  cmd` are typed back to back. bash runs them in order, but `cmd` runs even
+  if the setup failed, and nothing reports the failure.
+- The echo is expected twice for 10 s (`ECHO_TTL`). If the shell was already
+  up, it echoes once, and the spare can hide one real output line ending
+  with the command's text.
+- Dashboard: a `starting` pane whose window closed shows `starting`, not
+  `gone` (`DashApp`, the `kind == "running"` check).
+- `test_testing.py::test_adopt` is flaky (about 1 in 2, either param; also
+  before this change): `sim:a: no line matching 'hello_42' within 10s` in
+  `TestDies`.
+
 ## Running tests
 
 - Don't run two suites (or two tours) at once on the default tmux server:
