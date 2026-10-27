@@ -53,30 +53,15 @@
 
 ## Open bugs
 
-- `wait_for_output()` on a pane nobody watched or captured from its start
-  can miss a line printed before the call (about 1 in 6: a fresh wrap pane,
-  `http.server`'s first line; also on `main`). The late pipe's `cat` is
-  gone and its file stays empty, though tmux shows the pane piped. Panes
-  piped from creation (`capture=`, `on_output=`, `tee=`, or a watch made
-  first) never miss it (0 in 16).
-
 - Shell mode, `enter=False`: still probed for `$?`, which submits the
   half-typed line. Wrap mode handles it.
 - `PaneStatus.command` is stale after a rerun typed by hand.
 - `wait_for_exit()` registers a callback per call; they accumulate on the pane.
-
-`wait_start=False` (fast bringup, docs/wrap-mode.md):
-- `send_command_before()` isn't waited for: the setup line and `lte-run
-  cmd` are typed back to back. bash runs them in order, but `cmd` runs even
-  if the setup failed, and nothing reports the failure.
-- The echo is expected twice for 10 s (`ECHO_TTL`). If the shell was already
-  up, it echoes once, and the spare can hide one real output line ending
-  with the command's text.
-- Dashboard: a `starting` pane whose window closed shows `starting`, not
-  `gone` (`DashApp`, the `kind == "running"` check).
-- `test_testing.py::test_adopt` is flaky (about 1 in 2, either param; also
-  before this change): `sim:a: no line matching 'hello_42' within 10s` in
-  `TestDies`.
+- `send_command_before()`: the command runs even if the setup failed, and
+  nothing reports it (any mode, `wait_start` either way).
+- `wait_start=False`: the echo is expected twice for 10 s (`ECHO_TTL`). If
+  the shell was already up, it echoes once, and the spare can hide one real
+  output line ending with the typed command's text.
 
 ## Running tests
 

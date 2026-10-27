@@ -332,7 +332,7 @@ class DashApp(App):
             counts = {}
             for pane_id, name in zip(pane_ids, names):
                 short, kind = describe(self.entries[pane_id])
-                if pane_id not in self.alive and kind == "running":
+                if pane_id not in self.alive and kind in ("running", "starting"):
                     short, kind = "gone", "unknown"  # its last status was never written
                 counts[kind] = counts.get(kind, 0) + 1
                 total[kind] = total.get(kind, 0) + 1

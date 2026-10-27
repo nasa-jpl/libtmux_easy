@@ -80,6 +80,8 @@ _SHELL_SETTLE = 0.3
 _PLACEHOLDER = "sleep 2147483647"
 # Between the outputs of _show_environments()' commands; no show-environment line.
 _ENV_SEP = "lte:env:sep"
+# After the scrollback _pipe_many(snapshot=) reads with the pipe.
+_SNAPSHOT_SEP = "lte:snapshot:end"
 
 
 def _check_mode(mode: str) -> str:
@@ -1884,8 +1886,12 @@ class TmuxSession(Session):
         or another tool's (tmux has one per pane)."""
         return bool(self._pipe_many({pane.id: path}, quiet))
 
-    def _pipe_many(self, paths, quiet=False) -> set:
-        """_pipe() for {pane id: path}, in one tmux call. The pane ids piped."""
+    def _pipe_many(self, paths, quiet=False, snapshot=None) -> set:
+        """_pipe() for {pane id: path}, in one tmux call. The pane ids piped.
+        'snapshot' (a list, one pane): gets the pane's scrollback (raw
+        capture-pane lines), read in the same call, just before the pipe
+        starts. tmux runs a command list without reading pane output in
+        between, so no line is in neither."""
         if len(paths) == 1:
             pane_id = next(iter(paths))
             infos = {pane_id: self._pipe_info(pane_id)}
@@ -1903,6 +1909,9 @@ class TmuxSession(Session):
             if is_piped and current == path:
                 continue
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            if snapshot is not None:
+                args += ["capture-pane", "-p", "-J", "-S", "-", "-t", pane_id, ";",
+                         "display", "-p", "-t", pane_id, _SNAPSHOT_SEP, ";"]
             # Checked again in tmux, with the pipe: lte-run may pipe it meanwhile.
             args += guarded_pipe(pane_id, _cat_to(path), {
                 PIPE_FILE: path, PIPE_FROM: str(file_size(path)),
@@ -1910,7 +1919,12 @@ class TmuxSession(Session):
             if current and current != path and current.endswith(f".{pane_id}.log"):
                 stale.append(current)
         if args:
-            for line in self._tmux_run(*args[:-1]):
+            out = self._tmux_run(*args[:-1])
+            if snapshot is not None and _SNAPSHOT_SEP in out:
+                end = len(out) - 1 - out[::-1].index(_SNAPSHOT_SEP)  # the last: ours
+                snapshot.extend(out[:end])
+                out = out[end + 1:]
+            for line in out:
                 pane_id, _, ok = line.partition(" ")
                 if pane_id in piped and ok != "1":
                     piped.discard(pane_id)  # lte-run --tee got there first
@@ -1965,7 +1979,8 @@ class TmuxSession(Session):
             return "window", self.resolve_target_window(target)
         raise TypeError(f"not a pane, window or session: {target!r}")
 
-    def capture(self, target=None, path: Optional[str] = None, *, keep: bool = True) -> Capture:
+    def capture(self, target=None, path: Optional[str] = None, *, keep: bool = True,
+                _snapshot: Optional[list] = None) -> Capture:
         """Save the output of a pane, a window or the whole session (None)
         to files: tmux pipes it, raw, from now on. A window or session
         capture also covers panes made in it later, by the library or by
@@ -1976,13 +1991,16 @@ class TmuxSession(Session):
         $TMPDIR/lte_output_<uid>/<session>. 'keep=False' files are deleted
         with the session unless 'keep_output' is set. lte-run --tee takes a
         pane's pipe over for its run. Returns a Capture: path(), mark(),
-        search(), text(), stop(). See docs/output-match.md."""
+        search(), text(), stop(). See docs/output-match.md.
+
+        '_snapshot' (a pane, a list): filled with the pane's scrollback, read
+        with the pipe (see _pipe_many())."""
         kind, obj = self._resolve_scope(target)
         if kind == "pane":
             file = os.path.abspath(path) if path else \
                 os.path.join(self._output_dir(keep), self._log_name(obj))
             cap = Capture(self, obj.id, file, keep)
-            self._pipe(obj, file)
+            self._pipe_many({obj.id: file}, snapshot=_snapshot)
             return cap
         directory = os.path.abspath(path) if path else self._output_dir(keep)
         os.makedirs(directory, exist_ok=True)
@@ -2058,10 +2076,12 @@ class TmuxSession(Session):
             return pattern
         return re.compile(pattern if regex else re.escape(pattern), flags)
 
-    def _scrollback(self, pane):
+    def _scrollback(self, pane, lines=None):
         """What the pane shows and keeps, as plain lines, without the
-        commands typed into it."""
-        for line in _pane_cmd(pane, "capture-pane", "-p", "-J", "-S", "-").stdout:
+        commands typed into it. 'lines': capture-pane's, read already."""
+        if lines is None:
+            lines = _pane_cmd(pane, "capture-pane", "-p", "-J", "-S", "-").stdout
+        for line in lines:
             line = line.rstrip()
             if self._is_output(pane.id, line):
                 yield line
@@ -2151,9 +2171,11 @@ class TmuxSession(Session):
                 raise RuntimeError(f"pane {name or obj.id} is piped by something else "
                                    "(tmux has one pipe per pane): can't watch it")
             if not piped:
-                if since == "start":
-                    scroll = list(self._scrollback(obj))
-                self.capture(obj, keep=False)
+                # The scrollback is read in the same tmux call as the pipe
+                # starts: a line printed between two calls was in neither.
+                snapshot = [] if since == "start" else None
+                self.capture(obj, keep=False, _snapshot=snapshot)
+                scroll = list(self._scrollback(obj, snapshot or ()))
         else:
             target_id = None if kind == "session" else obj.id
             name = None if kind == "session" else obj.name
