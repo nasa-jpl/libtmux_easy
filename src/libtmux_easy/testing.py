@@ -57,7 +57,7 @@ from . import dash
 from ._tmux import option
 from .output import PaneExited
 from .status import ExitStatus, PaneStatus
-from .tmux_lib import HEADLESS_ENV, PANE_MODE_WRAP, TmuxSession, _pane_cmd
+from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, TmuxSession, _pane_cmd
 from .proc import alive, proc_table
 from .wrap import (PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_FILE_OPTION, PIPE_FROM_OPTION,
                    STATUS_DIR_ENV,
@@ -563,10 +563,21 @@ class _AdoptedBackend:
             source = theirs          # where this session's capture began (it appends)
             offset = int(start or 0)
         else:
-            history = self._tmux("capture-pane", "-p", "-J", "-S", "-", "-t", pane_id)
-            with open(log, "w") as f:
-                f.write("".join(line + "\n" for line in _strip_blank_tail(history)))
-            self._tmux("pipe-pane", "-o", "-t", pane_id, f"cat >> {shlex.quote(log)}")
+            # The scrollback and the pipe in one tmux call: tmux reads no pane
+            # output between them, so no line is in neither. The pipe holds
+            # off (tmux buffers) until the log, starting with the scrollback,
+            # exists.
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(log)
+            q = shlex.quote(log)
+            out = self._tmux("capture-pane", "-p", "-J", "-S", "-", "-t", pane_id, ";",
+                             "display", "-p", "-t", pane_id, _SNAPSHOT_SEP, ";",
+                             "pipe-pane", "-o", "-t", pane_id,
+                             f"until [ -e {q} ]; do sleep 0.01; done; exec cat >> {q}")
+            end = len(out) - 1 - out[::-1].index(_SNAPSHOT_SEP) if _SNAPSHOT_SEP in out else len(out)
+            with open(log + ".tmp", "w") as f:
+                f.write("".join(line + "\n" for line in _strip_blank_tail(out[:end])))
+            os.replace(log + ".tmp", log)
             source = log
         self.panes[name] = _AdoptedPane(name, pane_id, mode, source, on_exit, on_line, offset)
         if self.thread is None:
