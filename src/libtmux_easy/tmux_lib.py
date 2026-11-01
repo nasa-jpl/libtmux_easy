@@ -37,6 +37,7 @@ from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _WrapRun
 from .wrap import (DIR_OPTION, PIPE_FILE_OPTION as PIPE_FILE, PIPE_FROM_OPTION as PIPE_FROM,
                    PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_ID_OPTION as PIPE_ID, PIPE_TEE_OPTION,
+                   PIPE_WHOLE_OPTION as PIPE_WHOLE,
                    PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION, SETUP_ENV, SOCKET_NAME, guarded_pipe,
                    guarded_unpipe, tmux_literal)
 
@@ -164,9 +165,10 @@ _PIPE_HOOKS = ("after-split-window[77]", "after-new-window[77]")
 _PIPE_HOOK = (
     'if -F "#{@lte_pipe_next}" { pipe-pane -O "#{E:@lte_pipe_next_cmd}" ; '
     f'set -pF {PIPE_FILE} "#{{@lte_pipe_next}}" ; set -pF {PIPE_FROM} "#{{@lte_pipe_next_from}}" ; '
+    f'set -p {PIPE_WHOLE} 1 ; '
     'set -u @lte_pipe_next ; set -u @lte_pipe_next_cmd ; set -u @lte_pipe_next_from } '
     '{ if -F "#{@lte_pipe}" { pipe-pane -O "#{E:@lte_pipe_cmd}" ; '
-    f'set -pF {PIPE_FILE} "#{{E:@lte_pipe}}" ; set -p {PIPE_FROM} 0 }} }}')
+    f'set -pF {PIPE_FILE} "#{{E:@lte_pipe}}" ; set -p {PIPE_FROM} 0 ; set -p {PIPE_WHOLE} 1 }} }}')
 _PIPE_NAME = "#{s/[^A-Za-z0-9_.-]/_/:window_name}.#{pane_id}.log"  # a pane made by hand
 
 
@@ -2015,7 +2017,7 @@ class TmuxSession(Session):
             # Checked again in tmux, with the pipe: lte-run may pipe it meanwhile.
             args += guarded_pipe(pane_id, _cat_to(path), {
                 PIPE_FILE: path, PIPE_FROM: str(file_size(path)),
-                PIPE_ID: f"lib-{time.monotonic_ns()}"}) + [";"]
+                PIPE_ID: f"lib-{time.monotonic_ns()}", PIPE_WHOLE: ""}) + [";"]  # late
             if current and current != path and current.endswith(f".{pane_id}.log"):
                 stale.append(current)
         if args:

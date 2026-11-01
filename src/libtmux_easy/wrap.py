@@ -53,6 +53,7 @@ PIPE_FILE_OPTION = "@lte_pipe_file"  # pane option: the file the pane's output g
 PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capture began
 PIPE_TEE_OPTION = "@lte_pipe_tee"    # pane option: lte-run --tee has the pipe
 PIPE_ID_OPTION = "@lte_pipe_id"      # pane option: new for each pipe (a rerun's same file)
+PIPE_WHOLE_OPTION = "@lte_pipe_whole"  # pane option: "1" if the library's pipe began at the pane's first byte
 _PIPE_REQ = "@lte_pipe_req"          # pane options: a pipe request, see guarded_pipe()
 PANE_NAME_OPTION = "@lte_name"      # pane option: its new_pane() name
 PANE_MODE_OPTION = "@lte_mode"      # pane option: its new_pane() mode

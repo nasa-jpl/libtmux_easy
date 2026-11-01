@@ -6,28 +6,13 @@ its status.
 """
 import os
 import subprocess
-import sys
-import textwrap
-from pathlib import Path
 
 import pytest
 
 from libtmux_easy import TmuxSession, PANE_MODE_WRAP
 from libtmux_easy import dash
 
-from helpers import wait_until
-
-SRC = str(Path(__file__).resolve().parents[1] / "src")
-
-
-def _launch(*argv, env=None, cwd=None, timeout=60):
-    env = dict(os.environ if env is None else env)
-    for name in ("TMUX", "TMUX_PANE"):
-        env.pop(name, None)
-    env["PYTHONPATH"] = SRC
-    return subprocess.run([sys.executable, "-m", "libtmux_easy.launch", *argv],
-                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                          env=env, cwd=cwd, timeout=timeout)
+from helpers import lte_session as _launch, wait_until
 
 
 def _has_session(name):
@@ -57,64 +42,6 @@ class TestLauncher:
             assert _has_session("lte-test-launch-d")
         finally:
             subprocess.run(["tmux", "kill-session", "-t", "lte-test-launch-d"])
-
-    def test_pytest_plugin_adopts_the_session(self, tmp_path):
-        (tmp_path / "conftest.py").write_text('pytest_plugins = ["libtmux_easy.testing"]\n')
-        (tmp_path / "test_inner.py").write_text(textwrap.dedent("""
-            import os
-            from libtmux_easy.testing import Processes
-
-            class TestAdopted:
-                @classmethod
-                def setup_class(cls):
-                    cls.procs = Processes(cls)
-
-                @classmethod
-                def teardown_class(cls):
-                    cls.procs.close(check=False)
-
-                def test_adopted(self):
-                    assert os.environ.get("TMUX_PANE")
-                    self.procs.start("inner:p", "sleep 30")
-                    assert self.procs.status("inner:p").running
-                    print("INNER_OK")
-
-            def build(session):
-                session.new_window("w")
-                session.new_pane("x", "sleep 30")
-
-            class TestBuilt:
-                def test_build(self):
-                    with Processes() as procs:
-                        procs.build(build)
-                        assert procs["w:x"].status().running
-                        assert procs.session.get_window("w").name.endswith("/w")
-                        procs.close(check=False)
-                    print("BUILD_OK")
-
-            class TestScript:
-                def test_adopt(self):
-                    import sys
-                    with Processes() as procs:
-                        [x] = procs.adopt(f"{sys.executable} script.py")
-                        assert x.name == "w:x" and x.status().running
-                        procs.close(check=False)
-                    print("ADOPT_OK")
-        """))
-        (tmp_path / "script.py").write_text(textwrap.dedent("""
-            from libtmux_easy import TmuxSession
-            s = TmuxSession.create("scripted", mode="wrap")
-            s.new_window("w")
-            s.new_pane("x", "sleep 30")
-            s.attach()
-        """))
-        proc = _launch("--name", "lte-test-launch-e", "--", sys.executable, "-m", "pytest",
-                       "-q", "-s", "-p", "no:cacheprovider", "-p", "no:libtmux",
-                       "test_inner.py", cwd=tmp_path)
-
-        assert proc.returncode == 0, proc.stdout + proc.stderr
-        assert "INNER_OK" in proc.stdout
-        assert "BUILD_OK" in proc.stdout and "ADOPT_OK" in proc.stdout, proc.stdout
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
 
 A `launch_testing` replacement: a test brings up the processes it needs,
 talks to them, and **a process that dies fails the test**. Every process is
-a shell command. Demos: [demos/pytest](../demos/pytest). ROS 2 lives in a
+a shell command. Demos: [demos/pytest](../demos/pytest); tests: `test/pytest/`. ROS 2 lives in a
 separate project, `lte_launch_test`, built on this.
 
 ```python

@@ -55,11 +55,12 @@ import pytest
 
 from . import dash
 from ._tmux import option
-from .output import PaneExited
+from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
 from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, TmuxSession, _pane_cmd
 from .proc import SHELLS, alive, cmdline, comm, proc_table
 from .wrap import (PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_FILE_OPTION, PIPE_FROM_OPTION,
+                   PIPE_TEE_OPTION, PIPE_WHOLE_OPTION,
                    STATUS_DIR_ENV,
                    plain_line, plain_text)
 
@@ -566,12 +567,20 @@ class _AdoptedBackend:
 
     def watch(self, name, pane_id, mode, on_exit, on_line, log):
         piped = self._tmux("display-message", "-p", "-t", pane_id,
-                           f"#{{pane_pipe}}\t#{{{PIPE_FILE_OPTION}}}\t#{{{PIPE_FROM_OPTION}}}")
-        piped, theirs, start = ((piped[0] if piped else "") + "\t\t").split("\t")[:3]
-        offset = 0
-        if piped == "1" and theirs:  # the script captures it already: read that, from
-            source = theirs          # where this session's capture began (it appends)
-            offset = int(start or 0)
+                           "\t".join(("#{pane_pipe}", f"#{{{PIPE_FILE_OPTION}}}",
+                                      f"#{{{PIPE_FROM_OPTION}}}", f"#{{{PIPE_WHOLE_OPTION}}}",
+                                      f"#{{{PIPE_TEE_OPTION}}}")))
+        piped, theirs, start, whole, tee = ((piped[0] if piped else "") + "\t" * 4).split("\t")[:5]
+        history = []
+        if piped == "1" and theirs and (whole or tee):
+            # The script's capture from the pane's first byte, or lte-run's
+            # file for the run: read that, from where this pipe began (it appends).
+            source, offset = theirs, int(start or 0)
+        elif piped == "1" and theirs:
+            # Piped late (a watch of the script's): the scrollback, then the
+            # file from here. A line in flight to it may come twice, not never.
+            history = self._tmux("capture-pane", "-p", "-J", "-S", "-", "-t", pane_id)
+            source, offset = theirs, file_size(theirs)
         else:
             # The scrollback and the pipe in one tmux call: tmux reads no pane
             # output between them, so no line is in neither. The pipe holds
@@ -588,8 +597,10 @@ class _AdoptedBackend:
             with open(log + ".tmp", "w") as f:
                 f.write("".join(line + "\n" for line in _strip_blank_tail(out[:end])))
             os.replace(log + ".tmp", log)
-            source = log
-        self.panes[name] = _AdoptedPane(name, pane_id, mode, source, on_exit, on_line, offset)
+            source, offset = log, 0
+        self.panes[name] = _AdoptedPane(name, pane_id, mode, source, on_exit, on_line, offset,
+                                        copy=None if source == log else log,
+                                        history=_strip_blank_tail(history))
         if self.thread is None:
             self.thread = threading.Thread(target=self._poll, daemon=True)
             self.thread.start()
@@ -695,7 +706,8 @@ def _strip_blank_tail(lines):
 class _AdoptedPane:
     """One adopted pane: its output so far, and how its run ended."""
 
-    def __init__(self, name, pane_id, mode, source, on_exit, on_line, offset=0):
+    def __init__(self, name, pane_id, mode, source, on_exit, on_line, offset=0, copy=None,
+                 history=()):
         self.name = name
         self.pane_id = pane_id
         self.mode = mode
@@ -704,6 +716,9 @@ class _AdoptedPane:
         self.on_line = on_line
         self.lines = []
         self.offset = offset
+        self.copy = copy  # the group's log, when 'source' is the script's file
+        if copy is not None:
+            open(copy, "w").close()
         self.partial = b""
         self.exited = False
         self.read_after_exit = False
@@ -711,6 +726,7 @@ class _AdoptedPane:
         self.stopped = None
         self.pids = ()  # what runs it: lte-run's target, the pane's process, or the shell's children
         self.unset = 0  # polls that saw it dead, with no status yet
+        self._take([plain_line(line.encode()).decode(errors="replace") for line in history])
 
     def read(self):
         try:
@@ -721,13 +737,18 @@ class _AdoptedPane:
             return
         self.offset += len(data)
         *complete, self.partial = (self.partial + data).split(b"\n")
-        for raw in complete:
-            line = plain_line(raw).decode(errors="replace")
+        self._take([plain_line(raw).decode(errors="replace") for raw in complete])
+        if self.exited:
+            self.read_after_exit = True
+
+    def _take(self, lines):
+        if self.copy is not None and lines:
+            with open(self.copy, "a") as f:
+                f.write("".join(line + "\n" for line in lines))
+        for line in lines:
             self.lines.append(line)
             if self.on_line:
                 self.on_line(line)
-        if self.exited:
-            self.read_after_exit = True
 
     def update(self, row, run, table):
         if self.exited:
@@ -810,6 +831,8 @@ class Process:
 
     def start(self):
         """Start it again: the same command and start() options."""
+        if self.group._adopted:
+            raise ValueError(f"start(): {self.name} is the script's pane; it can't be started again")
         command, options = self.group._commands[self.name]
         return self.group.start(self.name, command, **options)
 

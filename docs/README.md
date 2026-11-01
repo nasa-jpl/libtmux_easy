@@ -21,6 +21,7 @@ Linux 6.x); don't re-research them.
 | [releasing.md](releasing.md) | bumping the version and tagging a release |
 | [races.md](races.md) | every race we hit, and the rule that avoids it |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | tmux bugs, limits, open bugs |
+| [FUTURE_DEVELOPMENT.md](FUTURE_DEVELOPMENT.md) | open items and ideas, staged before they are worked on |
 
 ## Why it exists
 

@@ -84,7 +84,7 @@ lte-run closes its pipe and the pane capture is not restarted.
 
 | piece | |
 |---|---|
-| `@lte_pipe_file` (pane option) | where the pane's output goes now: set by the library and by lte-run, so either can start the pipe and the other finds it. Also `@lte_pipe_from` (where it began), `@lte_pipe_id` (new per pipe), `@lte_pipe_tee` (a run has it) |
+| `@lte_pipe_file` (pane option) | where the pane's output goes now: set by the library and by lte-run, so either can start the pipe and the other finds it. Also `@lte_pipe_from` (where it began), `@lte_pipe_id` (new per pipe), `@lte_pipe_tee` (a run has it), `@lte_pipe_whole` (the library's pipe began at the pane's first byte: the plugin's `adopt()` can trust the file) |
 | guard | check the pane and pipe it in one tmux call (`guarded_pipe()`), so the library and lte-run can't both take it |
 | new panes | one session hook (`after-split-window[77]`, `after-new-window[77]`) pipes them from the first byte, to `@lte_pipe_next` or the window's / session's `@lte_pipe` template |
 | a late capture | the scrollback is read in the same tmux call as the pipe starts: no line falls between |

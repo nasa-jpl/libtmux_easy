@@ -1,10 +1,5 @@
-"""
-Automated tests for libtmux_easy.proc -- process discovery/inspection helpers.
-
-get_child_pids tests spawn real subprocesses (via subprocess.Popen) and
-verify psutil-based discovery against them. pane_child_processes/
-get_session_pids tests create actual tmux sessions, mirroring test_session.py.
-"""
+"""libtmux_easy.proc: finding and inspecting processes, against real
+subprocesses and tmux sessions."""
 import os
 import subprocess
 

@@ -3,8 +3,8 @@
 A session script brings a system up in tmux: a libtmux_easy script, a
 `tmux new-session ...` shell script, or `ros2 launch` under tlaunch. The
 pytest plugin can test one in three ways. Pick the first one the script
-allows. Demos: `demos/pytest/script_*`. The plugin itself:
-[pytest-plugin.md](pytest-plugin.md).
+allows. Demos: `demos/pytest/script_*`. Tests: `test/pytest/test_scripts.py`
+(one system, all three ways). The plugin itself: [pytest-plugin.md](pytest-plugin.md).
 
 | method | the script must | the test | restarts | exit codes |
 |---|---|---|---|---|
@@ -82,7 +82,7 @@ first in the group:
 | found as | `@lte_mode` | `@lte_mode`; untagged, not a shell or `sh -c` | `@lte_mode`; untagged, an interactive shell running something |
 | running, deaths | yes | yes | while the shell has children |
 | exit code | exact (lte-run's status file) | exact with `remain-on-exit`; else unknown | unknown; a Ctrl-C stop counts as clean |
-| output | the script's capture if it made one (`pane_capture=True`), else the scrollback then a pipe | same | same |
+| output | from the first byte: the script's capture (`pane_capture=True`); else the scrollback, then a pipe (or the script's late one). `log()` is the group's file | same | same |
 | stop | Ctrl-C, then SIGTERM, SIGKILL | same | same |
 
 - An idle shell (a prompt, nothing running) is not adopted.
