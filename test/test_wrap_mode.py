@@ -15,7 +15,7 @@ import pytest
 
 from helpers import pane_text as _pane_text, title as _pane_title, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
-from libtmux_easy import wrap
+from libtmux_easy import dash, wrap
 from libtmux_easy.tmux_lib import _wrap_prefix
 
 
@@ -164,6 +164,25 @@ class TestWrapMode:
         session.respawn_pane(pane)
         assert session.wait_for_exit(pane, timeout=5.0).code == 8
 
+    def test_wrap_rerun_by_hand_is_the_command(self, make_session, tmp_path):
+        """Typed straight into tmux, not via send_keys(): lte-run's 'started'
+        argv is the pane's command, in the status, the status file and for
+        respawn_pane()."""
+        path = str(tmp_path / "status.json")
+        session = make_session(status_file=path)
+        pane = session.new_pane("x", "sh -c 'exit 4'", mode=PANE_MODE_WRAP)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 4
+
+        session.server.cmd("send-keys", "-t", pane.id, "-l",
+                           f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 6'")
+        session.server.cmd("send-keys", "-t", pane.id, "Enter")
+
+        assert _wait_until(lambda: session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 6'")
+        assert session.wait_for_exit(pane, timeout=5.0).code == 6
+        assert _wait_until(lambda: dash.read_status(path)[0]["command"] == "sh -c 'sleep 0.3; exit 6'")
+        session.respawn_pane(pane)
+        assert session.wait_for_exit(pane, timeout=5.0).code == 6
+
     def test_wrap_upgrades_shell_pane(self, session):
         pane = session.new_pane("x", "true", mode=PANE_MODE_SHELL)
         session.wait_for_pane_idle(pane, timeout=5.0)
@@ -174,6 +193,7 @@ class TestWrapMode:
         assert _wait_until(lambda: session.pane_status(pane).mode == PANE_MODE_WRAP)
         status = session.wait_for_exit(pane, timeout=5.0)
         assert (status.code, status.inferred) == (5, False)
+        assert session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 5'"
 
     def test_wrap_on_exit_fires_once(self, session):
         calls = []

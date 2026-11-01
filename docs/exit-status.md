@@ -10,6 +10,15 @@
 
 Wrap is the recommended mode; see [wrap-mode.md](wrap-mode.md).
 
+A failed `send_command_before()` setup: the command doesn't run, and the
+pane exits with the setup's status.
+
+| mode | how |
+|---|---|
+| exec | `bash -c 'setup && exec cmd'` |
+| wrap | one line, `setup; LTE_RUN_SETUP=$? lte-run cmd`: `lte-run` runs nothing and exits with it |
+| shell | a `$?` probe after the setup; a warning is logged |
+
 *Verified*, and why shell mode looks the way it does:
 
 - Exit codes flow child to parent only. tmux learns bash's status, not the
@@ -18,6 +27,9 @@ Wrap is the recommended mode; see [wrap-mode.md](wrap-mode.md).
   the line.
 - `$?` is one-shot: the probe or any typed command overwrites it. So the
   status is captured at the exit event and cached.
+- The probe's Enter submits whatever is on the line. A line typed with
+  `enter=False` is not probed (`send_keys()` at the prompt reads the last
+  run's `$?` first); the `send_keys()` that submits it starts a new run.
 - `remain-on-exit` must be set **before** the command can exit, or the pane
   (and maybe the server) closes with its status. A split's command starts
   with the pane, so exec mode turns it on for the window during the split,
@@ -54,7 +66,8 @@ A callback registered after its run's exit event (`watch_pane()`,
 `wait_for_exit()` on a pane that already ended) fires at once. The check and
 the event share `_status_lock`, so it fires exactly once; `_ended` holds the
 panes whose run has ended, cleared by a new run. All such rules:
-[races.md](races.md).
+[races.md](races.md). `wait_for_exit()` drops its callback when it returns,
+timed out or not; `on_exit` callbacks stay, firing for every run.
 
 API: `new_pane(..., on_exit=)`, `watch_pane()`, `unwatch_pane()`,
 `wait_for_exit(timeout)`.

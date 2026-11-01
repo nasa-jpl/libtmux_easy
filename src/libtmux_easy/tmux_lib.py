@@ -37,7 +37,7 @@ from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _WrapRun
 from .wrap import (DIR_OPTION, PIPE_FILE_OPTION as PIPE_FILE, PIPE_FROM_OPTION as PIPE_FROM,
                    PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_ID_OPTION as PIPE_ID, PIPE_TEE_OPTION,
-                   PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION, SOCKET_NAME, guarded_pipe,
+                   PROTOCOL_VERSION as WRAP_PROTOCOL_VERSION, SETUP_ENV, SOCKET_NAME, guarded_pipe,
                    guarded_unpipe, tmux_literal)
 
 # Set by a test that runs a session script as it is (testing.py, adopt()):
@@ -476,6 +476,8 @@ class TmuxSession(Session):
         self._exit_callbacks = {}     # pane.id -> list of on_exit(PaneStatus) callbacks
         self._watched_panes = set()   # pane.id -- already armed, avoid double-registering
         self._ended = set()           # pane.id whose run's exit event has fired
+        self._unsubmitted = set()     # shell pane.id whose line holds keys typed
+                                       # without Enter (see send_keys())
         self._watcher = None          # lazily-started _PaneWatcher
         self._status_lock = threading.Lock()
         self._snapshot = threading.local()  # .panes: see _pane_snapshot()
@@ -572,7 +574,11 @@ class TmuxSession(Session):
         """Run 'command' in every new pane before its own command (cd, source
         an environment). For 'window' only, or the whole session; a window's
         replaces the session's. In exec mode it runs in the same process
-        ('setup && exec cmd')."""
+        ('setup && exec cmd'); in shell and wrap mode, in the pane's shell.
+
+        If it fails, the pane's command doesn't run and the pane exits with
+        the setup's status: exec mode by '&&', wrap mode by lte-run
+        ($LTE_RUN_SETUP), shell mode by a '$?' probe (and a warning)."""
         if window:
             window = self.resolve_target_window(window)
             self.command_before[window.id] = command
@@ -759,7 +765,8 @@ class TmuxSession(Session):
             process per pane.
 
         'enter' applies to shell and wrap mode only (exec mode has no shell to
-        submit to).
+        submit to). With enter=False nothing runs yet: the pane is not probed
+        or tracked until a send_keys() with Enter submits the line.
 
         'env' (e.g. os.environ, or a dict of your own) is this pane's
         environment, on top of the window's (new_window(env=)) and the
@@ -841,11 +848,17 @@ class TmuxSession(Session):
 
         if pane.id in self._wrap_starting:
             pass  # set by 'started' (see _new_shell_pane())
+        elif pane.id in self._exit_status:
+            self.pane_targets[pane.id] = ()  # its setup failed: nothing ran
         elif mode == PANE_MODE_WRAP and not enter:
             # Nothing runs until someone presses Enter; 'started' tracks it then.
             # Until then the pane must not be probed for '$?': the probe's own
             # Enter would submit the half-typed line.
             self._wrap_pending.add(pane.id)
+            self.pane_targets[pane.id] = ()
+        elif not enter:
+            # Shell mode: the same, until send_keys() submits it (_submitted()).
+            self._unsubmitted.add(pane.id)
             self.pane_targets[pane.id] = ()
         else:
             self.pane_targets[pane.id] = self._capture_target_pids(pane, mode, target_pid_timeout)
@@ -904,25 +917,33 @@ class TmuxSession(Session):
         early = mode == PANE_MODE_WRAP and enter and not wait_start
         if not early:
             self._wait_shell_ready(pane)
-        # Typed early, a line echoes twice: as it is typed, then at the prompt.
-        echoes = 2 if early else 1
-        if before:
-            self._type(pane, before, enter=True, echoes=echoes)
-            if not early:
-                # Let setup finish, so _capture_target_pids() snapshots the target
-                # command and not the setup command. Uses the any-children test
-                # (via is_running()'s fallback), since no target is recorded yet.
-                self.wait_for_pane_idle(pane, timeout=30.0)
-        if early:
-            # Before typing: 'started' can come at any time after.
-            with self._status_lock:
-                self._wrap_pending.add(pane.id)
-                self._wrap_starting.add(pane.id)
-                self.pane_targets[pane.id] = ()
         if mode == PANE_MODE_WRAP:
-            self._send_wrapped(pane, command, enter, echoes)
-        else:
-            self._type(pane, command, enter)
+            if early:
+                # Before typing: 'started' can come at any time after.
+                with self._status_lock:
+                    self._wrap_pending.add(pane.id)
+                    self._wrap_starting.add(pane.id)
+                    self.pane_targets[pane.id] = ()
+            # Typed early, a line echoes twice: as it is typed, then at the prompt.
+            self._send_wrapped(pane, command, enter, 2 if early else 1, before)
+            if before and enter and not early:
+                # The setup runs first: as long as it takes, not the 5 s
+                # _capture_target_pids() gives lte-run.
+                self._wrap_started[pane.id].wait(30.0)
+            return pane
+        if before:
+            self._type(pane, before, enter=True)
+            # Let setup finish, so _capture_target_pids() snapshots the target
+            # command and not the setup command. Uses the any-children test
+            # (via is_running()'s fallback), since no target is recorded yet.
+            self.wait_for_pane_idle(pane, timeout=30.0)
+            status = self._probe_shell_status(pane)
+            if status.known and status.code != 0:
+                logger.warning(f"Pane {name}: setup {before!r} failed ({status}); "
+                               f"not running {command!r}")
+                self._exit_status[pane.id] = status
+                return pane
+        self._type(pane, command, enter)
         return pane
 
     def _wait_shell_ready(self, pane, timeout=_SHELL_START):
@@ -1036,7 +1057,13 @@ class TmuxSession(Session):
 
         'cmd_capture' (a file; a wrap pane only) runs 'command' under
         lte-run, saving its output only: new_pane(cmd_capture=). It becomes
-        the pane's, for later reruns too."""
+        the pane's, for later reruns too.
+
+        Shell pane, enter=False at the prompt: the line is left unsubmitted.
+        The last run's status is read first ('$?' with a clean line); the pane
+        is not probed again until a send_keys() with Enter submits it, which
+        starts a new run (as respawn_pane() does). Keys typed into a running
+        command are its input: nothing changes."""
         if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
             raise ValueError("Must create a window and pane before sending commands.")
 
@@ -1059,10 +1086,35 @@ class TmuxSession(Session):
                 self._run_typed[pane.id] = time.monotonic()  # see _command_running()
             self.commands.setdefault(pane_name, []).append(command)
             return
+        held = not enter and self._pane_mode(pane) == PANE_MODE_SHELL \
+            and pane.id not in self._unsubmitted and not self.is_running(pane)
+        if held:
+            self.exit_status(pane)  # the probe's Enter would submit the line
         self._type(pane, command, enter)
+        if held:
+            self._unsubmitted.add(pane.id)
         if enter and command.lstrip().startswith(("lte-run ", _wrap_prefix() + " ")):
             self._run_typed[pane.id] = time.monotonic()  # see _command_running()
         self.commands.setdefault(pane_name, []).append(command)
+        if enter and pane.id in self._unsubmitted:
+            self._submitted(pane)
+
+    def _submitted(self, pane):
+        """A shell pane's unsubmitted line was just submitted: a new run, as
+        respawn_pane() starts one."""
+        with self._status_lock:
+            self._unsubmitted.discard(pane.id)
+            self._exit_status.pop(pane.id, None)
+            self._ended.discard(pane.id)
+            self._stopped_by.pop(pane.id, None)
+        if self._reader is not None:
+            self._reader.new_run(pane.id)
+        self.pane_targets[pane.id] = self._capture_target_pids(pane, PANE_MODE_SHELL, 1.0)
+        if pane.id in self._watched_panes:  # armed while unsubmitted: arm for real
+            self._watched_panes.discard(pane.id)
+            self.watch_pane(pane)
+        self._refresh_pane_title(pane)
+        self._write_status_file()
 
     def resolve_target_pane(self, identifier: Union[Pane, str]) -> Pane:
         """The Pane for a name ('window:pane'), an id ('%3') or a Pane."""
@@ -1278,6 +1330,8 @@ class TmuxSession(Session):
                     status = ExitStatus()
                 else:
                     status = self._probe_shell_status(pane)
+            elif pane.id in self._unsubmitted:
+                return ExitStatus()  # the probe's Enter would submit the line
             elif self._shell_busy(pane, _SHELL_SETTLE):
                 return ExitStatus()  # typed into, the probe would feed the command
             else:
@@ -1483,6 +1537,7 @@ class TmuxSession(Session):
                 # the caller is about to ask about.
                 self._exit_status.pop(pane.id, None)
             self._stopped_by.pop(pane.id, None)  # that was the old run
+            self._unsubmitted.discard(pane.id)  # submitted with the command
             if mode == PANE_MODE_WRAP:
                 self._send_wrapped(pane, command)
             else:
@@ -1560,6 +1615,8 @@ class TmuxSession(Session):
         if pane_id in self._watched_panes:
             return
         self._watched_panes.add(pane_id)
+        if pane_id in self._unsubmitted:
+            return  # nothing runs yet: _submitted() arms it
 
         targets = self.pane_targets.get(pane_id)
         if targets:
@@ -1597,10 +1654,23 @@ class TmuxSession(Session):
         ExitStatus. Returns an unknown ExitStatus on timeout."""
         pane = self.resolve_target_pane(target_pane)
         done = threading.Event()
-        self.watch_pane(pane, lambda status: done.set())
-        if not done.wait(timeout):
-            return ExitStatus()
+        callback = lambda status: done.set()
+        self.watch_pane(pane, callback)
+        try:
+            if not done.wait(timeout):
+                return ExitStatus()
+        finally:
+            self._drop_exit_callback(pane.id, callback)  # or they pile up, one per call
         return self.exit_status(pane)
+
+    def _drop_exit_callback(self, pane_id, callback):
+        """Unregister one on_exit callback; the pane's others stay."""
+        with self._status_lock:
+            callbacks = [cb for cb in self._exit_callbacks.get(pane_id, ()) if cb is not callback]
+            if callbacks:
+                self._exit_callbacks[pane_id] = callbacks
+            else:
+                self._exit_callbacks.pop(pane_id, None)
 
     def stop_watching(self):
         """Stop the background watcher thread, if one was started. Called
@@ -1677,6 +1747,7 @@ class TmuxSession(Session):
             with self._status_lock:
                 self._wrap_pending.discard(pane_id)
                 self._wrap_starting.discard(pane_id)
+                self._unsubmitted.discard(pane_id)
                 self._run_typed.pop(pane_id, None)
                 self._exit_status.pop(pane_id, None)  # a new run
                 self._ended.discard(pane_id)
@@ -1759,8 +1830,10 @@ class TmuxSession(Session):
         cmds = self.commands.setdefault(name, [command])
         cmds[0] = command
 
-    def _send_wrapped(self, pane, command, enter=True, echoes=1):
-        """Type 'command' into a shell pane under lte-run."""
+    def _send_wrapped(self, pane, command, enter=True, echoes=1, before=None):
+        """Type 'command' into a shell pane under lte-run. 'before' (a setup)
+        goes first on the same line, so a rerun by hand (up arrow) runs both;
+        its '$?' tells lte-run not to run the command if it failed."""
         target = command
         if any(op in command for op in _SHELL_OPERATORS):
             target = f"bash -c {shlex.quote(command)}"
@@ -1770,7 +1843,10 @@ class TmuxSession(Session):
         self.pane_modes[pane.id] = PANE_MODE_WRAP
         log = self._cmd_capture.get(pane.id)
         options = f"--tee {shlex.quote(log)} -- " if log else ""
-        self._type(pane, f"{_wrap_prefix()} {options}{target}", enter, echoes)
+        line = f"{_wrap_prefix()} {options}{target}"
+        if before:
+            line = f"{before}; {SETUP_ENV}=$? {line}"
+        self._type(pane, line, enter, echoes)
 
     def _wrap_signal(self, pane, sig) -> bool:
         """Ask the pane's lte-run to signal its target. False if there is no
@@ -1821,8 +1897,7 @@ class TmuxSession(Session):
         Typed before the shell reads it, it echoes twice: 'echoes=2'."""
         self._typed.setdefault(pane.id, collections.deque(maxlen=32)).append(text)
         if self._reader is not None:
-            for _ in range(echoes):
-                self._reader.expect_echo(pane.id, text)
+            self._reader.expect_echo(pane.id, text, echoes)
         _type(pane, text, enter)
 
     def _typed_texts(self, pane_id):
@@ -2333,7 +2408,7 @@ class TmuxSession(Session):
                     raise PaneExited(self.pane_status(pane))
 
     def _command_running(self, pane):
-        if pane.id in self._wrap_pending:
+        if pane.id in self._wrap_pending or pane.id in self._unsubmitted:
             return True  # typed without Enter: not started yet
         if time.monotonic() - self._run_typed.get(pane.id, -_RUN_START) < _RUN_START:
             return True  # send_keys() typed 'lte-run ...': not reported yet

@@ -32,10 +32,13 @@
 |---|---|
 | Shell mode guesses the target pid: can catch a `.bashrc` process or a shell loop's transient child, so a running pane looks finished | one long-lived process per pane, or wrap mode |
 | Shell mode: `exit 130` and SIGINT look the same (`inferred`) | wrap mode |
+| Shell mode, `enter=False`: an Enter typed by hand isn't seen; the pane stays unprobed, status unknown | submit with `send_keys()`, or wrap mode |
+| Shell mode: keys typed without Enter into a running command it doesn't read land on the prompt's line when it ends; the probe submits them | type at the prompt, or wrap mode |
 | `lte-run a && b` typed by hand supervises only `a` | `new_pane()` wraps in `bash -c` |
 | A fast command can record no target pid (`target_pids == ()`) | handled |
 | `kill_session()` only sends SIGHUP | `stop_all()` first |
 | A Ctrl-C typed by hand counts as failed | none: intent is unknowable |
+| A command typed by hand without `lte-run` (shell pane, wrap pane), or a `respawn-pane` run in tmux (exec pane), is not a run: the status and `command` stay the last tracked run's | type `lte-run <cmd>` (a new run, its `command`), or `respawn_pane(pane, cmd)` |
 | Linux only (pidfds, `/proc`) | |
 | One pipe per pane (tmux): a pane piped by another tool (lte-session's home) can't be captured or watched | wrap the command in a pane of its own |
 | `pipe-pane` run after a split misses the first line | the library chains it into the split, or a hook does |
@@ -55,15 +58,8 @@
 
 ## Open bugs
 
-- Shell mode, `enter=False`: still probed for `$?`, which submits the
-  half-typed line. Wrap mode handles it.
-- `PaneStatus.command` is stale after a rerun typed by hand.
-- `wait_for_exit()` registers a callback per call; they accumulate on the pane.
-- `send_command_before()`: the command runs even if the setup failed, and
-  nothing reports it (any mode, `wait_start` either way).
-- `wait_start=False`: the echo is expected twice for 10 s (`ECHO_TTL`). If
-  the shell was already up, it echoes once, and the spare can hide one real
-  output line ending with the typed command's text.
+- Exec mode: `respawn_pane()` reruns the command without the
+  `send_command_before()` setup.
 
 ## Running tests
 

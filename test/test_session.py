@@ -291,6 +291,29 @@ class TestExecMode:
         assert _exec_status(session, pane).code == 22
 
 
+@pytest.mark.parametrize("mode, wait_start", [
+    ("shell", True), ("exec", True), ("wrap", True), ("wrap", False),
+])
+def test_command_before_failed(make_session, tmp_path, mode, wait_start):
+    """A failed setup: the command doesn't run, and the pane exits with the
+    setup's status. One that works: the command runs after it."""
+    session = make_session(mode=mode, wait_start=wait_start)
+    session.send_command_before("cd /nonexistent-lte-dir")
+    calls = []
+    pane = session.new_pane("x", "touch ran", on_exit=calls.append)
+    session.wait_for_exit(pane, timeout=10)
+    status = _exec_status(session, pane) if mode == PANE_MODE_EXEC else session.exit_status(pane)
+    assert status.code == 1
+    assert wait_until(lambda: calls) and calls[0].exit_status.code == 1
+
+    session.send_command_before(f"cd {tmp_path}")
+    pane = session.new_pane("y", "sh -c 'touch ran; exit 3'")
+    session.wait_for_exit(pane, timeout=10)
+    status = _exec_status(session, pane) if mode == PANE_MODE_EXEC else session.exit_status(pane)
+    assert status.code == 3
+    assert os.listdir(tmp_path) == ["ran"]  # only the second pane's
+
+
 @pytest.mark.parametrize("mode, cmd", [
     ("shell", "sh -c 'sleep 0.3; exit 7'"),
     ("shell", "sh -c 'exit 7'"),          # gone before its pid is seen
@@ -311,6 +334,20 @@ def test_wait_for_exit_after_it_ended(session, mode, cmd):
     assert status.code == 7
 
 
+@pytest.mark.parametrize("mode", ["shell", PANE_MODE_WRAP])
+def test_wait_for_exit_leaves_no_callback(session, mode):
+    """Each wait unregisters its callback, timed out or not: a pane polled
+    in a loop doesn't collect one per call. Its own on_exit stays."""
+    calls = []
+    pane = session.new_pane("x", "sh -c 'sleep 1; exit 3'", mode=mode, on_exit=calls.append)
+    for _ in range(3):
+        assert not session.wait_for_exit(pane, timeout=0.05).known
+    for _ in range(3):
+        assert session.wait_for_exit(pane, timeout=5).code == 3
+    assert session._exit_callbacks[pane.id] == [calls.append]
+    assert len(calls) == 1
+
+
 def test_shell_loop_runs_until_the_loop_ends(session):
     """A loop the shell runs itself: each child exiting isn't the end, and
     nothing is typed into it. The loop's own status is the exit status."""
@@ -322,6 +359,37 @@ def test_shell_loop_runs_until_the_loop_ends(session):
     assert wait_until(lambda: calls, timeout=10) and len(calls) == 1
     assert session.exit_status(pane).code == 1
     assert pane_text(pane).count("echo __LTE_EXIT__") == 1  # probed once, at the end
+
+
+def _input_line(pane):
+    return [line for line in pane_text(pane).splitlines() if line.strip()][-1]
+
+
+def test_shell_enter_false_is_not_probed(session):
+    """Shell mode, typed without Enter: the '$?' probe's Enter would submit
+    the half-typed line. Not probed, not ended, until send_keys() submits it.
+    Then the same at the prompt, after a run ended."""
+    calls = []
+    cmd = "echo held_$((6*7)); sh -c 'exit 3'"
+    pane = session.new_pane("x", cmd, enter=False, on_exit=calls.append)
+    time.sleep(1.5)  # past the watcher's settle and a probe's wait
+    assert session.exit_status(pane).known is False
+    assert not calls and not session.is_running(pane)
+    assert _input_line(pane).endswith(cmd)
+    assert "held_42" not in pane_text(pane) and "__LTE_EXIT__" not in pane_text(pane)
+
+    session.send_keys("", target_pane=pane)
+    assert session.wait_for_exit(pane, timeout=5).code == 3
+    assert wait_until(lambda: calls) and "held_42" in pane_text(pane)
+
+    cmd = "sh -c 'exit 5'"
+    session.send_keys(cmd, enter=False, target_pane=pane)
+    time.sleep(1.0)
+    assert _input_line(pane).endswith(cmd)
+    assert session.exit_status(pane).code == 3  # the last run's, read first
+    session.send_keys("", target_pane=pane)
+    assert wait_until(lambda: session.exit_status(pane).code == 5)
+    assert len(calls) == 2
 
 
 def test_exec_pane_exiting_at_once_in_a_split(session):

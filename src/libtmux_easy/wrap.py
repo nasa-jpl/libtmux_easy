@@ -19,6 +19,10 @@ same output, same exit status -- so it is always safe to prepend.
 
 $LTE_RUN_TEE=FILE does what --tee FILE does (--tee wins). It is removed from the
 command's environment, so an lte-run inside it doesn't tee again.
+
+$LTE_RUN_SETUP=N, not 0: the setup typed before it failed with N (the library
+types 'setup; LTE_RUN_SETUP=$? lte-run ...'). The command isn't run, and the
+run exits N. Removed from the command's environment too.
 """
 
 import json
@@ -44,6 +48,7 @@ DIR_OPTION = "@lte_dir"   # tmux session option set by TmuxSession
 DIR_ENV = "LTE_DIR"       # overrides DIR_OPTION; for tests and non-tmux use
 SOCKET_NAME = "ctl.sock"
 TEE_ENV = "LTE_RUN_TEE"   # a default for --tee
+SETUP_ENV = "LTE_RUN_SETUP"  # the setup's '$?': not 0, the command isn't run
 PIPE_FILE_OPTION = "@lte_pipe_file"  # pane option: the file the pane's output goes to
 PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capture began
 PIPE_TEE_OPTION = "@lte_pipe_tee"    # pane option: lte-run --tee has the pipe
@@ -458,6 +463,7 @@ def main(argv=None, channel=None):
     tee = None
     opts["tee"] = opts["tee"] or os.environ.get(TEE_ENV) or None
     os.environ.pop(TEE_ENV, None)  # the command inherits os.environ
+    setup = os.environ.pop(SETUP_ENV, "0").strip() or "0"
     if opts["tee"]:
         try:
             tee = Tee(open_tee(opts["tee"], opts["append"]), opts["raw"], opts["tee"])
@@ -483,6 +489,10 @@ def main(argv=None, channel=None):
         if tee is not None and tee.child_out is not None:
             os.dup2(tee.child_out, 1)
             os.dup2(tee.child_out, 2)
+        if setup != "0":  # a run all the same: 'started', then 'exited' with its status
+            sys.stderr.write(f"lte-run: setup failed ({setup}); not running {shlex.join(argv)}\n")
+            sys.stderr.flush()
+            os._exit(int(setup) if setup.isdigit() else 1)
         try:
             os.execvp(argv[0], argv)
         except OSError as exc:

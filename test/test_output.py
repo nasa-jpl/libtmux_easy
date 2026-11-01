@@ -179,6 +179,20 @@ def test_callback_can_watch(session):
     assert got.wait(5)
 
 
+def test_spare_echo_hides_no_output(session, tmp_path):
+    """Typed as if early ('echoes=2') into a shell that is up: it echoes once,
+    and a real line ending with the typed text is output."""
+    f = tmp_path / "f"
+    typed = f"cat {f}"
+    f.write_text(f"out: {typed}\n")
+    lines, cb = collect()
+    pane = session.new_pane("p", "true", mode=PANE_MODE_SHELL, on_output={"": cb})
+    session.wait_for_exit(pane, timeout=5)
+    session._type(pane, typed, echoes=2)
+    assert wait_until(lambda: f"out: {typed}" in lines)
+    assert [line for line in lines if typed in line] == [f"out: {typed}"]
+
+
 def test_expect(session):
     pane = session.new_pane("p", "bash --norc", mode=PANE_MODE_EXEC)
     with session.expect(pane, r"pong (\d+)", timeout=5) as e:

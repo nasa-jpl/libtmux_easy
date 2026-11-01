@@ -107,6 +107,9 @@ so all rc files run at once. `lte-run` reports the pid, so nothing is lost.
 - Commands with shell operators are launched as `bash -c '...'`. Typed by
   hand, `lte-run a && b` supervises only `a`.
 - `enter=False` panes wait in `_wrap_pending` and are never probed for `$?`.
+- A `send_command_before()` setup goes on the command's line:
+  `setup; LTE_RUN_SETUP=$? lte-run cmd`. Not 0: `lte-run` prints why, runs
+  nothing and exits with it. An up arrow reruns both.
 - The socket dir falls back to `/tmp` past AF_UNIX's 107-byte path limit.
 - `lte-run` is typed bare: it must be on each pane's PATH.
 - Under `lte-session`, `wrap.main(argv, channel=_ExitFile)` writes the status

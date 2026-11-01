@@ -240,7 +240,7 @@ class OutputReader(threading.Thread):
         self._lock = threading.RLock()
         self._watches = []            # OutputWatch
         self._sources = {}            # pane_id -> _Source
-        self._echo = {}               # pane_id -> deque of (text, monotonic time)
+        self._echo = {}               # pane_id -> deque of [text, monotonic time, echoes]
         self._closed = threading.Event()
         self._refreshed = 0.0
         self._synced_once = False
@@ -313,11 +313,13 @@ class OutputReader(threading.Thread):
         for w in gone:
             w.cancel()
 
-    def expect_echo(self, pane_id, text):
-        """'text' is about to be typed into the pane: its echo isn't output."""
+    def expect_echo(self, pane_id, text, echoes=1):
+        """'text' is about to be typed into the pane: its echo isn't output.
+        'echoes=2': typed before the shell reads it, it may echo as typed
+        (the bare line), then echoes at the prompt."""
         with self._lock:
             self._echo.setdefault(pane_id, collections.deque(maxlen=16)).append(
-                (text.strip(), time.monotonic()))
+                [text.strip(), time.monotonic(), echoes])
 
     def new_run(self, pane_id):
         """The pane's command was restarted (or lte-run retargeted its file):
@@ -571,7 +573,7 @@ class OutputReader(threading.Thread):
         line = plain_line(raw).decode("utf-8", "replace")
         if self._skip(line):
             return set()
-        echo = self._is_echo(src.pane_id, line)
+        echo = self._is_echo(src.pane_id, line, raw)
         matched = set()
         for w in watches:
             if w in skip or (echo and w.skip_echo):
@@ -580,8 +582,9 @@ class OutputReader(threading.Thread):
                 matched.add(w)
         return matched
 
-    def _is_echo(self, pane_id, line):
-        """The shell echoing a command we typed (prompt + text): consumes it."""
+    def _is_echo(self, pane_id, line, raw=b""):
+        """The shell echoing a command we typed (prompt + text): consumes it.
+        'raw': the line as written, to tell the bare echo of early typing."""
         pending = self._echo.get(pane_id)
         if not pending:
             return False
@@ -589,11 +592,18 @@ class OutputReader(threading.Thread):
         while pending and now - pending[0][1] > ECHO_TTL:
             pending.popleft()
         tail = line.rstrip()
-        for i, (text, _) in enumerate(pending):
+        for i, entry in enumerate(pending):
+            text = entry[0]
             # The end of a long command readline redrew after a wrap counts too.
             if text and (tail.endswith(text) or
                          (len(tail.lstrip()) >= min(len(text), 8) and text.endswith(tail.lstrip()))):
-                del pending[i]
+                # Only the bare echo (the tty's, as typed: no prompt, no redraw)
+                # leaves the prompt's to come. A shell that was up already
+                # echoes once, and a spare would hide output.
+                if entry[2] > 1 and raw.decode("utf-8", "replace").strip() == text:
+                    entry[2] -= 1
+                else:
+                    del pending[i]
                 return True
         return False
 
