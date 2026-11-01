@@ -77,4 +77,5 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
 | `dashboard/` | with `--tmux -s`: pdb, `input()`, the dashboard (see its docstring) |
 
 ROS 2 (a `launch_test` replacement on this plugin): the separate
-`lte_launch_test` project. Reference: [docs/pytest-plugin.md](../../docs/pytest-plugin.md).
+`lte_launch_test` project. Reference: [docs/pytest-plugin.md](../../docs/pytest-plugin.md); the
+`script_*` demos: [docs/testing-scripts.md](../../docs/testing-scripts.md).

@@ -58,7 +58,7 @@ from ._tmux import option
 from .output import PaneExited
 from .status import ExitStatus, PaneStatus
 from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, TmuxSession, _pane_cmd
-from .proc import alive, proc_table
+from .proc import SHELLS, alive, cmdline, comm, proc_table
 from .wrap import (PANE_MODE_OPTION, PANE_NAME_OPTION, PIPE_FILE_OPTION, PIPE_FROM_OPTION,
                    STATUS_DIR_ENV,
                    plain_line, plain_text)
@@ -273,7 +273,7 @@ class _TmuxBackend:
         self.prefix = _unique_prefix(session, prefix)
         self.panes = {}  # name -> Pane
         self.runs = {}  # name -> how many times started
-        self.logs = {}  # name -> its log, which each start rewrites (lte-run --tee)
+        self.logs = {}  # name -> its log, which each start rewrites (cmd_capture)
         self.windows = set()
 
     def window(self, window, setup, **kwargs):
@@ -301,7 +301,8 @@ class _TmuxBackend:
             self.logs[name] = log
         self.panes[name] = self.session.new_pane(pane_name, command, mode=PANE_MODE_WRAP,
                                                  on_exit=lambda s: on_exit(name, s),
-                                                 on_output=on_output, tee=log, env=env)
+                                                 on_output=on_output, cmd_capture=log,
+                                                 env=env)
 
     def register(self, name, pane, log):
         """A pane build() made, as 'name'."""
@@ -317,8 +318,8 @@ class _TmuxBackend:
         return "\n".join(self.lines(name))
 
     def lines(self, name):
-        """What the latest start printed: from its log (lte-run --tee, or a
-        capture), else the pane, which also shows the shell's prompt and the
+        """What the latest start printed: from its log (a cmd_capture, or a
+        pane_capture), else the pane, which also shows the shell's prompt and the
         command."""
         if name not in self.logs:
             return _pane_cmd(self.panes[name], "capture-pane", "-p", "-J", "-S", "-").stdout
@@ -541,17 +542,26 @@ class _AdoptedBackend:
 
     def discover(self):
         """[(name, pane id, mode)] of every pane on the server: 'window:pane'
-        by new_pane()'s name, else by index; 'session.window' if several."""
+        by new_pane()'s name, else by index; 'session.window' if several.
+        A pane not made by new_pane(): 'shell' if it runs an interactive
+        shell, else 'exec' (tmux ran the command: the pane's process is it);
+        an idle shell (a prompt, nothing running) is left out."""
         fmt = "\t".join(("#{pane_id}", "#{session_name}", "#{window_name}", "#{pane_index}",
-                         f"#{{{PANE_NAME_OPTION}}}", f"#{{{PANE_MODE_OPTION}}}"))
+                         f"#{{{PANE_NAME_OPTION}}}", f"#{{{PANE_MODE_OPTION}}}", "#{pane_pid}"))
         rows = [line.split("\t") for line in self._tmux("list-panes", "-a", "-F", fmt)]
         several = len({r[1] for r in rows}) > 1
+        table = proc_table()
         found = []
-        for pane_id, session, window, index, name, mode in rows:
+        for pane_id, session, window, index, name, mode, pid in rows:
             full = f"{session}.{window}:{name or index}" if several else f"{window}:{name or index}"
             while full in [f[0] for f in found]:
                 full += "+"
-            found.append((full, pane_id, mode or "shell"))
+            if not mode:
+                shell = comm(pid) in SHELLS and "-c" not in cmdline(pid).split()
+                if shell and not any(ppid == int(pid) for _, ppid, _ in table.values()):
+                    continue
+                mode = "shell" if shell else "exec"
+            found.append((full, pane_id, mode))
         return found
 
     def watch(self, name, pane_id, mode, on_exit, on_line, log):
@@ -892,11 +902,11 @@ class _BuildSession:
         on_exit, on_line = group._begin(full, cmd, exits=self._exits.get(full))
         group._commands[full] = (cmd, {"exits": self._exits.get(full)})
         mode = kwargs.pop("mode", None) or self._mode
-        log = kwargs.get("tee") or group.log(full)
+        log = kwargs.get("cmd_capture") or kwargs.get("pane_capture") or group.log(full)
         if mode == PANE_MODE_WRAP:
-            kwargs.setdefault("tee", log)
-        else:  # tee is lte-run's; a capture keeps terminal escapes, read as plain text
-            kwargs.setdefault("capture", log)
+            kwargs.setdefault("cmd_capture", log)
+        else:  # cmd_capture is lte-run's; a pane capture keeps escapes, read as plain text
+            kwargs.setdefault("pane_capture", log)
         theirs = kwargs.pop("on_exit", None)
 
         def exited(status):
@@ -1081,8 +1091,10 @@ class Processes:
         regex), print a matching line, and is then a process of the group
         too. 'exits': {pane name: code(s)} for panes that finish on their
         own, as start()'s exits=. Returns the panes' Processes. Exit statuses are exact for wrap
-        and exec panes; for shell panes, only that they ended. The panes
-        can't be started again. Kept on failure: tmux -S <socket> attach."""
+        and exec panes; for shell panes, only that they ended. A plain tmux
+        script works too: a pane's command is an exec pane, an idle shell is
+        left out. The panes can't be started again. Kept on failure:
+        tmux -S <socket> attach. See docs/testing-scripts.md."""
         if self._runs:
             raise ValueError("adopt(): call it first, before start() or build()")
         self.backend = backend = _AdoptedBackend()

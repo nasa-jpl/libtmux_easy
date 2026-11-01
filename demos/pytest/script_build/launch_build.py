@@ -38,9 +38,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    # capture=True: piped from the first byte, so build()'s wait_for_output()
-    # can't miss its line (docs/KNOWN_ISSUES.md). A test's session pipes them.
-    session = TmuxSession.create("demo_build", capture=True)
+    # pane_capture=True: each pane's output to a file from its first byte. A
+    # test's session logs them itself.
+    session = TmuxSession.create("demo_build", pane_capture=True)
     build(session, args.port)
     monitor(session, alert=lambda what: print("ALERT", what, flush=True))
     session.dashboard()

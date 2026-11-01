@@ -20,7 +20,7 @@ it, so the library can use Viewport without Textual.
   app.py       the sidebar UI (Textual)
   keys.py      lte-key: borrow a prefix key
   winhook.py   a tmux hook that tells the sidebar its window changed
-  homelog.py   the tee behind TmuxSession.tee_home()
+  homelog.py   the tee behind TmuxSession.log_home()
 
 A program that is not a TmuxSession can open a dashboard too: 'lte-dash
 --open SESSION ...', or open_window(). It then writes the status file

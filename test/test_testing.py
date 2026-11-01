@@ -660,12 +660,36 @@ class TestDies:
 
     def test_job(self):
         import time; time.sleep(1)
+
+class TestPlainTmux:
+    # a script with no libtmux_easy: a command pane, a loop; an idle shell is left out
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
+        cls.procs.adopt("sh plain.sh")
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_plain_panes(self):
+        assert self.procs.names == ["script:script", "w:0", "loop:0"]
+        assert [self.procs.status(n).mode for n in self.procs.names[1:]] == ["exec", "exec"]
+        self.procs["w:0"].wait_for("up_7")
+        self.procs["loop:0"].wait_for("tick")
+        assert self.procs.status("w:0").running and self.procs.status("loop:0").running
+"""
+
+PLAIN = """
+tmux new-session -d -s plain -n w 'echo up_7; exec sleep 60'
+tmux new-window -t plain -n loop 'while sleep 0.2; do echo tick; done'
+tmux new-window -t plain -n sh 'bash --norc'
 """
 
 
 @pytest.mark.parametrize("mode", MODES)
 def test_adopt(run, mode):
-    proc, out = run(ADOPT_TESTS, mode=mode, files={"script.py": SCRIPT})
+    proc, out = run(ADOPT_TESTS, mode=mode, files={"script.py": SCRIPT, "plain.sh": PLAIN})
     assert "PASSED test_inner.py::TestAdopt::test_names" in out, out
     assert "PASSED test_inner.py::TestAdopt::test_kill" in out, out
     assert "PASSED test_inner.py::TestAdopt::test_shell_pane_stops" in out, out
@@ -674,3 +698,5 @@ def test_adopt(run, mode):
     assert "FAILED test_inner.py::TestDies::test_job" in out, out
     assert "ctl:job exited 4" in out, out
     assert "script's session kept: tmux -S" in out, out
+    assert "PASSED test_inner.py::TestPlainTmux::test_plain_panes" in out, out
+    assert "ERROR test_inner.py::TestPlainTmux" not in out, out

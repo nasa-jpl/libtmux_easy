@@ -6,7 +6,7 @@ file, so this library, lte-run --tee and a later process all agree on where
 a pane's output is. A watch tails the file (OutputReader: one thread per
 session, woken by inotify when a watched file is written); a search scans
 it once. Lines are matched as plain text (wrap.plain_line). Panes nobody
-captured cost nothing. See docs/output-match.md.
+captured cost nothing. See docs/output.md.
 """
 
 import bisect
@@ -644,37 +644,17 @@ class Capture:
     def _is_pane(self):
         return bool(self.target and self.target.startswith("%"))
 
-    def _pane(self, pane):
-        if pane is None:
-            if not self._is_pane:
-                raise ValueError("this capture covers several panes: name one")
-            return self.target
-        return pane
-
     def panes(self):
         """{pane id: file} for the panes in scope that have a file."""
         return self.session._output_files(self.target)
 
     def path(self, pane=None) -> Optional[str]:
-        """The file a pane's output goes to."""
-        return self.session.output_path(self._pane(pane))
-
-    def mark(self, pane=None):
-        """Where the output is now: an offset, or {pane id: offset} for a
-        window or session capture. Pass it as search(since=)."""
-        if pane is None and not self._is_pane:
-            return {p: file_size(f) for p, f in self.panes().items()}
-        return self.session.output_mark(self._pane(pane))
-
-    def search(self, pattern, pane=None, since=None, *, regex=True, flags=0):
-        """[OutputMatch] for lines in the captured output (since a mark())."""
-        target = pane if pane is not None else self.target
-        return self.session.search_output(target, pattern, since=since,
-                                          regex=regex, flags=flags)
-
-    def text(self, pane=None, since=None) -> str:
-        """A pane's captured output as plain text (since a mark())."""
-        return self.session.output_text(self._pane(pane), since=since)
+        """The file a pane's output goes to (this capture's pane by default)."""
+        if pane is None:
+            if not self._is_pane:
+                raise ValueError("this capture covers several panes: name one")
+            pane = self.target
+        return self.session.output_path(pane)
 
     def stop(self):
         """Stop piping the panes in scope; files are left as they are."""
@@ -694,7 +674,8 @@ class OutputExpect:
 
     def __enter__(self):
         self.watch = self.session.watch_output(self.target, self.pattern, once=True,
-                                               regex=self.regex, flags=self.flags)
+                                               regex=self.regex, flags=self.flags,
+                                               since="now")
         return self
 
     def __exit__(self, exc_type, exc, tb):

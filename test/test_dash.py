@@ -253,7 +253,7 @@ class TestHomeLog:
     def test_tee_copies_stdout_and_logging(self, session, capsys):
         logger = logging.getLogger("test_dash")
         logger.setLevel(logging.INFO)
-        session.tee_home()
+        session.log_home()
         print("to stdout")
         logger.info("to logging")
         sys.stdout.flush()
@@ -266,7 +266,7 @@ class TestHomeLog:
 
     def test_untee_on_kill(self, session):
         before = sys.stdout
-        session.tee_home()
+        session.log_home()
         assert sys.stdout is not before
         session.kill()
         assert sys.stdout is before

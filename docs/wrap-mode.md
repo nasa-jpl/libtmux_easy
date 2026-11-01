@@ -43,6 +43,8 @@ connection per run:
 ## Tee (`--tee FILE`, `$LTE_RUN_TEE`)
 
 Copies the command's output to FILE, like `tee`, without taking its terminal.
+The library uses it for `new_pane(cmd_capture=)` and `send_keys(cmd_capture=)`
+([output.md](output.md)); tlaunch-pane uses it with a FIFO.
 
 | where | how |
 |---|---|
@@ -52,7 +54,7 @@ Copies the command's output to FILE, like `tee`, without taking its terminal.
 
 FILE is published in pane options, chained into the `pipe-pane` call, so
 the library's watches and `search_output()` follow it
-([output-match.md](output-match.md)):
+([output.md](output.md)):
 
 | option | value |
 |---|---|

@@ -27,7 +27,7 @@ from packaging import version
 
 from . import close as _close, dash, starter as _starter
 from .dash import keys as _keys
-from ._tmux import SKIP_ENV, option, pane_env
+from ._tmux import option, pane_env
 from .dash.homelog import _SkipIfTeed, _Tee
 from .output import (POLL as _OUTPUT_POLL, QUIET as _OUTPUT_QUIET, Capture, OutputExpect,
                      OutputMatch, OutputReader, OutputWatch, PaneExited, file_size, plain_lines,
@@ -295,7 +295,7 @@ class TmuxSession(Session):
         title_status: bool = True,
         status_file: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
-        capture: Union[None, bool, str] = None,
+        pane_capture: Union[None, bool, str] = None,
         mode: str = PANE_MODE_SHELL,
         rc: Optional[str] = "~/.bashrc",
         wait_start: bool = True,
@@ -318,8 +318,8 @@ class TmuxSession(Session):
         'rc' is the rc file a shell or wrap pane's bash runs, for aliases and
         a prompt; the environment is put back afterwards. None: no rc file.
 
-        'capture' (True, or a directory) saves every pane's output to a
-        file: capture().
+        'pane_capture' (True, or a directory) saves every pane's output to
+        a file: capture().
 
         'mode' is new_pane()'s default mode: set_default_mode().
 
@@ -341,8 +341,8 @@ class TmuxSession(Session):
         session.bind_close_key()
         if env:
             session.copy_environment(env)
-        if capture:
-            session.capture(None, None if capture is True else capture)
+        if pane_capture:
+            session.capture(None, None if pane_capture is True else pane_capture)
         return session
 
     @classmethod
@@ -464,7 +464,7 @@ class TmuxSession(Session):
         self._window_env = {}     # window.id -> env, see new_window(env=)
         self._window_layout = {}  # window.id -> layout, see new_window(layout=)
         self._pane_env = {}       # pane.id -> the env it was started with
-        self._pane_tee = {}       # pane.id -> lte-run --tee file, see new_pane(tee=)
+        self._cmd_capture = {}    # pane.id -> lte-run --tee file, see new_pane(cmd_capture=)
         self._exit_status = {}    # pane.id -> ExitStatus (cached; see one-shot note)
         self._stopped_by = {}     # pane.id -> last signal stop_pane() sent this run
 
@@ -501,22 +501,25 @@ class TmuxSession(Session):
         self._dash_owned = True   # False for a dashboard adopted by current()
         self._dash_window = None  # window id, see dashboard()
         self._dash_sidebar = None
-        self._home_tee = None     # (file, (stdout, stderr), handler), see tee_home()
+        self._home_log = None     # (file, (stdout, stderr), handler), see log_home()
         self._on_close = []       # (callable, when), see on_close()
         self._close_keys = []     # keys borrowed by bind_close_key()
         self._reader = None       # OutputReader, started by the first output watch
         self._typed = {}          # pane.id -> recent texts typed into it (echo)
         self._pending_output = None  # new_pane(on_output=): watches for the claimed pane
-        self._pending_capture = None  # new_pane(capture=)
+        self._pending_capture = None  # new_pane(pane_capture=)
         self._scope_captures = {}  # None (session) or window id -> Capture
         self._capture_hooked = False
-        self._watch_dir = None    # files of panes watched but not captured
-        self.keep_output = False  # keep those files after the session
+        # Files made only for a watch (or a mark): deleted with the session.
+        self._temp_files = set()
+        self._kept_files = set()  # captured on purpose: never deleted
+        self._temp_scopes = {}    # target -> files in its dir before (a watch's window/session capture)
+        self.keep_output = False  # keep a watch's files too
 
     def new_window(
         self, name: str, layout: Union[None, str] = "tiled",
         env: Optional[Mapping[str, str]] = None,
-        capture: Union[None, bool, str] = None, **window_kwargs
+        pane_capture: Union[None, bool, str] = None, **window_kwargs
     ) -> Window:
         """A new window named 'name', holding only a placeholder pane until
         the first new_pane(). 'layout' is re-applied after each split (None:
@@ -526,8 +529,8 @@ class TmuxSession(Session):
         the session's (copy_environment()); None removes a variable. tmux has
         no window environment, so panes made by hand in it don't get it.
 
-        'capture' (True, or a directory) saves the output of every pane in
-        it to a file: capture()."""
+        'pane_capture' (True, or a directory) saves the output of every
+        pane in it to a file: capture()."""
 
         if self.unnamed_window:
             # By id: a dashboard() opened before this is window 0 now.
@@ -560,8 +563,8 @@ class TmuxSession(Session):
             # rows), so the sixth pane fails with 'no space for new pane'.
             self._window_layout[window.id] = layout
 
-        if capture:
-            self.capture(window, None if capture is True else capture)
+        if pane_capture:
+            self.capture(window, None if pane_capture is True else pane_capture)
         return window
 
 
@@ -725,9 +728,9 @@ class TmuxSession(Session):
         on_exit=None,
         target_pid_timeout: float = 1.0,
         env: Optional[Mapping[str, str]] = None,
-        tee: Optional[str] = None,
         on_output: Optional[Mapping[str, object]] = None,
-        capture: Union[None, bool, str] = None,
+        pane_capture: Union[None, bool, str] = None,
+        cmd_capture: Optional[str] = None,
         wait_start: Optional[bool] = None,
         **pane_kwargs,
     ) -> Pane:
@@ -764,10 +767,6 @@ class TmuxSession(Session):
         levels win, None removes. Exact: nothing from the tmux server's, and
         a shell pane's rc file can't change it (docs/environment.md).
 
-        'tee' (wrap mode only) is a file that also gets the command's output,
-        as plain text: 'lte-run --tee'. The pane still shows it. Complete by
-        the time on_exit fires; a rerun overwrites it.
-
         'on_exit', if given, is a callback fired with a PaneStatus the moment the
         command exits for any reason (normal exit, crash, or a signal -- including
         a Ctrl-C typed by a user who attached to the session). Equivalent to
@@ -777,9 +776,16 @@ class TmuxSession(Session):
         'on_output' ({pattern: callback(OutputMatch)}) watches the pane's
         output from its first byte: watch_output() for each item.
 
-        'capture' (True, or a file) saves the pane's output from its first
-        byte: capture(). None follows a window or session capture; False
-        opts out of one.
+        'pane_capture' (True, or a file) saves everything the pane shows,
+        raw, from its first byte: capture(). None follows a window or
+        session capture; False opts out of one.
+
+        'cmd_capture' (a file; wrap mode only) saves the command's output
+        only, as plain text: no rc output, prompt or typed line
+        ('lte-run --tee'). Each run rewrites it (respawn_pane(), a
+        send_keys(cmd_capture=)); complete when on_exit fires. While a run
+        has it, the pane's capture and watches read that file. See
+        docs/output.md.
 
         'wait_start' (wrap mode; None: the session's, see create()) True
         waits for the pane's shell to start, then for lte-run to report the
@@ -798,8 +804,8 @@ class TmuxSession(Session):
         mode = _check_mode(self.default_mode if mode is None else mode)
         if wait_start is None:
             wait_start = self.wait_start
-        if tee is not None and mode != PANE_MODE_WRAP:
-            raise ValueError("'tee' needs mode=PANE_MODE_WRAP (it is lte-run's --tee)")
+        if cmd_capture is not None and mode != PANE_MODE_WRAP:
+            raise ValueError("cmd_capture needs mode=PANE_MODE_WRAP (it is lte-run's --tee)")
         if self.unnamed_window:
             raise ValueError("Cannot create a new pane before creating a new window.")
         if self.current_window is None:
@@ -811,12 +817,12 @@ class TmuxSession(Session):
             or self.command_before["all"]
         )
 
-        if tee is not None:
-            pane_kwargs["_tee"] = os.path.abspath(tee)
+        if cmd_capture is not None:
+            pane_kwargs["_cmd_capture"] = os.path.abspath(cmd_capture)
         # Both used by _claim_pane(): the pane is piped as it is made (an
         # exec pane's command starts with it), then watched from byte 0.
         self._pending_output = on_output
-        self._pending_capture = capture
+        self._pending_capture = pane_capture
         try:
             if mode == PANE_MODE_EXEC:
                 pane = self._new_exec_pane(name, cmd, before, env, **pane_kwargs)
@@ -887,12 +893,12 @@ class TmuxSession(Session):
         )
         return ()
 
-    def _new_shell_pane(self, name, command, before, enter, mode, env, _tee=None,
+    def _new_shell_pane(self, name, command, before, enter, mode, env, _cmd_capture=None,
                         wait_start=True, **pane_kwargs):
         """Shell and wrap mode: type 'command' into the pane's shell."""
         pane, env = self._claim_pane(name, env, **pane_kwargs)
-        if _tee is not None:
-            self._pane_tee[pane.id] = _tee
+        if _cmd_capture is not None:
+            self._cmd_capture[pane.id] = _cmd_capture
         # lte-run reports the command's pid itself: nothing to wait for. The
         # shell runs what is typed once its rc file is done.
         early = mode == PANE_MODE_WRAP and enter and not wait_start
@@ -1022,10 +1028,15 @@ class TmuxSession(Session):
         return pane
 
     def send_keys(
-        self, command: str, enter: bool = True, target_pane: Union[Pane, str] = None
+        self, command: str, enter: bool = True, target_pane: Union[Pane, str] = None,
+        cmd_capture: Optional[str] = None,
     ):
         """Type 'command' into 'target_pane' (default: the last new_pane()).
-        ValueError for a pane not made by new_pane()."""
+        ValueError for a pane not made by new_pane().
+
+        'cmd_capture' (a file; a wrap pane only) runs 'command' under
+        lte-run, saving its output only: new_pane(cmd_capture=). It becomes
+        the pane's, for later reruns too."""
         if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
             raise ValueError("Must create a window and pane before sending commands.")
 
@@ -1039,6 +1050,15 @@ class TmuxSession(Session):
             raise ValueError(f"Pane {pane} is not a named pane tracked by this session.")
 
         logger.debug(f"Sending: {command}")
+        if cmd_capture is not None:
+            if self._pane_mode(pane) != PANE_MODE_WRAP:
+                raise ValueError("cmd_capture needs a wrap pane (it is lte-run's --tee)")
+            self._cmd_capture[pane.id] = os.path.abspath(cmd_capture)
+            self._send_wrapped(pane, command, enter)
+            if enter:
+                self._run_typed[pane.id] = time.monotonic()  # see _command_running()
+            self.commands.setdefault(pane_name, []).append(command)
+            return
         self._type(pane, command, enter)
         if enter and command.lstrip().startswith(("lte-run ", _wrap_prefix() + " ")):
             self._run_typed[pane.id] = time.monotonic()  # see _command_running()
@@ -1748,8 +1768,8 @@ class TmuxSession(Session):
         # must be set first too, or 'started' would be ignored as untracked.
         self._wrap_started[pane.id] = threading.Event()
         self.pane_modes[pane.id] = PANE_MODE_WRAP
-        tee = self._pane_tee.get(pane.id)
-        options = f"--tee {shlex.quote(tee)} -- " if tee else ""
+        log = self._cmd_capture.get(pane.id)
+        options = f"--tee {shlex.quote(log)} -- " if log else ""
         self._type(pane, f"{_wrap_prefix()} {options}{target}", enter, echoes)
 
     def _wrap_signal(self, pane, sig) -> bool:
@@ -1820,15 +1840,15 @@ class TmuxSession(Session):
         if capture is False:
             return None
         if capture and capture is not True:
-            return os.path.abspath(capture)
+            return self._note_file(os.path.abspath(capture), keep=True)
         log = f"{_safe_name(window.name)}.{_safe_name(name)}.log"
         if capture is True:
-            return os.path.join(self._output_dir(keep=True), log)
+            return self._note_file(os.path.join(self._output_dir(), log), keep=True)
         scope = self._scope_captures.get(window.id) or self._scope_captures.get(None)
         if scope is not None:
-            return os.path.join(scope.directory, log)
+            return self._note_file(os.path.join(scope.directory, log), scope.keep)
         if self._pending_output:
-            return os.path.join(self._output_dir(keep=False), log)
+            return self._note_file(os.path.join(self._output_dir(), log), keep=False)
         return None
 
     def _claimed(self, pane, capture):
@@ -1836,22 +1856,27 @@ class TmuxSession(Session):
         if capture is not None and self._pipe_info(pane.id)[2] != capture:
             self._pipe(pane, capture)  # the split's hook failed
         elif self._pending_capture is False and self._capture_hooked:
-            self._unpipe(pane)  # new_pane(capture=False): the scope's hook piped it
+            self._unpipe(pane)  # new_pane(pane_capture=False): the scope's hook piped it
         pending, self._pending_output = self._pending_output, None
         for pattern, callback in (pending or {}).items():
             self.watch_output(pane, pattern, callback, since="start")
 
-    def _output_dir(self, keep) -> str:
-        """Where capture files go by default: kept ones under the temp dir,
-        a watch's own in a dir deleted with the session (unless keep_output)."""
+    def _output_dir(self) -> str:
+        """Where capture files go by default, a watch's too."""
+        path = os.path.join(tempfile.gettempdir(), f"lte_output_{os.getuid()}",
+                            _safe_name(self.session_name))
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _note_file(self, path, keep) -> str:
+        """A capture file: kept, or (a new file, for a watch) deleted with
+        the session. A file there already (an earlier run's) is kept."""
         if keep:
-            path = os.path.join(tempfile.gettempdir(), f"lte_output_{os.getuid()}",
-                                _safe_name(self.session_name))
-            os.makedirs(path, exist_ok=True)
-            return path
-        if self._watch_dir is None:
-            self._watch_dir = tempfile.mkdtemp(prefix=f"lte_watch_{_safe_name(self.session_name)}_")
-        return self._watch_dir
+            self._kept_files.add(path)
+            self._temp_files.discard(path)
+        elif path not in self._kept_files and not os.path.exists(path):
+            self._temp_files.add(path)
+        return path
 
     def _log_name(self, pane, window_name=None) -> str:
         """'window.pane.log' for a named pane, else 'window.%id.log'."""
@@ -1988,22 +2013,29 @@ class TmuxSession(Session):
 
         'path': the file for a pane, the directory for a window or session
         (files 'window.pane.log'); by default under
-        $TMPDIR/lte_output_<uid>/<session>. 'keep=False' files are deleted
-        with the session unless 'keep_output' is set. lte-run --tee takes a
-        pane's pipe over for its run. Returns a Capture: path(), mark(),
-        search(), text(), stop(). See docs/output-match.md.
+        $TMPDIR/lte_output_<uid>/<session> (appended: a file there already
+        is kept). 'keep=False' files (a watch's) are deleted with the
+        session unless 'keep_output' is set. A run with a cmd_capture takes
+        the pane's pipe for the run. Returns a Capture: path(), panes(),
+        stop(); read with search_output() and output_text(). See
+        docs/output.md.
 
         '_snapshot' (a pane, a list): filled with the pane's scrollback, read
         with the pipe (see _pipe_many())."""
         kind, obj = self._resolve_scope(target)
         if kind == "pane":
             file = os.path.abspath(path) if path else \
-                os.path.join(self._output_dir(keep), self._log_name(obj))
-            cap = Capture(self, obj.id, file, keep)
+                os.path.join(self._output_dir(), self._log_name(obj))
+            if not keep and self._pipe_info(obj.id)[2] == file:
+                keep = file in self._kept_files  # already captured: as it was
+            cap = Capture(self, obj.id, self._note_file(file, keep), keep)
             self._pipe_many({obj.id: file}, snapshot=_snapshot)
             return cap
-        directory = os.path.abspath(path) if path else self._output_dir(keep)
+        directory = os.path.abspath(path) if path else self._output_dir()
         os.makedirs(directory, exist_ok=True)
+        if not keep:
+            self._temp_scopes[None if kind == "session" else obj.id] = \
+                (directory, set(os.listdir(directory)))
         self._ensure_capture_hooks()
         scope = ["-t", self.id] if kind == "session" else ["-w", "-t", obj.id]
         esc = directory.replace("#", "##")
@@ -2092,42 +2124,97 @@ class TmuxSession(Session):
         pane = self.resolve_target_pane(target_pane)
         return self._pipe_info(pane.id)[2] or None
 
-    def output_mark(self, target_pane: Union[Pane, str]) -> int:
-        """Where the pane's file ends now: pass as search_output(since=)."""
-        path = self.output_path(target_pane)
-        return file_size(path) if path else 0
+    def output_mark(self, target=None):
+        """Where a pane's output is now: pass it as 'since' to read or watch
+        only what comes after. An offset for a pane; {pane id: offset} for
+        a window or the session (None), where a pane made later counts from
+        its first byte. A pane, window or session not captured yet is
+        captured now (as a watch would), so nothing after the mark is lost."""
+        kind, obj = self._resolve_scope(target)
+        self._ensure_captured(kind, obj, quiet=True)
+        if kind == "pane":
+            path = self.output_path(obj)
+            return file_size(path) if path else 0
+        return {p: file_size(f) for p, f in
+                self._output_files(None if kind == "session" else obj.id).items()}
+
+    def _ensure_captured(self, kind, obj, quiet=False, snapshot=None):
+        """Capture (keep=False) what isn't yet. A pane piped by another tool:
+        RuntimeError, or nothing if 'quiet'. 'snapshot' as capture()'s."""
+        if kind == "pane":
+            piped, _, current = self._pipe_info(obj.id)
+            if piped and not current:
+                if quiet:
+                    return
+                raise RuntimeError(f"pane {self._name_for_pane_id(obj.id) or obj.id} is piped by "
+                                   "something else (tmux has one pipe per pane): can't watch it")
+            if not piped:
+                self.capture(obj, keep=False, _snapshot=snapshot)
+            return
+        target_id = None if kind == "session" else obj.id
+        if target_id not in self._scope_captures and None not in self._scope_captures:
+            self.capture(obj, keep=False)
+
+    @staticmethod
+    def _check_since(since):
+        if since in ("start", "now") or isinstance(since, (int, dict)):
+            return since
+        raise ValueError(f"since must be 'start', 'now' or an output_mark(), not {since!r}")
+
+    @staticmethod
+    def _begin(since, pane_id, path, start):
+        """The offset in a pane's file that 'since' means."""
+        if since == "start":
+            return start
+        if since == "now":
+            return file_size(path)
+        if isinstance(since, dict):
+            return since.get(pane_id, start)
+        return since
 
     def _file_lines(self, pane_id, path, since):
-        """(offset, line) of plain text from 'path' at 'since', without
-        the commands typed into the pane and our probes."""
+        """(offset, line) of plain text from 'path' at offset 'since',
+        without the commands typed into the pane and our probes."""
         try:
             with open(path, "rb") as f:
-                f.seek(since or 0)
+                f.seek(since)
                 data = f.read()
         except OSError:
             return
         for off, line in plain_lines(data):
             if self._is_output(pane_id, line):
-                yield (since or 0) + off, line
+                yield since + off, line
 
-    def search_output(self, target, pattern, since=None, *, regex: bool = True,
+    def _read_scope(self, kind, obj, since):
+        """{pane id: (offset, path)} to read for a pane, window or session;
+        None for a pane never captured (read its scrollback)."""
+        target = None if kind == "session" else obj.id
+        panes = {p: v for p, v in self._piped_panes().items() if target in (None, p, v[0])}
+        if kind == "pane" and obj.id not in panes:
+            return None
+        return {p: (self._begin(since, p, path, start), path)
+                for p, (_, _, path, start, _) in panes.items()}
+
+    def search_output(self, target, pattern, since="start", *, regex: bool = True,
                       flags: int = 0) -> list:
         """[OutputMatch] for the lines of a pane's, window's or the
         session's (None) captured output that match 'pattern' (re.search on
-        plain text). 'since': an offset, or {pane id: offset}, from
-        output_mark() / Capture.mark(). A pane never captured is searched in
-        what tmux keeps (scrollback)."""
+        plain text). 'since': "start" (where the capture began), "now", or
+        an output_mark(). A pane never captured is searched in what tmux
+        keeps (scrollback)."""
+        since = self._check_since(since)
         kind, obj = self._resolve_scope(target)
         rx = self._compile(pattern, regex, flags)
-        files = self._output_files(None if kind == "session" else obj.id)
         now = time.time()
-        if kind == "pane" and obj.id not in files:
+        files = self._read_scope(kind, obj, since)
+        if files is None:
+            if since != "start":
+                return []
             name = self._name_for_pane_id(obj.id)
             return [OutputMatch(obj.id, name, rx.pattern, m, line, now)
                     for line in self._scrollback(obj) for m in [rx.search(line)] if m]
         found = []
-        for pane_id, path in files.items():
-            begin = since.get(pane_id, 0) if isinstance(since, dict) else since
+        for pane_id, (begin, path) in files.items():
             name = self._name_for_pane_id(pane_id)
             for off, line in self._file_lines(pane_id, path, begin):
                 m = rx.search(line)
@@ -2135,18 +2222,20 @@ class TmuxSession(Session):
                     found.append(OutputMatch(pane_id, name, rx.pattern, m, line, now, off))
         return found
 
-    def output_text(self, target_pane: Union[Pane, str], since=None) -> str:
-        """The pane's captured output as plain text (from 'since', an
-        output_mark()); its scrollback if never captured."""
+    def output_text(self, target_pane: Union[Pane, str], since="start") -> str:
+        """The pane's captured output as plain text, from 'since' (as
+        search_output()'s); its scrollback if never captured."""
+        since = self._check_since(since)
         pane = self.resolve_target_pane(target_pane)
-        path = self.output_path(pane)
-        if not path:
-            return "\n".join(self._scrollback(pane))
-        return "\n".join(line for _, line in self._file_lines(pane.id, path, since))
+        files = self._read_scope("pane", pane, since)
+        if files is None:
+            return "\n".join(self._scrollback(pane)) if since == "start" else ""
+        begin, path = files[pane.id]
+        return "\n".join(line for _, line in self._file_lines(pane.id, path, begin))
 
     def watch_output(self, target, pattern, callback=None, *,
                      once: bool = False, regex: bool = True, flags: int = 0,
-                     since: str = "now", skip_echo: bool = True) -> OutputWatch:
+                     since="start", skip_echo: bool = True) -> OutputWatch:
         """Match each line a pane, a window or the session (None) prints
         against 'pattern' (re.search on plain text: colors and other escapes
         dropped), calling 'callback(OutputMatch)' on each match, on the
@@ -2155,39 +2244,39 @@ class TmuxSession(Session):
 
         Panes not yet captured are captured (keep=False) from now on.
         'regex=False' matches a plain substring. 'once' stops after the
-        first match. 'since="start"' also matches what was printed already:
-        the capture so far, or the scrollback of a pane only captured now.
-        Commands the library types are not output ('skip_echo'). Works in
-        every pane mode. See docs/output-match.md."""
-        if since not in ("now", "start"):
-            raise ValueError(f"since must be 'now' or 'start', not {since!r}")
+        first match. 'since' (as search_output()'s): "start" also matches
+        what was printed already (the capture so far, or the scrollback of
+        a pane only captured now), "now" only new lines, a mark what came
+        after it. Commands the library types are not output ('skip_echo').
+        Works in every pane mode. See docs/output.md."""
+        since = self._check_since(since)
         kind, obj = self._resolve_scope(target)
         rx = self._compile(pattern, regex, flags)
         scroll = []
         if kind == "pane":
             target_id, name = obj.id, self._name_for_pane_id(obj.id)
-            piped, _, current = self._pipe_info(obj.id)
-            if piped and not current:
-                raise RuntimeError(f"pane {name or obj.id} is piped by something else "
-                                   "(tmux has one pipe per pane): can't watch it")
-            if not piped:
-                # The scrollback is read in the same tmux call as the pipe
-                # starts: a line printed between two calls was in neither.
-                snapshot = [] if since == "start" else None
-                self.capture(obj, keep=False, _snapshot=snapshot)
-                scroll = list(self._scrollback(obj, snapshot or ()))
+            if isinstance(since, int):
+                since = {obj.id: since}
+            # The scrollback is read in the same tmux call as the pipe
+            # starts: a line printed between two calls was in neither.
+            snapshot = [] if since == "start" else None
+            self._ensure_captured(kind, obj, snapshot=snapshot)
+            scroll = list(self._scrollback(obj, snapshot)) if snapshot else []
         else:
+            if isinstance(since, int):
+                raise ValueError("an offset is a pane's mark: a window or session takes a dict")
             target_id = None if kind == "session" else obj.id
             name = None if kind == "session" else obj.name
-            if target_id not in self._scope_captures and None not in self._scope_captures:
-                self.capture(obj, keep=False)
+            self._ensure_captured(kind, obj)
         watch = OutputWatch(target_id, name, rx, callback, once, skip_echo)
         now = time.time()
         for line in scroll:
             if watch.done:
                 break
             watch._offer(line, now, target_id, name)
-        self._output_reader().add(watch, since="start" if since == "start" and not scroll else None)
+        if scroll or since == "now":
+            since = None  # the reader's "from now on"
+        self._output_reader().add(watch, since=since)
         return watch
 
     def unwatch_output(self, target=None):
@@ -2197,7 +2286,7 @@ class TmuxSession(Session):
             self._reader.remove_target(None if kind == "session" else obj.id)
 
     def wait_for_output(self, target, pattern, timeout: Optional[float] = None, *,
-                        since: str = "start", regex: bool = True,
+                        since="start", regex: bool = True,
                         flags: int = 0) -> OutputMatch:
         """Block until a pane (or a window, or the session) prints a line
         matching 'pattern' (see watch_output()); by default what it printed
@@ -2258,14 +2347,22 @@ class TmuxSession(Session):
         if self._reader is not None:
             self._reader.close()
             self._reader = None
-        watch_dir, self._watch_dir = self._watch_dir, None
+        temp, scopes = self._temp_files, self._temp_scopes
+        self._temp_files, self._temp_scopes = set(), {}
         try:
+            panes = self._piped_panes()
+            for pane_id, (window, _, path, _, _) in panes.items():
+                for target, (directory, before) in scopes.items():
+                    if target in (None, window) and os.path.dirname(path) == directory \
+                            and os.path.basename(path) not in before:
+                        temp.add(path)  # piped by a watch's window or session capture
+            temp -= self._kept_files
             # A session that stays (adopted, or kept): stop piping into
             # files about to go, and take our hooks and options back.
-            for pane_id, (_, piped, path, _, _) in self._piped_panes().items():
-                if piped and watch_dir and not self.keep_output and \
-                        path.startswith(watch_dir + os.sep):
-                    self._tmux_run(*guarded_unpipe(pane_id))
+            if not self.keep_output:
+                for pane_id, (_, piped, path, _, _) in panes.items():
+                    if piped and path in temp:
+                        self._tmux_run(*guarded_unpipe(pane_id))
             if self._capture_hooked and self._adopted:
                 for hook in _PIPE_HOOKS:
                     self._tmux_run("set-hook", "-u", "-t", self.id, hook)
@@ -2274,11 +2371,12 @@ class TmuxSession(Session):
         except Exception:
             logger.debug("output capture cleanup failed", exc_info=True)
         self._capture_hooked = False
-        if watch_dir:
+        if temp:
             if self.keep_output:
-                logger.info(f"output of watched panes kept in {watch_dir}")
+                logger.info(f"output of watched panes kept: {', '.join(sorted(temp))}")
             else:
-                shutil.rmtree(watch_dir, ignore_errors=True)
+                for path in temp:
+                    _remove(path)
 
 
     # =============== Closing ===============
@@ -2446,7 +2544,7 @@ class TmuxSession(Session):
     def _close_wrap(self):
         """Close the wrap-mode listener and remove its dir. Idempotent."""
         self._close_output()
-        self._untee_home()
+        self._unlog_home()
         self._give_back_close_keys()
         if self._wrap_listener is not None:
             self._wrap_listener.close()
@@ -2462,7 +2560,7 @@ class TmuxSession(Session):
         name: str = "dash",
         width: Union[int, str] = dash.AUTO,
         select: bool = True,
-        tee: bool = True,
+        log_home: bool = True,
         mouse: bool = True,
         key: Optional[str] = None,
         initial: Union[Pane, str, None] = None,
@@ -2473,8 +2571,9 @@ class TmuxSession(Session):
 
         'width' is the sidebar's width: columns, a percentage like "25%", or
         "auto" (default): sized once, at start, to fit the longest pane name
-        and status listed then. 'select' switches attached clients to it. 'tee' calls tee_home(), so the viewport's home entry
-        shows this script's output. 'mouse' turns on tmux mouse support for
+        and status listed then. 'select' switches attached clients to it.
+        'log_home' calls log_home(), so the viewport's home entry shows
+        this script's output. 'mouse' turns on tmux mouse support for
         the session (click the sidebar, drag the border to resize). 'initial'
         (a Pane or pane name) is the pane the sidebar selects and shows first,
         instead of home. 'key' is the prefix key back to the dashboard (""
@@ -2500,8 +2599,8 @@ class TmuxSession(Session):
                 if pane is not None:
                     self.watch_pane(pane)  # status-file updates; no-op if armed
             self._write_status_file()
-            if tee:
-                self.tee_home()
+            if log_home:
+                self.log_home()
 
             window_id, sidebar = dash.open_window(
                 self.id, self.status_file, self.home_log,
@@ -2573,17 +2672,17 @@ class TmuxSession(Session):
 
     @property
     def home_log(self) -> Optional[str]:
-        """The file the dashboard's home pane follows. See tee_home()."""
+        """The file the dashboard's home pane follows. See log_home()."""
         return os.path.join(self._wrap_dir, dash.HOME_LOG) if self._wrap_dir else None
 
-    def tee_home(self, stdout: bool = True, logs: bool = True):
+    def log_home(self, stdout: bool = True, logs: bool = True):
         """Copy this script's output to home_log, for the dashboard's home pane.
 
         'stdout' tees sys.stdout and sys.stderr (Python-level writes only; a
         subprocess writing to the inherited fds is not copied). 'logs' adds a
         root logging handler, which sees records at the levels the root
         logger already allows. Undone by kill_session(). Idempotent."""
-        if self._home_tee is not None:
+        if self._home_log is not None:
             return
         log = open(self.home_log, "a", buffering=1)
         saved = (sys.stdout, sys.stderr)
@@ -2596,13 +2695,13 @@ class TmuxSession(Session):
                 "%(asctime)s %(levelname)s %(name)s: %(message)s", "%H:%M:%S"))
             handler.addFilter(_SkipIfTeed())
             logging.getLogger().addHandler(handler)
-        self._home_tee = (log, saved, handler)
+        self._home_log = (log, saved, handler)
 
-    def _untee_home(self):
-        if self._home_tee is None:
+    def _unlog_home(self):
+        if self._home_log is None:
             return
-        log, (stdout, stderr), handler = self._home_tee
-        self._home_tee = None
+        log, (stdout, stderr), handler = self._home_log
+        self._home_log = None
         if isinstance(sys.stdout, _Tee):
             sys.stdout = stdout
         if isinstance(sys.stderr, _Tee):

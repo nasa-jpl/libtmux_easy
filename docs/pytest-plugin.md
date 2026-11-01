@@ -136,50 +136,14 @@ it stays valid after a stop and a new start.
 
 ## Testing a session script
 
-A session script (a libtmux_easy script that builds a tmux session) is
-like a `ros2 launch` file: it brings a system up. Three ways to test one,
-from most control to least:
+A session script brings a system up in tmux, like a `ros2 launch` file.
+Full guide: [testing-scripts.md](testing-scripts.md).
 
-| method | the script | the test | demo |
-|---|---|---|---|
-| 1. layout | `panes()` returns `[("window:pane", cmd), ...]`; `main()` lays it out | `start()` each: `ready=`, gates, restarts; any mode | `demos/pytest/script_layout` |
-| 2. build | `build(session)` makes the windows and panes; `main()` adds runtime extras (dashboard, watches) | `procs.build(build)`: the script's own code on a session the plugin controls | `demos/pytest/script_build` |
-| 3. adopt | anything that makes a tmux session, unchanged | `procs.adopt("python3 launch.py")`: run it, watch what it made | `demos/pytest/script_adopt` |
-
-**2. `build(fn, *args, exits=None, **kwargs)`** calls `fn(session, *args,
-**kwargs)`. Each `new_pane()` becomes a process of the group, named by the
-script (`sim:gazebo`), logged from its first byte; windows are
-`<Class>/<window>` in the run's tmux session (always tmux). Panes default
-to wrap mode. `attach()`, `dashboard()` and the kill/close calls do
-nothing; `send_command_before()`, `copy_environment()` and
-`set_default_mode()` apply to the script's windows only. `procs.session`
-is that session, for the script's other functions:
-
-```python
-cls.procs.build(launch.build, port=PORT, exits={"jobs:migrate": 0})
-launch.monitor(cls.procs.session, alert=cls.alerts.append)   # the script's own watches
-with cls.procs.expect_exit("workers:ticker"):
-    cls.procs["workers:ticker"].kill()                       # does monitor() notice?
-```
-
-**3. `adopt(cmd, name="script", ready=None, timeout=60, exits=None)`** runs
-`cmd` as process `name` on a tmux server of its own (`TMUX_TMPDIR`): its
-session names can't clash with yours, and none of it shows in the run's
-dashboard. `LTE_HEADLESS=1` makes `attach()` and `dashboard()` do nothing.
-The script must exit 0 within `timeout`; or, with `ready=`, print a
-matching line, and it stays a process of the group. Then every pane on
-that server is a process, named `window:pane` (`new_pane()`'s name, else
-the pane index). Returns their `Process`es.
-
-| what adopt knows | wrap pane | exec pane | shell pane, plain tmux |
-|---|---|---|---|
-| running, deaths | yes | yes | yes (the shell has children) |
-| exit code | exact (lte-run writes it to `$LTE_RUN_STATUS_DIR`) | exact (tmux; see KNOWN_ISSUES) | unknown; a SIGINT stop counts as clean |
-| output | from the first byte if the script captures (`capture=True`), else the pane's history, then a pipe | same | same |
-| stop | Ctrl-C into the pane, then SIGTERM, SIGKILL | same | same |
-| restart | no | no | no |
-
-On failure the server is kept: `tmux -S <socket> attach`, printed at the end.
+| method | the test | demo |
+|---|---|---|
+| 1. layout | `start()` each of the script's `panes()` | `demos/pytest/script_layout` |
+| 2. build | `procs.build(launch.build)`: the script's `build(session)` on the run's session | `demos/pytest/script_build` |
+| 3. adopt | `procs.adopt("python3 launch.py")`: run it as it is, on a tmux server of its own; every pane it made is a process | `demos/pytest/script_adopt` |
 
 Module functions: `check_health()` (every open group), `arg(name,
 default)`, `parametrize(names, values)`.
@@ -223,17 +187,17 @@ drop the overlay.
   option of its own.
 - **Backends.** `_SubprocessBackend`: `Popen(["bash", "-c", cmd])` per
   process, a reader thread (plain text, log, `fail_on`, `--echo`) and a
-  waiter thread (exit). `_TmuxBackend`: wrap-mode panes (`lte-run --tee
-  <log>`), exit and output watches from `TmuxSession`. The session has
+  waiter thread (exit). `_TmuxBackend`: wrap-mode panes (`cmd_capture=<log>`,
+  i.e. `lte-run --tee`), exit and output watches from `TmuxSession`. The session has
   `wait_start=False`: `start()` returns at once and all rc files run in
   parallel; a process is `starting` until lte-run reports (docs/wrap-mode.md).
   `Processes` holds
   what is common: names, `_Run` per start (stopping, died, finished),
   deaths, `fail_on` hits, report-once counters.
-- **Reading output.** Subprocess: the reader's lines. tmux: the `--tee`
-  log, not `capture-pane`, which also holds the shell's prompt and the typed
-  command. `--tee` rewrites the log on each start, so it holds the latest
-  start.
+- **Reading output.** Subprocess: the reader's lines. tmux: the
+  `cmd_capture` log, not a pane capture, which also holds the shell's
+  prompt and the typed command. Each start rewrites it, so it holds the
+  latest start ([output.md](output.md)).
 - **One registry.** Every open `Processes` is in `_open`; `check_health()`
   and the hooks walk it, so helpers deep in test code need no handle.
   `Processes()` works outside fixtures through `_plugin`, filled by a

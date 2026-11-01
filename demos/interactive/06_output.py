@@ -3,8 +3,9 @@
 
 tmux pipes a pane's output to a file (pipe-pane); everything reads the file.
 Watch a pane for a pattern, wait for a ready line, capture a window and
-grep it later, catch the answer to something you send, let lte-run --tee
-start the pipe, and watch the whole session, panes made by hand included.
+grep it later, catch the answer to something you send, save one command's
+output (cmd_capture), and watch the whole session, panes made by hand
+included.
 """
 
 import os
@@ -82,13 +83,13 @@ def main():
         tour.step("Capture now, search later")
         tour.say(f"""
             capture() saves output without watching it: no events, no reading,
-            just a file per pane. new_window(capture=DIR) covers every pane made
+            just a file per pane. new_window(pane_capture=DIR) covers every pane made
             in the window, now or later. These files are kept:
 
                 {keep}
         """)
         tour.pause("start two workers in a captured window")
-        s.new_window("workers", capture=keep)
+        s.new_window("workers", pane_capture=keep)
         s.new_pane("alpha", runs_forever("alpha"), mode="wrap")
         s.new_pane("beta", runs_forever("beta"), mode="wrap")
         time.sleep(3.5)
@@ -101,49 +102,48 @@ def main():
         tour.step("Catch the answer to something you send")
         tour.say("""
             expect() arms a watch on entry and waits at exit, so a fast answer
-            can't slip past. mark() and since= search only what came after a
-            point: earlier matches don't count.
+            can't slip past. output_mark() and since= read only what came after
+            a point: earlier matches don't count.
         """)
         tour.pause("send a command to a shell pane and catch its answer")
         s.new_window("shell")
         sh = s.new_pane("bash", "bash --norc", mode="exec")
-        cap = s.capture(sh, os.path.join(keep, "shell.log"))
+        s.capture(sh, os.path.join(keep, "shell.log"))
         s.send_keys("echo pong 1", target_pane=sh)
         time.sleep(0.5)
-        mark = cap.mark()
+        mark = s.output_mark(sh)
         with s.expect(sh, r"pong (\d+)", timeout=5) as e:
             s.send_keys("echo pong 2", target_pane=sh)
         print(f"  expect: {e.match.line!r}")
-        since = cap.search("pong", since=mark)
-        every = cap.search("pong")
+        since = s.search_output(sh, "pong", since=mark)
+        every = s.search_output(sh, "pong")
         print(f"  since the mark: {[h.line for h in since]}")
         print(f"  whole capture:  {[h.line for h in every]}")
 
-        tour.step("Let lte-run start the pipe")
+        tour.step("Save one command's output")
         tee = os.path.join(keep, "job.log")
         tour.say(f"""
-            A pane with no capture of its own. Typed into it:
-
-                lte-run --tee {tee} -- <job>
-
-            lte-run pipes the pane for the run (plain text) and closes the pipe
-            when the job ends. The library finds the file by itself: a watch
-            or search later just works. A rerun overwrites the file; -a appends.
-            expect() arms its watch before the job is typed, and lte-run takes
-            that watch's pipe over: no line slips past.
+            A pane capture saves all the pane shows: rc output, prompt, typed
+            lines. cmd_capture= saves the command's output only, plain text:
+            send_keys(cmd, cmd_capture="{os.path.basename(tee)}") in a wrap
+            pane types 'lte-run --tee FILE -- cmd'. lte-run pipes the pane for
+            the run and closes the pipe when it ends; a watch or search finds
+            the file by itself. A rerun overwrites it; 'lte-run --tee -a',
+            typed by hand, appends.
         """)
-        tour.pause("run a job twice: once plain, once with -a")
+        tour.pause("run a job twice: once with cmd_capture, once with -a")
         s.new_window("jobs")
-        job = s.new_pane("job", "bash --norc", mode="shell")
+        job = s.new_pane("job", "true", mode="wrap")
+        s.wait_for_exit(job, timeout=10)
         with s.expect(job, "job done", timeout=10):
-            s.send_keys(f"{lte_run()} --tee {tee} -- sh -c 'echo job run 1; sleep 1; echo job done'",
-                        target_pane=job)
+            s.send_keys("sh -c 'echo job run 1; sleep 1; echo job done'", target_pane=job,
+                        cmd_capture=tee)
         path = s.output_path(job)
         print(f"  file: {os.path.basename(path)}")
         with s.expect(job, "job run 2", timeout=10):
             s.send_keys(f"{lte_run()} --tee {tee} -a -- sh -c 'echo job run 2'", target_pane=job)
         time.sleep(0.5)
-        text = s.output_text(job)
+        text = s.output_text(job, since=0)  # the whole file; "start" is this run's
         print("  the file now:", text.splitlines())
 
         tour.step("Watch the whole session")
@@ -153,7 +153,7 @@ def main():
             pipe a new pane from its first byte.
         """)
         tour.pause("watch for 'hello' everywhere, then make a pane by hand")
-        hello = s.watch_output(None, r"\bhello\b", show)
+        hello = s.watch_output(None, r"\bhello\b", show, since="now")
         if not tour.auto:
             tour.say("""
                 Make one yourself: select jobs:job, Enter, then prefix % (or

@@ -34,7 +34,7 @@ STATUS_OPTION = "@lte_status"
 RUN_DIR_OPTION = "@lte_run_dir"
 HOME_STATUS_OPTION = "@lte_home_status"
 
-HOME_LOG = "home.log"  # in the session's control dir; see TmuxSession.tee_home()
+HOME_LOG = "home.log"  # in the session's control dir; see TmuxSession.log_home()
 
 # The prefix key the sidebar borrows while it runs (keys.py): back to the
 # dashboard from any window of its session, with no ~/.tmux.conf entry.

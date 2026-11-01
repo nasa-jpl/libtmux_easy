@@ -50,6 +50,8 @@
 | No stdout/stderr split: a pty (tmux) or one pipe (subprocess) merges them | match on content |
 | The `--tmux` session closes when pytest ends, even on failure | `--keep-open` |
 | `pytest.skip` after an abort reports the plugin's file as its location | the reason names the failed test |
+| `adopt()`: the panes can't be restarted (the plugin doesn't own their commands) | `build()` |
+| `adopt()`: a shell pane's exit code is unknown; a plain-tmux pane without `remain-on-exit` too | wrap mode; `stop_codes=` |
 
 ## Open bugs
 

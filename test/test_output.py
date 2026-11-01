@@ -1,5 +1,6 @@
 """Output capture and watches: capture(), search_output(), watch_output(),
-wait_for_output(), expect(), new_pane(on_output=, capture=), lte-run --tee."""
+wait_for_output(), expect(), new_pane(on_output=, pane_capture=, cmd_capture=)."""
+import contextlib
 import os
 import threading
 import time
@@ -87,7 +88,7 @@ def test_wait_for_output_sees_earlier_output(session):
 
 def test_wait_for_output_sees_earlier_capture(session, tmp_path):
     pane = session.new_pane("p", "echo listening on 8080; sleep 30", mode=PANE_MODE_EXEC,
-                            capture=str(tmp_path / "p.log"))
+                            pane_capture=str(tmp_path / "p.log"))
     time.sleep(0.5)
     m = session.wait_for_output(pane, r"listening on (\d+)", timeout=5)
     assert m.match.group(1) == "8080" and m.offset == 0
@@ -124,7 +125,7 @@ def test_wait_for_output_next_typed_run(session):
 
 def test_last_words_wrap(session):
     """A line printed just before the command exits: the pane's shell outlives
-    it, so tmux keeps it (exec mode can lose it, see output-match.md)."""
+    it, so tmux keeps it (exec mode can lose it, see output.md)."""
     lines, cb = collect()
     session.new_pane("p", "sh -c 'echo boom; exit 3'", mode=PANE_MODE_WRAP, on_output={"boom": cb})
     assert wait_until(lambda: lines == ["boom"])
@@ -157,7 +158,7 @@ def test_cancel_and_unwatch(session):
 def test_flood_elsewhere(session):
     """A pane printing as fast as it can, captured but unwatched, doesn't hold
     up a match in another. Unwatched, its file is never read."""
-    flood = session.new_pane("flood", "yes", mode=PANE_MODE_EXEC, capture=True)
+    flood = session.new_pane("flood", "yes", mode=PANE_MODE_EXEC, pane_capture=True)
     pane = session.new_pane("p", "sleep 1; echo needle; sleep 30", mode=PANE_MODE_EXEC)
     t0 = time.monotonic()
     session.wait_for_output(pane, "needle", timeout=10)
@@ -203,16 +204,16 @@ def test_watch_window_and_session(session):
 # ----- capture -----
 
 def test_capture_pane_from_first_byte(session, tmp_path):
-    """capture=PATH, and capture=True (the default dir)."""
+    """pane_capture=PATH, and pane_capture=True (the default dir)."""
     path = tmp_path / "web.log"
     pane = session.new_pane("web", r"printf '\033[32mfirst\033[0m\n'; sleep 30",
-                            mode=PANE_MODE_EXEC, capture=str(path))
+                            mode=PANE_MODE_EXEC, pane_capture=str(path))
     assert wait_until(lambda: path.exists() and b"first" in read(path))
     assert b"\x1b[32m" in read(path)  # raw
     assert session.output_path(pane) == str(path)
     assert [m.line for m in session.search_output(pane, "first")] == ["first"]
 
-    default = session.new_pane("api", "echo hi; sleep 30", mode=PANE_MODE_EXEC, capture=True)
+    default = session.new_pane("api", "echo hi; sleep 30", mode=PANE_MODE_EXEC, pane_capture=True)
     default_path = session.output_path(default)
     assert os.path.basename(default_path) == "main.api.log"
     assert wait_until(lambda: b"hi" in read(default_path))
@@ -231,13 +232,15 @@ def test_capture_exec_skips_the_starting_shell(make_session, tmp_path):
     finally:
         tmux("set-option", "-gu", "default-command")
     path = tmp_path / "out.log"
-    pane = session.new_pane("p", "echo first; sleep 30", mode=PANE_MODE_EXEC, capture=str(path))
+    pane = session.new_pane("p", "echo first; sleep 30", mode=PANE_MODE_EXEC, pane_capture=str(path))
     assert wait_until(lambda: b"first" in read(path))
     assert [m.line for m in session.search_output(pane, ".")] == ["first"]
 
 
 def test_watch_only_files_deleted(make_session):
     s = make_session()
+    with contextlib.suppress(FileNotFoundError):  # an earlier run's: it would be kept
+        os.remove(os.path.join(s._output_dir(), "main.p.log"))
     pane = s.new_pane("p", "echo x; sleep 30", mode=PANE_MODE_EXEC, on_output={"x": None})
     path = s.output_path(pane)
     assert wait_until(lambda: os.path.exists(path) and b"x" in read(path))
@@ -250,12 +253,39 @@ def test_watch_only_files_deleted(make_session):
     path = s.output_path(pane)
     s.kill()
     assert os.path.exists(path)
+    os.remove(path)
+
+
+def test_watch_files_in_the_output_dir(make_session):
+    """A watch's file goes where captures do; one there already (an earlier
+    run's capture, appended to) is kept, a pane captured on purpose too."""
+    s = make_session("lte-test-3")
+    for name in ("main.new.log", "main.kept.log"):  # an earlier failed run's
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(s._output_dir(), name))
+    old = os.path.join(s._output_dir(), "main.old.log")
+    with open(old, "w") as f:
+        f.write("earlier run\n")
+    a = s.new_pane("old", "echo x; sleep 30", mode=PANE_MODE_EXEC, on_output={"x": None})
+    b = s.new_pane("new", "echo x; sleep 30", mode=PANE_MODE_EXEC)
+    s.watch_output(b, "x")
+    c = s.new_pane("kept", "echo x; sleep 30", mode=PANE_MODE_EXEC)
+    s.watch_output(c, "x")
+    s.capture(c)  # on purpose now
+    paths = [s.output_path(p) for p in (a, b, c)]
+    assert {os.path.dirname(p) for p in paths} == {s._output_dir()}
+    assert wait_until(lambda: all(os.path.exists(p) for p in paths))
+    s.kill()
+    assert [os.path.exists(p) for p in paths] == [True, False, True]
+    assert read(old).startswith(b"earlier run")
+    for p in (paths[0], paths[2]):
+        os.remove(p)
 
 
 def test_session_capture(make_session, tmp_path):
     """Library panes get readable names; panes made by hand are piped too,
     from their first line."""
-    s = make_session(capture=str(tmp_path))
+    s = make_session(pane_capture=str(tmp_path))
     s.new_pane("web", "echo hello; sleep 30", mode=PANE_MODE_EXEC)
     hand = s.server.cmd("split-window", "-t", s.current_window.id, "-P", "-F", "#{pane_id}",
                         "echo by hand; sleep 30").stdout[0]
@@ -283,9 +313,9 @@ def test_capture_high_pane_ids(session, tmp_path):
 
 
 def test_window_capture_and_opt_out(session, tmp_path):
-    session.new_window("logs", capture=str(tmp_path))
+    session.new_window("logs", pane_capture=str(tmp_path))
     a = session.new_pane("a", "echo a; sleep 30", mode=PANE_MODE_EXEC)
-    b = session.new_pane("b", "echo b; sleep 30", mode=PANE_MODE_EXEC, capture=False)
+    b = session.new_pane("b", "echo b; sleep 30", mode=PANE_MODE_EXEC, pane_capture=False)
     session.new_window("quiet")
     c = session.new_pane("c", "echo c; sleep 30", mode=PANE_MODE_EXEC)
     assert wait_until(lambda: (tmp_path / "logs.a.log").exists())
@@ -298,15 +328,58 @@ def test_capture_later_mark_search_stop(session, tmp_path):
     session.send_keys("echo before", target_pane=pane)
     cap = session.capture(pane, str(tmp_path / "p.log"))
     session.send_keys("echo one", target_pane=pane)
-    assert wait_until(lambda: cap.search("^one"))
-    mark = cap.mark()
+    assert wait_until(lambda: session.search_output(pane, "^one"))
+    mark = session.output_mark(pane)
     session.send_keys("echo two", target_pane=pane)
-    assert wait_until(lambda: cap.search("^two", since=mark))
-    assert not cap.search("^one", since=mark)
-    assert not cap.search("^before")  # from now on
-    assert "two" in cap.text(since=mark)
+    assert wait_until(lambda: session.search_output(pane, "^two", since=mark))
+    assert not session.search_output(pane, "^one", since=mark)
+    assert not session.search_output(pane, "^before")  # from the capture's start
+    assert not session.search_output(pane, ".", since="now")
+    assert "two" in session.output_text(pane, since=mark)
+    assert cap.path() == str(tmp_path / "p.log")
     cap.stop()
     assert not piped(session, pane)
+
+
+def test_since_start_is_the_default(session, tmp_path):
+    """watch_output(), like wait_for_output() and the reads, counts what
+    the pane printed already; since="now" doesn't."""
+    pane = session.new_pane("p", "echo old; sleep 30", mode=PANE_MODE_EXEC,
+                            pane_capture=str(tmp_path / "p.log"))
+    assert session.wait_for_output(pane, "old", timeout=5)
+    every, now = session.watch_output(pane, "old"), session.watch_output(pane, "old", since="now")
+    assert wait_until(lambda: every.count == 1)
+    time.sleep(0.3)
+    assert now.count == 0
+    with pytest.raises(ValueError, match="since"):
+        session.watch_output(pane, "old", since="later")
+
+
+def test_mark_on_uncaptured_pane(session):
+    """output_mark() captures a pane not captured yet, so a watch from the
+    mark sees all that comes after it, and nothing before."""
+    pane = session.new_pane("p", "bash --norc", mode=PANE_MODE_EXEC)
+    session.send_keys("echo before", target_pane=pane)
+    assert wait_until(lambda: session.search_output(pane, "^before"))  # scrollback
+    mark = session.output_mark(pane)
+    assert piped(session, pane)
+    session.send_keys("echo after", target_pane=pane)
+    assert session.wait_for_output(pane, "^after", timeout=5, since=mark).line == "after"
+    with pytest.raises(TimeoutError):
+        session.wait_for_output(pane, "^before", timeout=0.5, since=mark)
+
+
+def test_window_mark(session):
+    """A window's mark is {pane: offset}; a pane made after it counts from
+    its first byte."""
+    a = session.new_pane("a", "bash --norc", mode=PANE_MODE_EXEC)
+    session.send_keys("echo a1", target_pane=a)
+    mark = session.output_mark("main")
+    assert set(mark) == {a.id}
+    session.send_keys("echo a2", target_pane=a)
+    session.new_pane("b", "echo b1; sleep 30", mode=PANE_MODE_EXEC)
+    assert wait_until(lambda: sorted(m.line for m in session.search_output(
+        "main", "^[ab][12]$", since=mark)) == ["a2", "b1"])
 
 
 def test_watch_now_ignores_earlier_capture(session, tmp_path):
@@ -322,13 +395,13 @@ def test_watch_now_ignores_earlier_capture(session, tmp_path):
     assert e.match.line == "pong 2"
 
 
-# ----- lte-run --tee -----
+# ----- cmd_capture (lte-run --tee) -----
 
 def test_tee_starts_pipe_then_watch(session, tmp_path):
     """No capture: lte-run --tee pipes the pane; a later watch reads its file."""
     tee = tmp_path / "run.log"
     pane = session.new_pane("p", "echo started; sleep 1; echo later; sleep 30",
-                            mode=PANE_MODE_WRAP, tee=str(tee))
+                            mode=PANE_MODE_WRAP, cmd_capture=str(tee))
     assert wait_until(lambda: tee.exists() and b"started" in read(tee))
     assert session.output_path(pane) == str(tee)
     assert session.wait_for_output(pane, "started", timeout=5).line == "started"
@@ -339,7 +412,7 @@ def test_tee_overwrite_and_append(session, tmp_path):
     """A rerun overwrites the file (the watch follows), -a appends."""
     tee = tmp_path / "run.log"
     lines, cb = collect()
-    pane = session.new_pane("p", "echo run1", mode=PANE_MODE_WRAP, tee=str(tee))
+    pane = session.new_pane("p", "echo run1", mode=PANE_MODE_WRAP, cmd_capture=str(tee))
     session.watch_output(pane, "^run", cb, since="start")
     assert wait_until(lambda: lines == ["run1"])
     session.respawn_pane(pane, "echo run2")
@@ -350,12 +423,26 @@ def test_tee_overwrite_and_append(session, tmp_path):
     assert b"run2" in read(tee) and b"run3" in read(tee)
 
 
+def test_send_keys_cmd_capture(session, tmp_path):
+    """send_keys(cmd_capture=) runs the command under lte-run --tee: its
+    output only, in plain text; a shell pane can't."""
+    pane = session.new_pane("p", "true", mode=PANE_MODE_WRAP)
+    assert session.wait_for_exit(pane, timeout=5).code == 0
+    log = tmp_path / "cmd.log"
+    session.send_keys(r"printf '\033[1mbold\033[0m\n'; exit 3", target_pane=pane,
+                      cmd_capture=str(log))
+    assert wait_until(lambda: session.exit_status(pane).code == 3)
+    assert read(log) == b"bold\n"
+    shell = session.new_pane("s", "sleep 30", mode=PANE_MODE_SHELL)
+    with pytest.raises(ValueError, match="cmd_capture"):
+        session.send_keys("true", target_pane=shell, cmd_capture=str(tmp_path / "x.log"))
+
 def test_tee_takes_over_capture(make_session, tmp_path):
     """Under a session capture, the run's output goes to --tee's file; the
     pipe closes when the command ends."""
-    s = make_session(capture=str(tmp_path / "cap"))
+    s = make_session(pane_capture=str(tmp_path / "cap"))
     tee = tmp_path / "run.log"
-    pane = s.new_pane("p", "echo hi; sleep 0.5", mode=PANE_MODE_WRAP, tee=str(tee))
+    pane = s.new_pane("p", "echo hi; sleep 0.5", mode=PANE_MODE_WRAP, cmd_capture=str(tee))
     assert wait_until(lambda: tee.exists() and b"hi" in read(tee))
     assert s.output_path(pane) == str(tee)
     assert wait_until(lambda: not piped(s, pane))

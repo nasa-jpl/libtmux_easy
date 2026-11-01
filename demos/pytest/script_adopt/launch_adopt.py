@@ -14,9 +14,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=8000)
 args = parser.parse_args()
 
-# capture=True: each pane's output to a file from its first byte. Also keeps
-# wait_for_output() below from missing a line (docs/KNOWN_ISSUES.md).
-session = TmuxSession.create("demo_adopt", mode="wrap", capture=True)
+# pane_capture=True: each pane's output to a file from its first byte, which an
+# adopting test reads too.
+session = TmuxSession.create("demo_adopt", mode="wrap", pane_capture=True)
 session.new_window("servers")
 session.new_pane("web", f"{PY} -u -m http.server {args.port} --bind 127.0.0.1")
 session.wait_for_output("servers:web", r"Serving HTTP", timeout=10)

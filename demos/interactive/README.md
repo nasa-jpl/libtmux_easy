@@ -20,7 +20,7 @@ cd demos/interactive
 | `03_process_control.py` | `on_exit` events, a Ctrl-C you type, `stop_pane` escalation, `stop_all`, `respawn_pane` |
 | `04_dashboard.py` | the sidebar: browse, focus, `x` / `r` actions, `dashboard_pane`, many panes |
 | `05_monitoring.py` | the status file read by another program; a supervisor whose exit status hides failures |
-| `06_output.py` | output: `on_output` events, `wait_for_output`, `capture` and `search_output`, `expect`, `lte-run --tee`, a session-wide watch |
+| `06_output.py` | output: `on_output` events, `wait_for_output`, `capture` and `search_output`, `expect`, `cmd_capture`, a session-wide watch |
 
 ## How a tour runs
 

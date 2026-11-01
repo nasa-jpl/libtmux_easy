@@ -143,18 +143,18 @@ reruns typed by hand).
 
 | method | |
 |---|---|
-| `TmuxSession.create(name, env=None, mode="shell", capture=None, status_file=None, rc="~/.bashrc", wait_start=True)` | a new session (replaces one of that name) |
+| `TmuxSession.create(name, env=None, mode="shell", pane_capture=None, status_file=None, rc="~/.bashrc", wait_start=True)` | a new session (replaces one of that name) |
 | `TmuxSession.current(env=None, mode="shell", rc="~/.bashrc", wait_start=True)` | adopt the session this process runs in |
-| `new_window(name, layout="tiled", env=None, capture=None)` | a window; the next panes go in it |
-| `new_pane(name, cmd, mode=None, on_exit=None, on_output=None, env=None, capture=None, tee=None, wait_start=None)` | a pane running `cmd` |
+| `new_window(name, layout="tiled", env=None, pane_capture=None)` | a window; the next panes go in it |
+| `new_pane(name, cmd, mode=None, on_exit=None, on_output=None, env=None, pane_capture=None, cmd_capture=None, wait_start=None)` | a pane running `cmd` |
 | `wait_started(target=None, timeout=30)` | wait for `wait_start=False` panes to start (fast bringup, `docs/wrap-mode.md`) |
-| `send_keys(cmd, target_pane=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
+| `send_keys(cmd, target_pane=None, cmd_capture=None)`, `send_command_before(cmd, window=None)` | type into a pane; set up every new pane |
 | `copy_environment(env=None)` | `env` (default `os.environ`) for every later pane |
 | `is_running(pane)`, `exit_status(pane)`, `pane_status(pane)`, `status()`, `print_status()` | state: `ExitStatus` (`.code`, `.signal`, `.ok`), `PaneStatus` (`.state`: starting / running / stopped / ok / failed / unknown) |
 | `watch_pane(pane, on_exit)`, `wait_for_exit(pane, timeout)` | exit events |
 | `stop_pane(pane)`, `stop_all()` | SIGINT, then SIGTERM, then SIGKILL; `stop_all()` in parallel |
 | `respawn_pane(pane, cmd=None)` | rerun in place, any mode |
-| `capture(target, path)`, `search_output(target, pattern)`, `output_text(pane)` | output to files; grep them |
+| `capture(target, path)`, `search_output(target, pattern)`, `output_text(pane)`, `output_mark(target)` | output to files; grep them |
 | `watch_output(target, pattern, cb)`, `wait_for_output(target, pattern, timeout)`, `expect(target, pattern)` | output events |
 | `dashboard()`, `dashboard_pane(cmd)`, `close_dashboard()` | the dashboard |
 | `on_close(action)`, `close()`, `bind_close_key(key=None)` | graceful close |
@@ -178,14 +178,17 @@ m = sess.wait_for_output("main:web", r"port (\d+)", timeout=10)  # what it print
 with sess.expect(pane, r"pong"):                               # watch first, then act
     sess.send_keys("ping", target_pane=pane)
 
-cap = sess.capture("main", "/var/log/app")   # a window's panes to files, from now on
+sess.capture("main", "/var/log/app")         # a window's panes to files, from now on
 sess.search_output("main", r"ERROR")         # [OutputMatch], later
+sess.new_pane("job", cmd, mode="wrap", cmd_capture="job.log")  # the command's output only
 ```
 
 `target` is a pane, a window, or `None` for the whole session (panes made
-later too). tmux pipes each captured pane to a file (`pipe-pane`); matching
-is on plain text, colors dropped. Unwatched panes cost nothing. Details:
-[docs/output-match.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/output-match.md).
+later too). `pane_capture=` saves all a pane shows, raw; `cmd_capture=`
+(wrap mode) only the command's output, plain text. `since=` is `"start"`
+(default), `"now"` or an `output_mark()` everywhere. Matching is on plain
+text, colors dropped. Unwatched panes cost nothing. Details:
+[docs/output.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/output.md).
 
 ## Dashboard
 
@@ -268,7 +271,8 @@ procs:` in the test. Logs go to pytest's temp dir.
 
 To test a session script: `procs.build(launch.build)` runs its
 `build(session)` function, and `procs.adopt("python3 launch.py")` runs an
-unchanged script and adopts the panes it made.
+unchanged script (libtmux_easy or plain tmux) and adopts the panes it made.
+Guide: [docs/testing-scripts.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/testing-scripts.md).
 
 Demos: [demos/pytest](https://github.com/nasa-jpl/libtmux_easy/blob/main/demos/pytest).
 Reference: [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).

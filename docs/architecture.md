@@ -12,7 +12,7 @@
 | `dash/` | stdlib | `options` (state in tmux options), `window` (`open_window`), `viewport` (`Viewport`), `control` (`Control`, `read_status`), `winhook` (window-change hook), `cli` (`lte-dash`) |
 | `dash/app.py` | Textual | the sidebar UI |
 | `dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
-| `dash/homelog.py` | - | stdout/logging tee behind `tee_home()` |
+| `dash/homelog.py` | - | stdout/logging copy behind `log_home()` |
 | `launch.py` | stdlib | `lte-session` |
 | `close.py` | stdlib | `lte-close`: graceful close, close actions |
 | `starter.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
@@ -55,7 +55,7 @@ One copy each. The commands import them, so their modules stay light:
 | exit events, wrap mode | the watcher's callbacks: `_on_target_exit()`, `_on_wrap_message()` |
 | output | `capture()`, `watch_output()`, pipes (`_pipe_many()`), the reader |
 | closing | `on_close()`, `close()`, `kill()`, `release()` |
-| dashboard, status surface | `dashboard()`, `tee_home()`, `status()`, the status file, titles |
+| dashboard, status surface | `dashboard()`, `log_home()`, `status()`, the status file, titles |
 
 ## Sessions
 
@@ -111,7 +111,7 @@ lives in tmux options, so they all agree without extra IPC:
 |---|---|
 | session | `@lte_dir` (socket dir), `@lte_status` (status file), `@lte_run_dir`, `@lte_home_status`, `@lte_dash_window`, `@lte_dash_sidebar` |
 | window | `@lte_dash_home/view/from/home_cmd/width/home_kind/initial` |
-| pane | `@lte_pipe_file`, `@lte_pipe_from`, `@lte_pipe_id`, `@lte_pipe_tee`: where its output goes ([output-match.md](output-match.md)) |
+| pane | `@lte_pipe_file`, `@lte_pipe_from`, `@lte_pipe_id`, `@lte_pipe_tee`: where its output goes ([output.md](output.md)) |
 | global | `@lte_starter`, `@lte_key_dash`, `@lte_key_close` (the user's), `@lte_key_*_users/_saved` (lte-key) |
 | session, window | `@lte_pipe`, `@lte_pipe_cmd`: capture template for new panes; session `@lte_pipe_next*`: the next library pane's file |
 

@@ -67,7 +67,7 @@ renders everything else.
 - The summary line counts running, stopped, failed (plus ok, starting and
   unknown when nonzero). Colors: green running or exit 0, red failed, yellow
   stopped (by `x`, `X`, `stop_pane()`), cyan starting, magenta unknown.
-- **Home** shows the script's stdout, stderr and logging via `tee_home()`
+- **Home** shows the script's stdout, stderr and logging via `log_home()`
   (`dash/homelog.py`).
 
 **Public**, used by tlaunch: `lte-dash --open`, `dash.open_window()`, the

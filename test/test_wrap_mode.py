@@ -220,7 +220,7 @@ class TestWrapMode:
         and the file is complete when the exit is reported."""
         log = tmp_path / "pane.log"
         pane = session.new_pane("x", "sh -c 'test -t 1 && echo tty; echo done; exit 5'",
-                                mode=PANE_MODE_WRAP, tee=str(log))
+                                mode=PANE_MODE_WRAP, cmd_capture=str(log))
         assert session.wait_for_exit(pane, timeout=5.0).code == 5
         assert log.read_text() == "tty\ndone\n"
         assert _wait_until(lambda: session._pane_fmt(pane, "#{pane_pipe}") == "0")
@@ -230,8 +230,8 @@ class TestWrapMode:
         assert log.read_text() == "rerun\n"
 
     def test_tee_needs_wrap_mode(self, session, tmp_path):
-        with pytest.raises(ValueError, match="tee"):
-            session.new_pane("x", "true", tee=str(tmp_path / "x.log"))
+        with pytest.raises(ValueError, match="cmd_capture"):
+            session.new_pane("x", "true", cmd_capture=str(tmp_path / "x.log"))
 
     def test_wrap_enter_false_waits_for_enter(self, session):
         pane = session.new_pane("x", "sh -c 'exit 2'", mode=PANE_MODE_WRAP, enter=False)

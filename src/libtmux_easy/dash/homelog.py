@@ -1,5 +1,5 @@
 """Copying the script's own output to the dashboard's home log. See
-TmuxSession.tee_home()."""
+TmuxSession.log_home()."""
 
 import logging
 
@@ -32,7 +32,7 @@ class _Tee:
 
 class _SkipIfTeed(logging.Filter):
     """Drop records the stderr tee already copies: a root handler created after
-    tee_home() (e.g. a late logging.basicConfig()) writes to the tee itself."""
+    log_home() (e.g. a late logging.basicConfig()) writes to the tee itself."""
 
     def filter(self, record):
         return not any(isinstance(getattr(h, "stream", None), _Tee)

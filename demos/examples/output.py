@@ -7,7 +7,7 @@ from libtmux_easy import TmuxSession
 
 logs = tempfile.mkdtemp(prefix="lte_example_output_")
 session = TmuxSession.create("lte_example_output", mode="wrap")
-session.new_window("app", capture=logs)  # every pane in it saved to a file
+session.new_window("app", pane_capture=logs)  # every pane in it saved to a file
 
 # A callback for each matching line, from the pane's first byte.
 server = session.new_pane("server", "python3 -u -m http.server 8767",
