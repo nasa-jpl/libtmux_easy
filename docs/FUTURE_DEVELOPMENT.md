@@ -45,8 +45,27 @@ done, delete it (the commit is the record).
 | idea | Shell mode leaves the setup's `$?` probe line in the pane | watches skip it; raw captures show it |
 | idea | A `PS1` ending in a newline makes the prompt's echo bare: the spare-echo bug returns there only | rare |
 
+## Demos (`demos/`)
+
+| status | item | notes |
+|---|---|---|
+| next | README: a brief blurb on each demo | |
+| later | Demo the working modes: (1) script sets up the session, then attaches | |
+| later | (2) script in the foreground, session in the background | |
+| later | (3) attach while the script runs; its output in the dashboard's home pane, still there after leaving the session | e.g. for testing; close to `lte-session` |
+| idea | (4) one script includes another: A runs solo, or inside B reusing B's session | `TmuxSession.current()` adopts; window name conflicts undecided |
+| idea | (5) collapse into one foreground pane: tee every pane's output there, or a pane combining selected panes' output | |
+
+## Dashboard ([dashboard.md](dashboard.md))
+
+| status | item | notes |
+|---|---|---|
+| idea | The dashboard can't be resized in Windows Terminal | `[` / `]` change the sidebar width, only with the dashboard focused |
+
 ## Project
 
 | status | item | notes |
 |---|---|---|
 | next | Merge `pytest-launcher` to `main` | |
+| next | Make key borrowing's user count atomic | race in KNOWN_ISSUES |
+| later | Audit libtmux `.refresh()` calls on 0.17 | its `Window.refresh()` runs a bare `list-windows` (current session only), fixed for renames in 81ba066; `tmux_lib.py` still calls `pane.refresh()` |

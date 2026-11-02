@@ -60,11 +60,17 @@
 
 - Exec mode: `respawn_pane()` reruns the command without the
   `send_command_before()` setup.
+- Key borrowing (`dash/keys.py` `borrow()`/`give_back()`) updates the
+  `@lte_key_<key>_users` count read-modify-write, unlocked: two processes
+  borrowing or returning at once can lose a count, leaving the key borrowed
+  or restoring it too early. Seen in `test_concurrent_tmux_runs_dont_clash`.
 
 ## Running tests
 
 - Don't run two suites (or two tours) at once on the default tmux server:
   fixed session names collide, and `kill_existing=True` kills the other run's
   sessions.
+- Flaky: `test_session.py::test_status_after_session_closed` failed once in
+  a full libtmux 0.17 run ("lte-run event handler raised"); passes alone.
 - With DEBUG logging, libtmux emits ~400 KB of noise: `grep -v '^DEBUG'`.
 - Python's fallback log handler prints warnings with no "WARNING" prefix.
