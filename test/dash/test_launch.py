@@ -10,7 +10,8 @@ import subprocess
 import pytest
 
 from libtmux_easy import TmuxSession, PANE_MODE_WRAP
-from libtmux_easy import dash
+from libtmux_easy import close, dash
+from libtmux_easy.dash import keys
 
 from helpers import lte_session as _launch, wait_until
 
@@ -42,6 +43,9 @@ class TestLauncher:
             assert _has_session("lte-test-launch-d")
         finally:
             subprocess.run(["tmux", "kill-session", "-t", "lte-test-launch-d"])
+            # A kept session keeps its close key: hand it back, or later tests
+            # find Q still borrowed.
+            keys.give_back(close.KEY)
 
 
 @pytest.fixture

@@ -244,6 +244,16 @@ def _set_pane_title(pane: Pane, pane_name: str):
         raise exc.LibTmuxException(f"Command: {proc.cmd} returned error: {proc.stderr}")
 
 
+def _rename_window(window: Window, name: str):
+    """Window.rename_window(), by id. libtmux 0.17's version then refreshes
+    with a bare 'list-windows' -- the current session's windows only -- and
+    asserts when another session (a concurrent run) is current."""
+    proc = window.server.cmd("rename-window", "-t", window.id, name)
+    if proc.stderr:
+        raise exc.LibTmuxException(f"Command: {proc.cmd} returned error: {proc.stderr}")
+    window.window_name = name
+
+
 def _create_session(session_name, kill_existing=True, **kwargs):
     """A new session named 'session_name' (replacing one of that name if
     'kill_existing'), its window 'unnamed' and that window's placeholder
@@ -260,7 +270,7 @@ def _create_session(session_name, kill_existing=True, **kwargs):
     session = _server.new_session(session_name=session_name, **kwargs)
     window = session.windows[0]
     pane = window.panes[0]
-    window.rename_window("unnamed")
+    _rename_window(window, "unnamed")
     _set_pane_title(pane, "unnamed")
     return session, window, pane
 
@@ -539,7 +549,7 @@ class TmuxSession(Session):
         if self.unnamed_window:
             # By id: a dashboard() opened before this is window 0 now.
             window = self.get_window(self._initial_window)
-            window.rename_window(name)
+            _rename_window(window, name)
             self.unnamed_window = False
             # Update current_window to the renamed window
             self.current_window = window
