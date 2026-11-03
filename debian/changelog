@@ -1,3 +1,10 @@
+libtmux-easy (0.3.0) noble; urgency=medium
+
+  * Various improvements. Better env passing, faster session bringup.
+  * pytest integration improvements. API cleanup.
+
+ -- Spencer Diehl <docdiehl@gmail.com> Mon, 02 Nov 2026 21:07:13 -0800
+
 libtmux-easy (0.2.0) noble; urgency=medium
 
   * New package libtmux-easy-dash: lte-dash, with Textual bundled.
