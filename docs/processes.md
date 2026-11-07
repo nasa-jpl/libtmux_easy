@@ -34,5 +34,6 @@ Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until
 | `build()` | Needs `tmux=` | Uses the run's session |
 | Owner, abort on a failed test | No | Yes |
 
-Extras: `start(env=)`, `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
+Extras: `start(env=, sigint_timeout=)` (a process's own environment and SIGINT grace;
+`close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
 `close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.

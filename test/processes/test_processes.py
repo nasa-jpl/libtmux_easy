@@ -70,3 +70,26 @@ def test_build_needs_tmux(tmp_path):
     with pytest.raises(ValueError, match="needs a tmux session"):
         procs.build(lambda session: None)
     procs.close()
+
+
+def test_per_process_sigint_timeout(tmp_path):
+    """close(): each process escalates on its own deadline, all at once."""
+    ignore = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+              "signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)\"")
+    procs = Processes("own", log_dir=str(tmp_path), sigint_timeout=30)
+    procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
+    procs.start("w:slow", SLOW_STOP, ready="up")
+    t = time.monotonic()
+    procs.close(check=False)
+    assert time.monotonic() - t < 3.5  # not 30 s for 'quick'
+    assert procs.status("w:quick").stopped == "SIGTERM"
+    assert procs.status("w:slow").stopped == "SIGINT"
+    # stop() honours it too, and a restart keeps it
+    procs = Processes("own2", log_dir=str(tmp_path / "2"), sigint_timeout=30)
+    p = procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
+    p.stop(check=False)
+    p.start().wait_for("up")
+    t = time.monotonic()
+    p.stop(check=False)
+    assert time.monotonic() - t < 3 and procs.status("w:quick").stopped == "SIGTERM"
+    procs.close()

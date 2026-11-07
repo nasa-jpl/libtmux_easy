@@ -114,7 +114,7 @@ methods, no decorators, no `yield`.
 
 | method | does |
 |---|---|
-| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it |
+| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=, env=, sigint_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it. `env`: variables on top of its environment. `sigint_timeout`: its own SIGINT grace when stopped |
 | `stop(name, sigint_timeout=, check=True)` | SIGINT, then SIGTERM, SIGKILL; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
 | `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
