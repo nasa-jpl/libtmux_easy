@@ -17,7 +17,8 @@
 | `close.py` | stdlib | `lte-close`: graceful close, close actions |
 | `starter.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
 | `output.py` | stdlib | output capture (`pipe-pane` files), `OutputReader` (tails them), `Capture`, watches |
-| `testing.py` | pytest | pytest plugin |
+| `processes.py` | the library | `Processes`: a process group, its backends (subprocess, tmux, adopted), health; no pytest |
+| `testing.py` | pytest | pytest plugin: `Processes` with a test owner, on top of `processes.py` |
 | `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
 
 - **Stdlib-only commands.** `lte-run` runs once per pane: importing libtmux

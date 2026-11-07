@@ -1,0 +1,72 @@
+"""Processes without pytest's plugin: a program's own group of processes."""
+import sys
+import threading
+import time
+
+import pytest
+
+from libtmux_easy.processes import ProcessFailure, Processes
+
+# Ignores the first SIGINT for a while, then exits 0 on the next.
+SLOW_STOP = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+             "signal.signal(signal.SIGINT, lambda *a: (time.sleep(1.5), exit(0))); "
+             "time.sleep(60)\"")
+
+
+def test_subprocess_group(tmp_path):
+    exits = []
+    procs = Processes("prog", log_dir=str(tmp_path), stop_codes={"*": (0, 130)},
+                      on_exit=lambda name, status, died: exits.append((name, died)))
+    a = procs.start("w:a", "echo hello $GREETING; sleep 60", ready="hello", env={"GREETING": "x"})
+    assert "hello x" in a.output()
+    procs.start("w:oneshot", "true", exits=0)
+    procs.wait_for_exit("w:oneshot")
+    procs.start("w:dies", "sleep 0.2; exit 3")
+    with pytest.raises(ProcessFailure, match=r"w:dies exited 3"):
+        procs.wait_until(lambda: False, timeout=5)
+    assert ("w:oneshot", False) in exits and ("w:dies", True) in exits
+    assert (tmp_path / "w.a.log").read_text().startswith("hello x")
+    procs.close()
+    assert ("w:a", False) in exits
+
+
+def test_close_stops_all_at_once(tmp_path):
+    """Three that take 1.5 s each to stop: about 1.5 s in all, not 4.5."""
+    procs = Processes("par", log_dir=str(tmp_path))
+    for n in "abc":
+        procs.start(f"w:{n}", SLOW_STOP, ready="up")
+    t = time.monotonic()
+    procs.close()
+    assert time.monotonic() - t < 3.5
+
+
+def test_kill_all(tmp_path):
+    """kill_all() while close() waits: no grace, and no death."""
+    procs = Processes("kill", log_dir=str(tmp_path), sigint_timeout=30)
+    procs.start("w:a", f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+                       "signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)\"",
+                ready="up")
+    threading.Timer(0.5, procs.kill_all).start()
+    t = time.monotonic()
+    procs.close(check=False)
+    assert time.monotonic() - t < 5
+    assert not procs.died and not procs.status("w:a").running
+
+
+def test_tmux_group(session, tmp_path):
+    """Panes in a session of the program's, bare window names."""
+    procs = Processes("prog", tmux=session, prefix="", log_dir=str(tmp_path),
+                      stop_codes={"*": (0, 130)})
+    procs.start("sim:a", "echo ready; sleep 60", ready="ready")
+    procs.start("sim:b", "sleep 60")
+    assert "sim" in [w.name for w in session.windows]
+    assert procs.status("sim:a").running
+    procs.close()
+    assert not procs.status("sim:b").running
+
+
+def test_build_needs_tmux(tmp_path):
+    procs = Processes("b", log_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="needs a tmux session"):
+        procs.build(lambda session: None)
+    procs.close()
