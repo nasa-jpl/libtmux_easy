@@ -5,6 +5,14 @@
 set -eu
 cd /tmp
 /usr/bin/python3 -c "import libtmux_easy.tmux_lib"
+# Processes outside pytest: two subprocesses, closed together.
+/usr/bin/python3 - <<'PY'
+from libtmux_easy.processes import Processes
+procs = Processes("smoke", stop_codes={"*": [0, 130]})  # sleep dies of SIGINT
+procs.start("a", "echo up; sleep 30", ready="up")
+procs.start("b", "echo up; sleep 30", ready="up", sigint_timeout=1)
+procs.close()
+PY
 lte-run true
 rc=0; lte-run sh -c 'exit 3' || rc=$?; test "$rc" = 3
 lte-dash --help > /dev/null

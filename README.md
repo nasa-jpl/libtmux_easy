@@ -67,7 +67,9 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
     - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
     - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
 
-    See [Testing with pytest](#testing-with-pytest).
+    See [Testing with pytest](#testing-with-pytest). The same `Processes`, without pytest, is
+    `libtmux_easy.processes.Processes`, for a launcher or a script: see
+    [docs/processes.md](docs/processes.md).
 
 
 ## Install
@@ -83,10 +85,10 @@ Linux only.
 
 ```bash
 pip install 'libtmux-easy[dash]'
-# not on PyPI yet:
+# the latest main:
 pip install 'libtmux-easy[dash] @ git+https://github.com/nasa-jpl/libtmux_easy'
-# Ubuntu:
-sudo apt install ./python3-libtmux-easy_0.2.0_all.deb ./libtmux-easy-dash_0.2.0_all.deb
+# Ubuntu: both .debs from https://github.com/nasa-jpl/libtmux_easy/releases
+sudo apt install ./python3-libtmux-easy_*_all.deb ./libtmux-easy-dash_*_all.deb
 ```
 
 - Needs tmux. `[dash]` adds Textual for the dashboard; everything else works without it.

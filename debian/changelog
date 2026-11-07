@@ -1,3 +1,13 @@
+libtmux-easy (0.4.0) noble; urgency=medium
+
+  * libtmux_easy.processes.Processes: the process group without pytest
+    (testing.Processes is now a subclass), raising ProcessFailure.
+  * close() stops every process in parallel; kill_all() for a second Ctrl-C.
+  * on_exit(name, status, died) callback; start(env=, sigint_timeout=);
+    prefix="" for bare tmux window names.
+
+ -- Spencer Diehl <docdiehl@gmail.com>  Sat, 07 Nov 2026 09:16:10 -0800
+
 libtmux-easy (0.3.0) noble; urgency=medium
 
   * Various improvements. Better env passing, faster session bringup.

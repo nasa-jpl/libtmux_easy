@@ -66,6 +66,5 @@ done, delete it (the commit is the record).
 
 | status | item | notes |
 |---|---|---|
-| next | Merge `pytest-launcher` to `main` | |
 | next | Make key borrowing's user count atomic | race in KNOWN_ISSUES |
 | later | Audit libtmux `.refresh()` calls on 0.17 | its `Window.refresh()` runs a bare `list-windows` (current session only), fixed for renames in 81ba066; `tmux_lib.py` still calls `pane.refresh()` |
