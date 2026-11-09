@@ -139,8 +139,9 @@ class _TmuxBackend:
         self.session.wait_started(self.panes[name], timeout=5.0)  # its pid, once known
         _kill(self.status(name).target_pids)
 
-    def stop(self, name, sigint_timeout):
-        self.session.stop_pane(self.panes[name], sigint_timeout=sigint_timeout)
+    def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
+        self.session.stop_pane(self.panes[name], sigint_timeout=sigint_timeout,
+                               sigterm_timeout=sigterm_timeout)
 
     def stop_all(self, names, timeouts):
         _parallel(self.stop, [n for n in names if self.session.is_running(self.panes[n])],
@@ -169,8 +170,9 @@ def _kill(pids):
 
 
 def _parallel(fn, names, timeouts):
-    """fn(name, timeouts[name]) for every name at once."""
-    threads = [threading.Thread(target=fn, args=(name, timeouts[name])) for name in names]
+    """fn(name, *timeouts[name]) for every name at once: timeouts[name] is
+    (sigint_timeout, sigterm_timeout), each process on its own deadlines."""
+    threads = [threading.Thread(target=fn, args=(name, *timeouts[name])) for name in names]
     for t in threads:
         t.start()
     for t in threads:
@@ -258,9 +260,9 @@ class _Subprocess:
                     raise TimeoutError(f"{self.name}: no line matching {regex.pattern!r}")
                 self.cond.wait(left)
 
-    def stop(self, sigint_timeout):
+    def stop(self, sigint_timeout, sigterm_timeout=5.0):
         """SIGINT the group (a Ctrl-C), escalating like stop_pane()."""
-        for sig, timeout in ((signal.SIGINT, sigint_timeout), (signal.SIGTERM, 5),
+        for sig, timeout in ((signal.SIGINT, sigint_timeout), (signal.SIGTERM, sigterm_timeout),
                              (signal.SIGKILL, 2)):
             if self.proc.poll() is not None:
                 break
@@ -304,8 +306,8 @@ class _SubprocessBackend:
     def lines(self, name):
         return list(self.procs[name].plain)
 
-    def stop(self, name, sigint_timeout):
-        self.procs[name].stop(sigint_timeout)
+    def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
+        self.procs[name].stop(sigint_timeout, sigterm_timeout)
 
     def stop_all(self, names, timeouts):
         _parallel(self.stop, names, timeouts)
@@ -470,13 +472,14 @@ class _AdoptedBackend:
     def status(self, name):
         return self._get(name).status()
 
-    def stop(self, name, sigint_timeout):
+    def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
         if name in self.script:
-            return self.script[name].stop(sigint_timeout)
+            return self.script[name].stop(sigint_timeout, sigterm_timeout)
         pane = self.panes[name]
         self._tmux("send-keys", "-t", pane.pane_id, "C-c")  # as a person would
         pane.stopped = "SIGINT"
-        for sig, timeout in ((None, sigint_timeout), (signal.SIGTERM, 5), (signal.SIGKILL, 2)):
+        for sig, timeout in ((None, sigint_timeout), (signal.SIGTERM, sigterm_timeout),
+                             (signal.SIGKILL, 2)):
             if sig is not None:
                 pane.stopped = sig.name
                 for pid in pane.targets():
@@ -646,8 +649,8 @@ class Process:
         command, options = self.group._commands[self.name]
         return self.group.start(self.name, command, **options)
 
-    def stop(self, sigint_timeout=None, check=True) -> PaneStatus:
-        return self.group.stop(self.name, sigint_timeout, check)
+    def stop(self, sigint_timeout=None, check=True, sigterm_timeout=None) -> PaneStatus:
+        return self.group.stop(self.name, sigint_timeout, check, sigterm_timeout)
 
     def kill(self):
         """SIGKILL it: a death, unless in an expect_exit() block."""
@@ -794,8 +797,9 @@ class Processes:
     or a list of them}; a match is a death.
     'stop_codes': {name or "*": codes} allowed when stopped (default 0; a
     signal N is 128+N, so 130 allows dying of SIGINT).
-    'sigint_timeout': seconds SIGINT gets before SIGTERM (start() can
-    set one per process).
+    'sigint_timeout': seconds SIGINT gets before SIGTERM; 'sigterm_timeout':
+    seconds SIGTERM then gets before SIGKILL (start() can set either per
+    process).
     'log_dir': where the logs go; default a new temp dir.
     'setup': a shell command run before each process.
     'on_exit': called as on_exit(name, PaneStatus, died) on each exit, from
@@ -806,7 +810,8 @@ class Processes:
 
     def __init__(self, name="processes", *, tmux=None, prefix=None, log_dir=None, echo=(),
                  tty=None, setup=None, fail_on=None, stop_codes=None, sigint_timeout=10.0,
-                 on_abort=None, on_exit=None, keep_open=False, scope=None):
+                 on_abort=None, on_exit=None, keep_open=False, scope=None,
+                 sigterm_timeout=5.0):
         prefix = name if prefix is None else prefix
         if log_dir is None:
             log_dir = tempfile.mkdtemp(prefix=re.sub(r"[^\w-]", "_", name) + "-")
@@ -828,6 +833,7 @@ class Processes:
                         for n, p in (fail_on or {}).items()}
         self.stop_codes = dict(stop_codes or {})
         self.sigint_timeout = sigint_timeout
+        self.sigterm_timeout = sigterm_timeout
         self.on_abort = on_abort
         self.on_exit = on_exit
         self.names = []
@@ -838,6 +844,7 @@ class Processes:
         self._runs = {}  # name -> _Run of its latest start
         self._commands = {}  # name -> (command, start()'s options): for Process.start()
         self._sigint_timeouts = {}  # name -> its own sigint_timeout, from start()
+        self._sigterm_timeouts = {}  # name -> its own sigterm_timeout, from start()
         self._adopted = False  # see adopt()
         self.session = None  # see build()
         self._raised_died = self._raised_failed_on = 0  # how many check() raised
@@ -861,7 +868,8 @@ class Processes:
             self.close()
 
     def start(self, name, command, ready=None, timeout=30.0, fail_on=(), exits=None,
-              stop_codes=None, env=None, sigint_timeout=None) -> Process:
+              stop_codes=None, env=None, sigint_timeout=None,
+              sigterm_timeout=None) -> Process:
         """Start 'command' as 'window:name' (a name without ':' goes in a
         window of its own). With 'ready' (a regex), wait up to 'timeout' s
         for a line matching it, as wait_for() does. 'fail_on': more fail_on
@@ -870,7 +878,8 @@ class Processes:
         'stop_codes': the codes it may exit with when stopped (default: the
         group's). 'env': variables to set (None: unset) on top of this
         process's environment. 'sigint_timeout': seconds SIGINT gets
-        before SIGTERM when it is stopped (default: the group's). A stopped
+        before SIGTERM when it is stopped, 'sigterm_timeout' seconds SIGTERM
+        gets before SIGKILL (defaults: the group's). A stopped
         name can be started again. Returns its Process."""
         if self._adopted:
             raise ValueError("start(): this group adopted a script's session; "
@@ -879,8 +888,10 @@ class Processes:
         on_exit, on_line = self._begin(name, command, fail_on, exits, stop_codes)
         self._commands[name] = (command, dict(ready=ready, timeout=timeout, fail_on=fail_on,
                                                exits=exits, stop_codes=stop_codes, env=env,
-                                               sigint_timeout=sigint_timeout))
+                                               sigint_timeout=sigint_timeout,
+                                               sigterm_timeout=sigterm_timeout))
         self._sigint_timeouts[name] = sigint_timeout
+        self._sigterm_timeouts[name] = sigterm_timeout
         self.backend.start(name, command, self.setup, on_exit, on_line, self.log(name), env)
         if ready is not None:
             self.wait_for(name, ready, timeout)
@@ -992,15 +1003,17 @@ class Processes:
         if not run.exited.wait(timeout):
             raise ProcessFailure(f"{name} still running {timeout}s after expect_exit()")
 
-    def stop(self, name, sigint_timeout=None, check=True):
+    def stop(self, name, sigint_timeout=None, check=True, sigterm_timeout=None):
         """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
-        With 'check', fail unless SIGINT stopped it, with one of its
-        stop_codes. Returns its PaneStatus."""
+        The timeouts default to start()'s, else the group's. With 'check',
+        fail unless SIGINT stopped it, with one of its stop_codes. Returns
+        its PaneStatus."""
         name = self._name(name)
         run = self._runs[name]
         run.stopping = True
-        self.backend.stop(name, self._sigint_timeout(name) if sigint_timeout is None
-                          else sigint_timeout)
+        default_int, default_term = self._timeouts(name)
+        self.backend.stop(name, default_int if sigint_timeout is None else sigint_timeout,
+                          default_term if sigterm_timeout is None else sigterm_timeout)
         run.exited.wait(5)
         status = self.backend.status(name)
         if check and not run.finished and not self._clean(status, run):
@@ -1021,7 +1034,7 @@ class Processes:
         judged = [(name, run) for name, run in self._runs.items()
                   if not (run.died or run.stopping or run.finished)]
         self.stopping = True
-        self.backend.stop_all(self.names, {n: self._sigint_timeout(n) for n in self.names})
+        self.backend.stop_all(self.names, {n: self._timeouts(n) for n in self.names})
         self._let_go(keep=self._aborted is not None)
         if not check:
             return
@@ -1032,10 +1045,13 @@ class Processes:
         if unclean:
             self._fail("did not shut down cleanly:\n" + "\n".join(unclean))
 
-    def _sigint_timeout(self, name):
-        """start()'s sigint_timeout for 'name', else the group's."""
-        own = self._sigint_timeouts.get(name)
-        return self.sigint_timeout if own is None else own
+    def _timeouts(self, name):
+        """(sigint_timeout, sigterm_timeout) for 'name': start()'s, else the
+        group's."""
+        own_int = self._sigint_timeouts.get(name)
+        own_term = self._sigterm_timeouts.get(name)
+        return (self.sigint_timeout if own_int is None else own_int,
+                self.sigterm_timeout if own_term is None else own_term)
 
     def _let_go(self, keep):
         """adopt()'s tmux server: killed, or kept to look at."""

@@ -101,7 +101,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10, on_abort=None, log_dir=None)`
+`Processes(owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10, on_abort=None, log_dir=None, sigterm_timeout=5)`
 
 | argument | meaning |
 |---|---|
@@ -109,13 +109,14 @@ methods, no decorators, no `yield`.
 | `fail_on` | `{name or "*": regex, function line -> problem or None, or a list}`: a match is a death |
 | `stop_codes` | `{name or "*": codes}` allowed when stopped (default 0); a signal N is 128+N, so 130 allows dying of SIGINT |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
+| `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
 | `on_abort` | called with no arguments when a test fails, before everything is stopped: bring things down your own way |
 | `log_dir` | where the logs go; default `<basetemp>/<Class>N/`, `<Class>.<test>N/` or `<test>N/` |
 
 | method | does |
 |---|---|
-| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=, env=, sigint_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it. `env`: variables on top of its environment. `sigint_timeout`: its own SIGINT grace when stopped |
-| `stop(name, sigint_timeout=, check=True)` | SIGINT, then SIGTERM, SIGKILL; `check`: fail unless it stopped cleanly |
+| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it. `env`: variables on top of its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
+| `stop(name, sigint_timeout=, check=True, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
 | `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
 | `wait_for_in_order(name, [regex, ...], timeout)` | lines in that order, each later than the last |
@@ -227,7 +228,8 @@ drop the overlay.
   to children that already got the group's. Python nodes die (-2) of the
   second. `ros2 run` doesn't forward SIGINT at all.
 - So each process runs with `start_new_session` and a **pty for stdin**, and
-  is stopped with `killpg`: SIGINT, then SIGTERM (5 s), then SIGKILL (2 s).
+  is stopped with `killpg`: SIGINT, then SIGTERM (`sigterm_timeout`, 5 s),
+  then SIGKILL (2 s).
 - `ros2 launch` exits 0 on SIGINT and keeps running after a child dies; the
   only record is `[ERROR] [name-N]: process has died [pid P, exit code C`.
   Hence `fail_on` functions (`lte_launch_test.launch_death`).

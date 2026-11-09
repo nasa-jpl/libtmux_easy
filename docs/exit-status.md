@@ -74,7 +74,8 @@ API: `new_pane(..., on_exit=)`, `watch_pane()`, `unwatch_pane()`,
 
 ## Stopping
 
-`stop_pane()` escalates SIGINT -> SIGTERM -> SIGKILL (timeouts 10 / 5 / 2 s),
+`stop_pane()` escalates SIGINT -> SIGTERM -> SIGKILL (`sigint_timeout=`,
+`sigterm_timeout=`, `sigkill_timeout=`: 10 / 5 / 2 s; `Processes` passes its own),
 stopping at the first that works:
 
 | step | shell | exec | wrap |

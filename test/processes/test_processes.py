@@ -93,3 +93,62 @@ def test_per_process_sigint_timeout(tmp_path):
     p.stop(check=False)
     assert time.monotonic() - t < 3 and procs.status("w:quick").stopped == "SIGTERM"
     procs.close()
+
+
+# Ignores SIGINT and SIGTERM: only SIGKILL ends it.
+DEAF = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+        "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)\"")
+
+
+def _sigterm_timeouts(procs):
+    """The group's sigterm_timeout and start()'s, each on its own deadlines."""
+    procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
+    procs.start("w:group", DEAF, ready="up")  # the group's: 0.5 s
+    t = time.monotonic()
+    procs.close(check=False)
+    assert time.monotonic() - t < 3  # not 5 s of SIGTERM grace each
+    assert procs.status("w:deaf").stopped == "SIGKILL"
+    assert procs.status("w:group").stopped == "SIGKILL"
+
+
+def test_sigterm_timeout(tmp_path):
+    """SIGTERM -> SIGKILL grace: 5 s by default, as before; settable."""
+    assert Processes("d", log_dir=str(tmp_path / "d")).sigterm_timeout == 5.0
+    _sigterm_timeouts(Processes("term", log_dir=str(tmp_path), sigint_timeout=0.2,
+                                sigterm_timeout=0.5))
+    procs = Processes("term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2,
+                      sigterm_timeout=30)
+    p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
+    p.stop(check=False)
+    p.start().wait_for("up")  # a restart keeps it
+    t = time.monotonic()
+    p.stop(check=False)
+    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
+    p.start().wait_for("up")
+    t = time.monotonic()
+    procs.stop("w:deaf", check=False, sigterm_timeout=0.1)  # stop()'s own
+    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
+    procs.close()
+
+
+def test_sigterm_timeout_tmux(session, tmp_path):
+    _sigterm_timeouts(Processes("term", tmux=session, prefix="", log_dir=str(tmp_path),
+                                sigint_timeout=0.2, sigterm_timeout=0.5))
+
+
+def test_sigterm_timeout_adopted(tmp_path):
+    """adopt()'s panes: the group's sigterm_timeout."""
+    script = tmp_path / "s.py"
+    script.write_text("from libtmux_easy import TmuxSession\n"
+                      "s = TmuxSession.create('deaf', mode='wrap')\n"
+                      "s.new_window('w')\n"
+                      f"s.new_pane('x', {DEAF!r})\n")
+    procs = Processes("adopt", log_dir=str(tmp_path / "logs"), sigint_timeout=0.2,
+                      sigterm_timeout=0.3)
+    procs.adopt(f"{sys.executable} {script}")
+    procs.wait_for("w:x", "up", timeout=10)
+    t = time.monotonic()
+    procs.close(check=False)
+    assert time.monotonic() - t < 3
+    assert procs.status("w:x").stopped == "SIGKILL"

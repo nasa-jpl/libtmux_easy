@@ -261,7 +261,7 @@ class Processes(_Processes):
     """
 
     def __init__(self, owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10.0,
-                 on_abort=None, log_dir=None, on_exit=None):
+                 on_abort=None, log_dir=None, on_exit=None, sigterm_timeout=5.0):
         if not _plugin:
             raise RuntimeError("Processes() needs the plugin: "
                                'pytest_plugins = ["libtmux_easy.testing"] in conftest.py')
@@ -287,7 +287,8 @@ class Processes(_Processes):
         super().__init__(prefix, tmux=tmux, prefix=prefix, log_dir=str(log_dir),
                          echo=config.lte_echo, tty=config.lte_tty,
                          setup=_plugin["setup"], fail_on=fail_on, stop_codes=stop_codes,
-                         sigint_timeout=sigint_timeout, on_abort=on_abort, on_exit=on_exit,
+                         sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout,
+                         on_abort=on_abort, on_exit=on_exit,
                          keep_open=config.lte_keep_open, scope=scope)
         config.lte_log_dirs.append(str(log_dir))
         self.owner = owner

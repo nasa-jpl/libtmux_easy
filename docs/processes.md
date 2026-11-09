@@ -21,7 +21,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 | `prefix=` | tmux window prefix (default `name`); `""`: bare window names |
 | `echo=`, `tty=` | Subprocesses: print output of matching names to `tty` (stdout) |
 | `on_exit=` | `on_exit(name, PaneStatus, died)` from a watcher thread, on every exit |
-| `fail_on=`, `stop_codes=`, `sigint_timeout=`, `setup=`, `log_dir=` | As in the plugin |
+| `fail_on=`, `stop_codes=`, `sigint_timeout=`, `sigterm_timeout=`, `setup=`, `log_dir=` | As in the plugin |
 | `keep_open=` | `close()` stops nothing |
 
 Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until`, `stop`,
@@ -34,6 +34,7 @@ Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until
 | `build()` | Needs `tmux=` | Uses the run's session |
 | Owner, abort on a failed test | No | Yes |
 
-Extras: `start(env=, sigint_timeout=)` (a process's own environment and SIGINT grace;
+Extras: `start(env=, sigint_timeout=, sigterm_timeout=)` (a process's own environment,
+SIGINT and SIGTERM grace, kept on a restart;
 `close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
 `close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.
