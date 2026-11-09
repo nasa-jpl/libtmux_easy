@@ -10,7 +10,7 @@ cd /tmp
 from libtmux_easy.processes import Processes
 procs = Processes("smoke", stop_codes={"*": [0, 130]})  # sleep dies of SIGINT
 procs.start("a", "echo up; sleep 30", ready="up")
-procs.start("b", "echo up; sleep 30", ready="up", sigint_timeout=1)
+procs.start("b", "echo up; sleep 30", ready="up", sigint_timeout=1, sigterm_timeout=1)
 procs.close()
 PY
 lte-run true

@@ -1,3 +1,10 @@
+libtmux-easy (0.5.0) noble; urgency=medium
+
+  * Processes(sigterm_timeout=) and start(sigterm_timeout=): seconds SIGTERM
+    gets before SIGKILL, per group or per process (default 5, as before).
+
+ -- Spencer Diehl <docdiehl@gmail.com>  Sun, 08 Nov 2026 09:00:00 -0800
+
 libtmux-easy (0.4.0) noble; urgency=medium
 
   * libtmux_easy.processes.Processes: the process group without pytest
