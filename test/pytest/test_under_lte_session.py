@@ -15,7 +15,7 @@ def test_plugin_under_lte_session(tmp_path):
         class TestAdopted:
             @classmethod
             def setup_class(cls):
-                cls.procs = Processes(cls)
+                cls.procs = Processes(cls, env={"LTE_T_GROUP": "g"})
 
             @classmethod
             def teardown_class(cls):
@@ -25,6 +25,9 @@ def test_plugin_under_lte_session(tmp_path):
                 assert os.environ.get("TMUX_PANE")
                 self.procs.start("inner:p", "sleep 30")
                 assert self.procs.status("inner:p").running
+                self.procs.start("inner:e", 'echo "G=$LTE_T_GROUP"; sleep 30')
+                self.procs.wait_for("inner:e", "G=g")
+                assert "LTE_T_GROUP" not in os.environ
                 print("INNER_OK")
 
         def build(session):

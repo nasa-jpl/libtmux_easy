@@ -101,7 +101,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10, on_abort=None, log_dir=None, sigterm_timeout=5)`
+`Processes(owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10, on_abort=None, log_dir=None, sigterm_timeout=5, env=None)`
 
 | argument | meaning |
 |---|---|
@@ -112,10 +112,11 @@ methods, no decorators, no `yield`.
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
 | `on_abort` | called with no arguments when a test fails, before everything is stopped: bring things down your own way |
 | `log_dir` | where the logs go; default `<basetemp>/<Class>N/`, `<Class>.<test>N/` or `<test>N/` |
+| `env` | variables for each of its processes (None unsets); `start(env=)` wins. The group's only: never `os.environ` ([processes.md](processes.md#environment)) |
 
 | method | does |
 |---|---|
-| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it. `env`: variables on top of its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
+| `start(name, cmd, ready=, timeout=30, fail_on=, exits=, stop_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on`: more patterns for it. `exits`: codes it may finish with on its own (no death). `stop_codes`: as above, for it. `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
 | `stop(name, sigint_timeout=, check=True, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
 | `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
@@ -177,8 +178,8 @@ own logs).
 |---|---|---|---|
 | `lte_pane_setup` | session | `None` | shell command before each process (`cd`, `export`) |
 
-Processes get exactly pytest's environment in every mode (tmux panes: see
-`environment.md`), minus `BASH_ENV`: a container's that sources ROS would
+Processes get exactly pytest's environment, then the group's `env=`, then
+`start(env=)`, in every mode (tmux panes: see `environment.md`), minus `BASH_ENV`: a container's that sources ROS would
 drop the overlay.
 
 ## Design

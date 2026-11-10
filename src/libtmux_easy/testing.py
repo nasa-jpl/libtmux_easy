@@ -256,12 +256,14 @@ class Processes(_Processes):
     the owner stops the group at once, after on_abort() if given; a class
     also skips its remaining tests. Names (window:pane) are unique within a
     class: across its groups, and its tmux windows are '<Class>/<window>'.
-    'log_dir': default a temp dir named after the owner. The rest as for
+    'log_dir': default a temp dir named after the owner. 'env': variables
+    for each of its processes (start(env=) wins); the group's alone, never
+    os.environ, so other classes and tests don't see it. The rest as for
     libtmux_easy.processes.Processes; the mode comes from the command line.
     """
 
     def __init__(self, owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10.0,
-                 on_abort=None, log_dir=None, on_exit=None, sigterm_timeout=5.0):
+                 on_abort=None, log_dir=None, on_exit=None, sigterm_timeout=5.0, env=None):
         if not _plugin:
             raise RuntimeError("Processes() needs the plugin: "
                                'pytest_plugins = ["libtmux_easy.testing"] in conftest.py')
@@ -289,7 +291,7 @@ class Processes(_Processes):
                          setup=_plugin["setup"], fail_on=fail_on, stop_codes=stop_codes,
                          sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout,
                          on_abort=on_abort, on_exit=on_exit,
-                         keep_open=config.lte_keep_open, scope=scope)
+                         keep_open=config.lte_keep_open, scope=scope, env=env)
         config.lte_log_dirs.append(str(log_dir))
         self.owner = owner
 

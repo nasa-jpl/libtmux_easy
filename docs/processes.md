@@ -23,6 +23,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 | `on_exit=` | `on_exit(name, PaneStatus, died)` from a watcher thread, on every exit |
 | `fail_on=`, `stop_codes=`, `sigint_timeout=`, `sigterm_timeout=`, `setup=`, `log_dir=` | As in the plugin |
 | `keep_open=` | `close()` stops nothing |
+| `env=` | Variables for every process of the group (None unsets); see below |
 
 Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until`, `stop`,
 `check`, ...). Differences:
@@ -38,3 +39,20 @@ Extras: `start(env=, sigint_timeout=, sigterm_timeout=)` (a process's own enviro
 SIGINT and SIGTERM grace, kept on a restart;
 `close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
 `close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.
+
+## Environment
+
+A process's environment, later wins (None unsets, at any level):
+
+| level | set by |
+|---|---|
+| inherited | `os.environ` of this process |
+| group | `Processes(env=)` |
+| process | `start(env=)` |
+
+- Never written to `os.environ`: other groups, classes and tests don't see it.
+- Same in every mode; tmux panes get it exactly (`environment.md`).
+- `procs.env` is a read-only view, fixed when the group is made.
+- `Process.start()` (a restart) gets it again.
+- `build()` panes: group < `copy_environment()` < `new_pane(env=)`.
+- `adopt()`: the script gets it; its panes get what the script passes on.

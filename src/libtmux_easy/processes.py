@@ -32,6 +32,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 
 from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
@@ -349,9 +350,10 @@ class _AdoptedBackend:
         return subprocess.run(["tmux", "-S", self.socket, *args], capture_output=True,
                               text=True, errors="replace").stdout.splitlines()
 
-    def run_script(self, name, command, on_exit, on_line, log):
+    def run_script(self, name, command, on_exit, on_line, log, env=None):
+        """'env': the group's; env() wins."""
         self.script[name] = _Subprocess(name, command, on_exit, None, threading.Lock(),
-                                        on_line, log, env=self.env())
+                                        on_line, log, env={**(env or {}), **self.env()})
 
     def discover(self):
         """[(name, pane id, mode)] of every pane on the server: 'window:pane'
@@ -681,7 +683,9 @@ class _BuildSession:
     windows are '<Class>/<window>'. Each new_pane() is also a process of
     the group, with a log; panes default to wrap mode. send_command_before(),
     copy_environment() and set_default_mode() apply to its own windows and
-    panes only. attach(), dashboard() and the kill/close calls do nothing."""
+    panes only. A pane's env, later wins: the group's env=,
+    copy_environment(), new_pane(env=). attach(), dashboard() and the
+    kill/close calls do nothing."""
 
     # Methods whose first argument (or a keyword below) names a pane or window.
     _TARGETED = {"select_window", "select_pane", "resolve_target_pane", "resolve_target_window",
@@ -753,7 +757,8 @@ class _BuildSession:
         on_output = dict(kwargs.pop("on_output", None) or {})
         if on_line is not None:
             on_output[_EVERY_LINE] = lambda m: on_line(m.line)
-        env = {**self._env, **(kwargs.pop("env", None) or {}), "LTE_LOG_DIR": os.path.dirname(log)}
+        env = {**group.env, **self._env, **(kwargs.pop("env", None) or {}),
+               "LTE_LOG_DIR": os.path.dirname(log)}
         pane = self._session.new_pane(name, cmd, mode=mode, on_exit=exited,
                                       on_output=on_output or None, env=env, **kwargs)
         self._backend.register(full, pane, log)
@@ -806,12 +811,15 @@ class Processes:
     a watcher thread; died is True for an exit nobody asked for.
     'keep_open': close() stops nothing.
     'scope': groups with the same scope share names (default: this one).
+    'env': variables for every process of the group (None: unset), over
+    this process's environment; start(env=) wins. Never put in os.environ,
+    so other groups don't see it. Fixed at creation: procs.env is read-only.
     """
 
     def __init__(self, name="processes", *, tmux=None, prefix=None, log_dir=None, echo=(),
                  tty=None, setup=None, fail_on=None, stop_codes=None, sigint_timeout=10.0,
                  on_abort=None, on_exit=None, keep_open=False, scope=None,
-                 sigterm_timeout=5.0):
+                 sigterm_timeout=5.0, env=None):
         prefix = name if prefix is None else prefix
         if log_dir is None:
             log_dir = tempfile.mkdtemp(prefix=re.sub(r"[^\w-]", "_", name) + "-")
@@ -829,6 +837,7 @@ class Processes:
         self.log_dir = str(log_dir)
         self.keep_open = keep_open
         self.setup = setup
+        self.env = types.MappingProxyType(dict(env or {}))
         self.fail_on = {n: [p] if isinstance(p, str) or callable(p) else list(p)
                         for n, p in (fail_on or {}).items()}
         self.stop_codes = dict(stop_codes or {})
@@ -876,11 +885,11 @@ class Processes:
         patterns for it. 'exits': a code (or several) it finishes with on
         its own, so that exit is no death; wait_for_exit() waits for it.
         'stop_codes': the codes it may exit with when stopped (default: the
-        group's). 'env': variables to set (None: unset) on top of this
-        process's environment. 'sigint_timeout': seconds SIGINT gets
-        before SIGTERM when it is stopped, 'sigterm_timeout' seconds SIGTERM
-        gets before SIGKILL (defaults: the group's). A stopped
-        name can be started again. Returns its Process."""
+        group's). 'env': variables to set (None: unset), over the group's
+        env=, over this process's environment. 'sigint_timeout': seconds
+        SIGINT gets before SIGTERM when it is stopped, 'sigterm_timeout'
+        seconds SIGTERM gets before SIGKILL (defaults: the group's). A
+        stopped name can be started again. Returns its Process."""
         if self._adopted:
             raise ValueError("start(): this group adopted a script's session; "
                              "start more in another Processes")
@@ -892,10 +901,15 @@ class Processes:
                                                sigterm_timeout=sigterm_timeout))
         self._sigint_timeouts[name] = sigint_timeout
         self._sigterm_timeouts[name] = sigterm_timeout
-        self.backend.start(name, command, self.setup, on_exit, on_line, self.log(name), env)
+        self.backend.start(name, command, self.setup, on_exit, on_line, self.log(name),
+                           self._env_for(env))
         if ready is not None:
             self.wait_for(name, ready, timeout)
         return Process(self, name)
+
+    def _env_for(self, env):
+        """A process's env= over the group's: None if neither has any."""
+        return {**self.env, **(env or {})} or None
 
     def _begin(self, name, command, fail_on=(), exits=None, stop_codes=None):
         """A new run of 'name': checks, bookkeeping. Returns the backend's
@@ -945,7 +959,8 @@ class Processes:
         own, as start()'s exits=. Returns the panes' Processes. Exit statuses are exact for wrap
         and exec panes; for shell panes, only that they ended. A plain tmux
         script works too: a pane's command is an exec pane, an idle shell is
-        left out. The panes can't be started again. Kept on failure:
+        left out. The panes can't be started again. The group's env= goes to
+        the script; its panes get what the script gives them. Kept on failure:
         tmux -S <socket> attach. See docs/testing-scripts.md."""
         if self._runs:
             raise ValueError("adopt(): call it first, before start() or build()")
@@ -953,7 +968,7 @@ class Processes:
         self._adopted = True
         name = self._name(name)
         on_exit, on_line = self._begin(name, command, exits=None if ready else 0)
-        backend.run_script(name, command, on_exit, on_line, self.log(name))
+        backend.run_script(name, command, on_exit, on_line, self.log(name), self.env)
         if ready is not None:
             self.wait_for(name, ready, timeout)
         else:

@@ -1,4 +1,5 @@
 """Processes without pytest's plugin: a program's own group of processes."""
+import os
 import sys
 import threading
 import time
@@ -152,3 +153,63 @@ def test_sigterm_timeout_adopted(tmp_path):
     procs.close(check=False)
     assert time.monotonic() - t < 3
     assert procs.status("w:x").stopped == "SIGKILL"
+
+
+# ---------- Processes(env=) ----------
+
+SHOW_ENV = 'echo "A=${LTE_T_A-unset} B=${LTE_T_B-unset} I=${LTE_T_INH-unset}"; sleep 60'
+
+
+@pytest.fixture(params=["subprocess", "tmux"])
+def group(request, tmp_path, monkeypatch):
+    """group(name, **kwargs): a Processes in that mode; closed after."""
+    monkeypatch.setenv("LTE_T_INH", "inherited")
+    tmux = request.getfixturevalue("session") if request.param == "tmux" else None  # outlives it
+    made = []
+
+    def make(name="env", **kwargs):
+        procs = Processes(name, tmux=tmux, log_dir=str(tmp_path / name),
+                          stop_codes={"*": (0, 130)}, **kwargs)
+        made.append(procs)
+        return procs
+
+    yield make
+    for procs in made:
+        procs.close()
+
+
+def shown(proc):
+    return proc.wait_for(r"A=\S+ B=\S+ I=\S+").group(0)
+
+
+def test_group_env(group):
+    """Group over inherited, start() over group, None unsets; a restart gets
+    it again; another group and os.environ don't see it."""
+    before = dict(os.environ)
+    procs = group("one", env={"LTE_T_A": "group", "LTE_T_B": "group", "LTE_T_INH": None})
+    other = group("two", env={"LTE_T_B": "two"})
+    assert shown(procs.start("w:a", SHOW_ENV)) == "A=group B=group I=unset"
+    own = procs.start("w:b", SHOW_ENV, env={"LTE_T_B": "own", "LTE_T_INH": "back"})
+    assert shown(own) == "A=group B=own I=back"
+    assert shown(other.start("w:c", SHOW_ENV)) == "A=unset B=two I=inherited"
+    procs.stop("w:a")
+    assert shown(procs["w:a"].start()) == "A=group B=group I=unset"
+    assert dict(os.environ) == before
+    with pytest.raises(TypeError):
+        procs.env["LTE_T_A"] = "x"  # read-only
+
+
+def test_build_panes_get_group_env(session, tmp_path):
+    """The group's, then copy_environment(), then new_pane(env=)."""
+    def build(s):
+        s.copy_environment({"LTE_T_B": "copied"})
+        s.new_window("w")
+        s.new_pane("x", SHOW_ENV)
+        s.new_pane("y", SHOW_ENV, env={"LTE_T_A": "pane"})
+
+    procs = Processes("b", tmux=session, log_dir=str(tmp_path), stop_codes={"*": (0, 130)},
+                      env={"LTE_T_A": "group", "LTE_T_B": "group"})
+    procs.build(build)
+    assert shown(procs["w:x"]).startswith("A=group B=copied")
+    assert shown(procs["w:y"]).startswith("A=pane B=copied")
+    procs.close()

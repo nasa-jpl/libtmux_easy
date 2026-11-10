@@ -484,3 +484,39 @@ def test_features(run, mode):
     assert "w:job: no line matching 'three' after 'one'" in out, out
     assert "warning: no test read --arg unused" in out, out
     assert "ERROR" not in out, out
+
+
+GROUP_ENV = """
+import os
+from libtmux_easy.testing import Processes
+SHOW = 'echo "A=${LTE_T_A-unset} B=${LTE_T_B-unset}"; sleep 60'
+
+class TestWithEnv:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls, env={"LTE_T_A": "group", "LTE_T_B": "group"},
+                              stop_codes={"*": (0, 130)})
+
+    @classmethod
+    def teardown_class(cls):
+        cls.procs.close()
+
+    def test_env(self):
+        self.procs.start("w:a", SHOW)
+        self.procs.start("w:b", SHOW, env={"LTE_T_B": "own"})
+        self.procs.wait_for("w:a", "A=group B=group")
+        self.procs.wait_for("w:b", "A=group B=own")
+        assert "LTE_T_A" not in os.environ
+
+class TestWithout:
+    def test_no_leak(self):
+        with Processes(stop_codes={"*": (0, 130)}) as procs:
+            procs.start("w:c", SHOW)
+            procs.wait_for("w:c", "A=unset B=unset")
+"""
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_group_env(run, mode):
+    proc, out = run(GROUP_ENV, mode=mode)
+    assert proc.returncode == 0, out

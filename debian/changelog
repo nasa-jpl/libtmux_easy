@@ -1,3 +1,12 @@
+libtmux-easy (0.6.0) noble; urgency=medium
+
+  * Processes(env=): variables for every process of a group, under
+    start(env=); never os.environ. build() panes and adopt()'s script too.
+  * Fix wait_for() and wait_for_output() missing a line printed right after
+    a watch began on a pane with scrollback (tmux mode, a fast shell).
+
+ -- Spencer Diehl <docdiehl@gmail.com>  Tue, 10 Nov 2026 11:57:08 -0800
+
 libtmux-easy (0.5.0) noble; urgency=medium
 
   * Processes(sigterm_timeout=) and start(sigterm_timeout=): seconds SIGTERM
