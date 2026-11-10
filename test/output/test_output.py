@@ -86,6 +86,37 @@ def test_wait_for_output_sees_earlier_output(session):
     assert m.match.group(1) == "8080" and m.name == "main:p"
 
 
+def test_wait_for_output_line_before_the_reader(session, tmp_path, monkeypatch):
+    """A scrollback, then a line printed after the pipe starts but before the
+    reader gets the watch: it counts. Was missed (Processes' first pane in
+    tmux mode, a fast shell); the reader is held back here to hit it."""
+    go = tmp_path / "go"
+    pane = session.new_pane("p", f"echo early; until [ -e {go} ]; do sleep 0.01; done; "
+                                 "echo late; sleep 30", mode=PANE_MODE_WRAP)
+    wait_until(lambda: "early" in session.output_text(pane))
+    add = output.OutputReader.add
+
+    def held(self, watch, since=None):
+        go.touch()
+        wait_until(lambda: b"late" in read(session.output_path(pane)))
+        add(self, watch, since)
+
+    monkeypatch.setattr(output.OutputReader, "add", held)
+    assert session.wait_for_output(pane, r"^late", timeout=3).line == "late"
+
+
+def test_watch_tee_first_no_scrollback_twice(session, tmp_path):
+    """lte-run --tee piped the pane already: its file, not the scrollback
+    too (they overlap), so each line comes once."""
+    pane = session.new_pane("p", "echo one; sleep 30", mode=PANE_MODE_WRAP,
+                            cmd_capture=str(tmp_path / "p.log"))
+    wait_until(lambda: b"one" in read(tmp_path / "p.log"))
+    lines, cb = collect()
+    session.watch_output(pane, r"^one", cb)
+    time.sleep(1.0)
+    assert lines == ["one"]
+
+
 def test_wait_for_output_sees_earlier_capture(session, tmp_path):
     pane = session.new_pane("p", "echo listening on 8080; sleep 30", mode=PANE_MODE_EXEC,
                             pane_capture=str(tmp_path / "p.log"))

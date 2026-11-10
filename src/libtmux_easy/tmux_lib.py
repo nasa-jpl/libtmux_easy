@@ -2003,7 +2003,9 @@ class TmuxSession(Session):
         'snapshot' (a list, one pane): gets the pane's scrollback (raw
         capture-pane lines), read in the same call, just before the pipe
         starts. tmux runs a command list without reading pane output in
-        between, so no line is in neither."""
+        between, so no line is in neither, nor in both: the file from where
+        the pipe began follows the snapshot. Left empty if the pane wasn't
+        piped by us."""
         if len(paths) == 1:
             pane_id = next(iter(paths))
             infos = {pane_id: self._pipe_info(pane_id)}
@@ -2041,6 +2043,10 @@ class TmuxSession(Session):
                 if pane_id in piped and ok != "1":
                     piped.discard(pane_id)  # lte-run --tee got there first
                     logger.debug(f"pane {pane_id}: piped by lte-run meanwhile")
+        if snapshot is not None and not piped:  # one pane, and the pipe isn't ours
+            # lte-run's --tee piped it before the scrollback was read: the two
+            # overlap. Its file alone has the command's output.
+            snapshot.clear()
         for path in stale:
             # The hook's file for a pane only now named (new_window()'s first
             # pane): just its shell's prompt.
@@ -2361,7 +2367,10 @@ class TmuxSession(Session):
             if watch.done:
                 break
             watch._offer(line, now, target_id, name)
-        if scroll or since == "now":
+        # "start" stays "start" after a snapshot: the file begins where the
+        # snapshot ends. (Its size when the reader gets the watch would skip
+        # what was printed in between.)
+        if since == "now":
             since = None  # the reader's "from now on"
         self._output_reader().add(watch, since=since)
         return watch
