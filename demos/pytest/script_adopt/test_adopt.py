@@ -7,6 +7,7 @@ clash with yours. Its attach() does nothing. It must exit 0 (or pass
 ready= for one that keeps running). Panes can't be started again; exit
 statuses are exact for wrap and exec panes.
 """
+
 import os
 import sys
 import urllib.request
@@ -29,8 +30,12 @@ class TestAdopt:
         cls.procs.close()  # Ctrl-C each pane; fail unless each exits 0
 
     def test_panes(self):
-        assert self.procs.names == ["script:script", "servers:web", "workers:ticker",
-                                    "jobs:migrate"]
+        assert self.procs.names == [
+            "script:script",
+            "servers:web",
+            "workers:ticker",
+            "jobs:migrate",
+        ]
 
     def test_web(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2) as reply:

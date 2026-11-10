@@ -49,8 +49,14 @@ class Echo:
     a 'with' block prints the whole block, once.
     """
 
-    QUIET = {"get_pane_name", "get_window_name", "get_pane", "get_window",
-             "resolve_target_pane", "resolve_target_window"}
+    QUIET = {
+        "get_pane_name",
+        "get_window_name",
+        "get_pane",
+        "get_window",
+        "resolve_target_pane",
+        "resolve_target_window",
+    }
 
     def __init__(self, script):
         self.script = os.path.realpath(script)
@@ -81,7 +87,7 @@ class Echo:
         if node is None:
             return
         self.shown = (node.lineno, node.end_lineno)
-        self.show("\n".join(source[node.lineno - 1:node.end_lineno]))
+        self.show("\n".join(source[node.lineno - 1 : node.end_lineno]))
 
     def _parse(self, filename):
         if filename not in self._trees:
@@ -92,9 +98,13 @@ class Echo:
     @staticmethod
     def _block(tree, line):
         """The outermost loop around 'line', else its innermost statement."""
-        around = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)
-                  and not isinstance(n, (ast.FunctionDef, ast.ClassDef))
-                  and n.lineno <= line <= n.end_lineno]
+        around = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.stmt)
+            and not isinstance(n, (ast.FunctionDef, ast.ClassDef))
+            and n.lineno <= line <= n.end_lineno
+        ]
         loops = [n for n in around if isinstance(n, (ast.For, ast.While))]
         if loops:
             return min(loops, key=lambda n: n.lineno)
@@ -121,6 +131,7 @@ class _Echoed:
         def call(*args, **kwargs):
             echo.called(sys._getframe(1))
             return echo.result(value(*args, **kwargs))
+
         return call
 
     def __setattr__(self, name, value):
@@ -167,6 +178,7 @@ class Console:
             try:
                 import readline
                 import rlcompleter
+
                 readline.set_completer(rlcompleter.Completer(self._console.locals).complete)
                 readline.parse_and_bind("tab: complete")
             except ImportError:
@@ -198,20 +210,27 @@ class Console:
 class Tour:
     """One tour: its session, narration and pauses.
 
-        with Tour("exits", __doc__) as tour:
-            tour.step("...")
-            tour.say("...")
-            tour.pause("start the panes")
-            tour.session.new_pane(...)
+    with Tour("exits", __doc__) as tour:
+        tour.step("...")
+        tour.say("...")
+        tour.pause("start the panes")
+        tour.session.new_pane(...)
     """
 
     def __init__(self, name, doc, add_args=None, echo=False):
-        parser = argparse.ArgumentParser(description=doc,
-                                         formatter_class=argparse.RawDescriptionHelpFormatter)
-        parser.add_argument("--auto", action="store_true",
-                            help="no prompts, no dashboard: run straight through (smoke test)")
-        parser.add_argument("--no-dash", action="store_true",
-                            help="home pane only, no sidebar (also the fallback without Textual)")
+        parser = argparse.ArgumentParser(
+            description=doc, formatter_class=argparse.RawDescriptionHelpFormatter
+        )
+        parser.add_argument(
+            "--auto",
+            action="store_true",
+            help="no prompts, no dashboard: run straight through (smoke test)",
+        )
+        parser.add_argument(
+            "--no-dash",
+            action="store_true",
+            help="home pane only, no sidebar (also the fallback without Textual)",
+        )
         if add_args:
             add_args(parser)
         self.args = parser.parse_args()
@@ -227,8 +246,11 @@ class Tour:
             self.session.new_window("home")
         else:
             self.session = TmuxSession.current()
-        out = subprocess.run(["tmux", "show-options", "-qv", "-t", self.name, "@lte_dash_window"],
-                             capture_output=True, text=True).stdout
+        out = subprocess.run(
+            ["tmux", "show-options", "-qv", "-t", self.name, "@lte_dash_window"],
+            capture_output=True,
+            text=True,
+        ).stdout
         self.has_dash = bool(out.strip())
         self.echo = self.console = None
         if echo:
@@ -341,26 +363,31 @@ def lte_run():
 # submit it early.
 # --------------------------------------------------------------------------- #
 
+
 def exits_after(seconds, code=0):
     """Prints a countdown, then exits with 'code'."""
-    return (f"sh -c 'for i in $(seq {seconds} -1 1); do echo \"exit {code} in $i\"; sleep 1; done;"
-            f" exit {code}'")
+    return (
+        f'sh -c \'for i in $(seq {seconds} -1 1); do echo "exit {code} in $i"; sleep 1; done;'
+        f" exit {code}'"
+    )
 
 
 def runs_forever(label="working"):
     """Prints a line a second until signalled."""
-    return (f"python3 -u -c 'import time; "
-            f"[(print(\"{label}\", i), time.sleep(1)) for i in range(10**9)]'")
+    return (
+        f"python3 -u -c 'import time; "
+        f'[(print("{label}", i), time.sleep(1)) for i in range(10**9)]\''
+    )
 
 
 def ignores_sigint():
     """Ignores SIGINT: stop_pane() has to escalate to SIGTERM."""
-    return "sh -c 'trap \"\" INT; echo \"ignoring SIGINT\"; exec sleep 86400'"
+    return 'sh -c \'trap "" INT; echo "ignoring SIGINT"; exec sleep 86400\''
 
 
 def ignores_sigint_and_sigterm():
     """Ignores both: stop_pane() has to go all the way to SIGKILL."""
-    return "sh -c 'trap \"\" INT TERM; echo \"ignoring SIGINT and SIGTERM\"; exec sleep 86400'"
+    return 'sh -c \'trap "" INT TERM; echo "ignoring SIGINT and SIGTERM"; exec sleep 86400\''
 
 
 def fake_launch(*extra):

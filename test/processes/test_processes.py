@@ -1,4 +1,5 @@
 """Processes without pytest's plugin: a program's own group of processes."""
+
 import os
 import sys
 import threading
@@ -9,15 +10,21 @@ import pytest
 from libtmux_easy.processes import ProcessFailure, Processes
 
 # Ignores the first SIGINT for a while, then exits 0 on the next.
-SLOW_STOP = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
-             "signal.signal(signal.SIGINT, lambda *a: (time.sleep(1.5), exit(0))); "
-             "time.sleep(60)\"")
+SLOW_STOP = (
+    f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+    "signal.signal(signal.SIGINT, lambda *a: (time.sleep(1.5), exit(0))); "
+    'time.sleep(60)"'
+)
 
 
 def test_subprocess_group(tmp_path):
     exits = []
-    procs = Processes("prog", log_dir=str(tmp_path), stop_codes={"*": (0, 130)},
-                      on_exit=lambda name, status, died: exits.append((name, died)))
+    procs = Processes(
+        "prog",
+        log_dir=str(tmp_path),
+        stop_codes={"*": (0, 130)},
+        on_exit=lambda name, status, died: exits.append((name, died)),
+    )
     a = procs.start("w:a", "echo hello $GREETING; sleep 60", ready="hello", env={"GREETING": "x"})
     assert "hello x" in a.output()
     procs.start("w:oneshot", "true", exits=0)
@@ -44,9 +51,12 @@ def test_close_stops_all_at_once(tmp_path):
 def test_kill_all(tmp_path):
     """kill_all() while close() waits: no grace, and no death."""
     procs = Processes("kill", log_dir=str(tmp_path), sigint_timeout=30)
-    procs.start("w:a", f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
-                       "signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)\"",
-                ready="up")
+    procs.start(
+        "w:a",
+        f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+        'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)"',
+        ready="up",
+    )
     threading.Timer(0.5, procs.kill_all).start()
     t = time.monotonic()
     procs.close(check=False)
@@ -56,8 +66,9 @@ def test_kill_all(tmp_path):
 
 def test_tmux_group(session, tmp_path):
     """Panes in a session of the program's, bare window names."""
-    procs = Processes("prog", tmux=session, prefix="", log_dir=str(tmp_path),
-                      stop_codes={"*": (0, 130)})
+    procs = Processes(
+        "prog", tmux=session, prefix="", log_dir=str(tmp_path), stop_codes={"*": (0, 130)}
+    )
     procs.start("sim:a", "echo ready; sleep 60", ready="ready")
     procs.start("sim:b", "sleep 60")
     assert "sim" in [w.name for w in session.windows]
@@ -75,8 +86,10 @@ def test_build_needs_tmux(tmp_path):
 
 def test_per_process_sigint_timeout(tmp_path):
     """close(): each process escalates on its own deadline, all at once."""
-    ignore = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
-              "signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)\"")
+    ignore = (
+        f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+        'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)"'
+    )
     procs = Processes("own", log_dir=str(tmp_path), sigint_timeout=30)
     procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
     procs.start("w:slow", SLOW_STOP, ready="up")
@@ -97,9 +110,11 @@ def test_per_process_sigint_timeout(tmp_path):
 
 
 # Ignores SIGINT and SIGTERM: only SIGKILL ends it.
-DEAF = (f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
-        "signal.signal(signal.SIGINT, signal.SIG_IGN); "
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)\"")
+DEAF = (
+    f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
+    "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+    'signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"'
+)
 
 
 def _sigterm_timeouts(procs):
@@ -116,10 +131,10 @@ def _sigterm_timeouts(procs):
 def test_sigterm_timeout(tmp_path):
     """SIGTERM -> SIGKILL grace: 5 s by default, as before; settable."""
     assert Processes("d", log_dir=str(tmp_path / "d")).sigterm_timeout == 5.0
-    _sigterm_timeouts(Processes("term", log_dir=str(tmp_path), sigint_timeout=0.2,
-                                sigterm_timeout=0.5))
-    procs = Processes("term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2,
-                      sigterm_timeout=30)
+    _sigterm_timeouts(
+        Processes("term", log_dir=str(tmp_path), sigint_timeout=0.2, sigterm_timeout=0.5)
+    )
+    procs = Processes("term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2, sigterm_timeout=30)
     p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
     p.stop(check=False)
     p.start().wait_for("up")  # a restart keeps it
@@ -134,19 +149,30 @@ def test_sigterm_timeout(tmp_path):
 
 
 def test_sigterm_timeout_tmux(session, tmp_path):
-    _sigterm_timeouts(Processes("term", tmux=session, prefix="", log_dir=str(tmp_path),
-                                sigint_timeout=0.2, sigterm_timeout=0.5))
+    _sigterm_timeouts(
+        Processes(
+            "term",
+            tmux=session,
+            prefix="",
+            log_dir=str(tmp_path),
+            sigint_timeout=0.2,
+            sigterm_timeout=0.5,
+        )
+    )
 
 
 def test_sigterm_timeout_adopted(tmp_path):
     """adopt()'s panes: the group's sigterm_timeout."""
     script = tmp_path / "s.py"
-    script.write_text("from libtmux_easy import TmuxSession\n"
-                      "s = TmuxSession.create('deaf', mode='wrap')\n"
-                      "s.new_window('w')\n"
-                      f"s.new_pane('x', {DEAF!r})\n")
-    procs = Processes("adopt", log_dir=str(tmp_path / "logs"), sigint_timeout=0.2,
-                      sigterm_timeout=0.3)
+    script.write_text(
+        "from libtmux_easy import TmuxSession\n"
+        "s = TmuxSession.create('deaf', mode='wrap')\n"
+        "s.new_window('w')\n"
+        f"s.new_pane('x', {DEAF!r})\n"
+    )
+    procs = Processes(
+        "adopt", log_dir=str(tmp_path / "logs"), sigint_timeout=0.2, sigterm_timeout=0.3
+    )
     procs.adopt(f"{sys.executable} {script}")
     procs.wait_for("w:x", "up", timeout=10)
     t = time.monotonic()
@@ -168,8 +194,9 @@ def group(request, tmp_path, monkeypatch):
     made = []
 
     def make(name="env", **kwargs):
-        procs = Processes(name, tmux=tmux, log_dir=str(tmp_path / name),
-                          stop_codes={"*": (0, 130)}, **kwargs)
+        procs = Processes(
+            name, tmux=tmux, log_dir=str(tmp_path / name), stop_codes={"*": (0, 130)}, **kwargs
+        )
         made.append(procs)
         return procs
 
@@ -201,14 +228,20 @@ def test_group_env(group):
 
 def test_build_panes_get_group_env(session, tmp_path):
     """The group's, then copy_environment(), then new_pane(env=)."""
+
     def build(s):
         s.copy_environment({"LTE_T_B": "copied"})
         s.new_window("w")
         s.new_pane("x", SHOW_ENV)
         s.new_pane("y", SHOW_ENV, env={"LTE_T_A": "pane"})
 
-    procs = Processes("b", tmux=session, log_dir=str(tmp_path), stop_codes={"*": (0, 130)},
-                      env={"LTE_T_A": "group", "LTE_T_B": "group"})
+    procs = Processes(
+        "b",
+        tmux=session,
+        log_dir=str(tmp_path),
+        stop_codes={"*": (0, 130)},
+        env={"LTE_T_A": "group", "LTE_T_B": "group"},
+    )
     procs.build(build)
     assert shown(procs["w:x"]).startswith("A=group B=copied")
     assert shown(procs["w:y"]).startswith("A=pane B=copied")

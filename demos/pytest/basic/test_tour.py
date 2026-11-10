@@ -17,6 +17,7 @@ What it shows:
   teardown_class   close(): stop everything, fail unless each exits 0 on SIGINT
   logs             each process's output in a file: 'process logs:' at the end
 """
+
 import os
 import sys
 import tempfile
@@ -65,8 +66,9 @@ class TestTour:
         # Gate: any code. wait_until() fails at once if something died.
         cls.procs.wait_until(server_answers, timeout=10)
         # Stage 2.
-        cls.w0, cls.w1 = (cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0")
-                          for n in range(2))
+        cls.w0, cls.w1 = (
+            cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0") for n in range(2)
+        )
 
     @classmethod
     def teardown_class(cls):

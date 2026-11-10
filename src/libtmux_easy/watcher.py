@@ -23,8 +23,8 @@ class _Watch:
 
     def __init__(self, pane_id):
         self.pane_id = pane_id
-        self.fds = {}          # pidfd -> psutil.Process
-        self.poll_procs = []   # procs with no pidfd available (fallback)
+        self.fds = {}  # pidfd -> psutil.Process
+        self.poll_procs = []  # procs with no pidfd available (fallback)
 
 
 _LISTENER = object()  # selector tag for the wrap-mode listening socket
@@ -59,7 +59,7 @@ class _WrapRun:
     target_pid: Optional[int]
     argv: list
     status: Optional[ExitStatus] = None  # set by the 'exited' message
-    lost: bool = False                   # connection closed with no 'exited'
+    lost: bool = False  # connection closed with no 'exited'
 
 
 class _PaneWatcher(threading.Thread):
@@ -218,7 +218,8 @@ class _PaneWatcher(threading.Thread):
                         except OSError:
                             continue
                         self._selector.register(
-                            conn_sock, selectors.EVENT_READ, data=_WrapConn(conn_sock))
+                            conn_sock, selectors.EVENT_READ, data=_WrapConn(conn_sock)
+                        )
                         continue
                     if isinstance(key.data, _WrapConn):
                         conn = key.data

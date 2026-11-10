@@ -47,11 +47,11 @@ class PaneStatus:
     """A snapshot of one pane created via new_pane(). See TmuxSession.status()
     and .pane_status()."""
 
-    name: str                  # 'window:pane', or the raw pane id if unnamed
-    pane_id: str                # '%3'
-    mode: str                   # PANE_MODE_SHELL | PANE_MODE_EXEC | PANE_MODE_WRAP
+    name: str  # 'window:pane', or the raw pane id if unnamed
+    pane_id: str  # '%3'
+    mode: str  # PANE_MODE_SHELL | PANE_MODE_EXEC | PANE_MODE_WRAP
     command: str
-    target_pids: tuple          # ints, for display -- see new_pane()
+    target_pids: tuple  # ints, for display -- see new_pane()
     running: bool
     exit_status: ExitStatus
     # Set once stop_pane() (or stop_all()) ended this run: the last signal it

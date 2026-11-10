@@ -1,4 +1,5 @@
 """Helpers shared by the test modules."""
+
 import os
 import subprocess
 import sys
@@ -32,9 +33,18 @@ def title(pane):
 
 def lte_session(*argv, env=None, cwd=None, timeout=60):
     """Run lte-session (this checkout's), headless: outside tmux, no TTY."""
-    env = {k: v for k, v in (os.environ if env is None else env).items()
-           if k not in ("TMUX", "TMUX_PANE")}
+    env = {
+        k: v
+        for k, v in (os.environ if env is None else env).items()
+        if k not in ("TMUX", "TMUX_PANE")
+    }
     env["PYTHONPATH"] = SRC
-    return subprocess.run([sys.executable, "-m", "libtmux_easy.launch", *argv],
-                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                          env=env, cwd=cwd, timeout=timeout)
+    return subprocess.run(
+        [sys.executable, "-m", "libtmux_easy.launch", *argv],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=cwd,
+        timeout=timeout,
+    )

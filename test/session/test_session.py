@@ -1,5 +1,6 @@
 """TmuxSession: sessions, windows and panes; exit status in shell and exec
 mode; stopping (stop_pane, stop_all) and the stopped state."""
+
 import json
 import os
 import time
@@ -83,8 +84,10 @@ class TestWindowsAndPanes:
     def test_env_levels(self, make_session):
         """Session, window and pane env merge, later levels winning; the
         window's reused first pane gets it too; SKIP_ENV never goes in."""
-        session = make_session(window=None, env={"LTE_A": "session", "LTE_B": "session",
-                                                 "TERM": "bogus", "TMUX_PANE": "%bogus"})
+        session = make_session(
+            window=None,
+            env={"LTE_A": "session", "LTE_B": "session", "TERM": "bogus", "TMUX_PANE": "%bogus"},
+        )
         session.new_window("w", env={"LTE_B": "window", "LTE_C": "window"})
         show = "echo a=$LTE_A,b=$LTE_B,c=$LTE_C,term=$TERM,pane=$TMUX_PANE"
         first = session.new_pane("first", show)
@@ -114,28 +117,47 @@ class TestWindowsAndPanes:
         environment is as it was."""
         monkeypatch.setenv("LTE_DROP", "x")
         rc = tmp_path / "rc"
-        rc.write_text("export PATH=/rc/bin:$PATH LTE_RC=rc LTE_P=clobbered\n"
-                      "unset LTE_W\nalias lte_alias='echo alias_ok'\n")
+        rc.write_text(
+            "export PATH=/rc/bin:$PATH LTE_RC=rc LTE_P=clobbered\n"
+            "unset LTE_W\nalias lte_alias='echo alias_ok'\n"
+        )
         session = make_session(env={"LTE_DROP": None}, rc=str(rc))
         tmux("set-environment", "-g", "LTE_SERVER", "leak")
         try:
             path = f"/lte/bin:{os.environ['PATH']}"
             session.new_window("w", env={"LTE_W": "w;", "PATH": path})
-            odd = "it's \"q\" $HOME #{pane_id} %if\nline2\\"
+            odd = 'it\'s "q" $HOME #{pane_id} %if\nline2\\'
             out = tmp_path / "env.json"
-            dump = (f"python3 -c 'import json,os; json.dump(dict(os.environ), "
-                    f"open(\"{out}\", \"w\"))'")
-            pane = session.new_pane("p", dump + ("; sleep 30" if mode == PANE_MODE_EXEC else ""),
-                                    mode=mode, env={"LTE_P": odd})
+            dump = (
+                f"python3 -c 'import json,os; json.dump(dict(os.environ), " f'open("{out}", "w"))\''
+            )
+            pane = session.new_pane(
+                "p",
+                dump + ("; sleep 30" if mode == PANE_MODE_EXEC else ""),
+                mode=mode,
+                env={"LTE_P": odd},
+            )
             assert wait_until(lambda: out.exists() and out.stat().st_size)
             got = json.loads(out.read_text())
             want = session._pane_environment(session.current_window.id, {"LTE_P": odd})
-            ours = {"TMUX", "TMUX_PANE", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
-                    "SHELL", "PWD", "OLDPWD", "SHLVL", "_", "LTE_DIR"}
+            ours = {
+                "TMUX",
+                "TMUX_PANE",
+                "TERM",
+                "TERM_PROGRAM",
+                "TERM_PROGRAM_VERSION",
+                "SHELL",
+                "PWD",
+                "OLDPWD",
+                "SHLVL",
+                "_",
+                "LTE_DIR",
+            }
             if mode == PANE_MODE_WRAP and _wrap_prefix().startswith("env "):
                 ours.add("PYTHONPATH")  # lte-run from this source tree
-            assert {k: v for k, v in got.items() if k not in ours} == \
-                {k: v for k, v in want.items() if k not in ours}
+            assert {k: v for k, v in got.items() if k not in ours} == {
+                k: v for k, v in want.items() if k not in ours
+            }
             assert got["LTE_P"] == odd and got["LTE_W"] == "w;" and got["PATH"] == path
             assert "LTE_SERVER" not in got and "LTE_DROP" not in got and "LTE_RC" not in got
             if mode != PANE_MODE_EXEC:
@@ -150,8 +172,9 @@ class TestWindowsAndPanes:
         """The env is put back once, at shell start: an export typed in the
         pane reaches the next run."""
         out = tmp_path / "v"
-        pane = session.new_pane("p", "echo ${LTE_E:-unset} > " + str(out) + "; true",
-                                mode=PANE_MODE_WRAP)  # an operator: run as bash -c, so the rerun expands it again
+        pane = session.new_pane(
+            "p", "echo ${LTE_E:-unset} > " + str(out) + "; true", mode=PANE_MODE_WRAP
+        )  # an operator: run as bash -c, so the rerun expands it again
         assert wait_until(lambda: out.exists() and out.read_text() == "unset\n")
         session.send_keys("export LTE_E=edited", target_pane=pane)
         session.wait_for_pane_idle(pane, timeout=10)
@@ -169,8 +192,9 @@ class TestWindowsAndPanes:
 
     def test_exec_respawn_keeps_env(self, session, tmp_path):
         out = tmp_path / "v"
-        pane = session.new_pane("p", f"sh -c 'echo $LTE_V > {out}'", mode=PANE_MODE_EXEC,
-                                env={"LTE_V": "kept"})
+        pane = session.new_pane(
+            "p", f"sh -c 'echo $LTE_V > {out}'", mode=PANE_MODE_EXEC, env={"LTE_V": "kept"}
+        )
         assert wait_until(lambda: out.exists() and out.read_text() == "kept\n")
         out.unlink()
         session.respawn_pane(pane)
@@ -230,8 +254,10 @@ class TestShellMode:
         assert (status.signal, status.inferred) == (2, True)
 
     def test_sigint_handler_exit_code(self, session):
-        cmd = ("python3 -c 'import signal, sys, time; "
-               "signal.signal(signal.SIGINT, lambda *a: sys.exit(7)); time.sleep(300)'")
+        cmd = (
+            "python3 -c 'import signal, sys, time; "
+            "signal.signal(signal.SIGINT, lambda *a: sys.exit(7)); time.sleep(300)'"
+        )
         pane = session.new_pane("x", cmd)
         time.sleep(0.5)  # until the handler is installed
         session.stop_pane(pane, sigint_timeout=5.0)
@@ -270,8 +296,10 @@ class TestExecMode:
         assert status.code == 42
         assert status.inferred is False
 
-    @pytest.mark.xfail(reason="tmux often never records a SIGINT'd exec pane's status "
-                              "(docs/KNOWN_ISSUES.md)", strict=False)
+    @pytest.mark.xfail(
+        reason="tmux often never records a SIGINT'd exec pane's status " "(docs/KNOWN_ISSUES.md)",
+        strict=False,
+    )
     def test_signal_distinguished_from_code(self, session):
         pane = session.new_pane("x", "sh -c 'exec sleep 300'", mode=PANE_MODE_EXEC)
         assert session.is_running(pane)
@@ -291,9 +319,15 @@ class TestExecMode:
         assert _exec_status(session, pane).code == 22
 
 
-@pytest.mark.parametrize("mode, wait_start", [
-    ("shell", True), ("exec", True), ("wrap", True), ("wrap", False),
-])
+@pytest.mark.parametrize(
+    "mode, wait_start",
+    [
+        ("shell", True),
+        ("exec", True),
+        ("wrap", True),
+        ("wrap", False),
+    ],
+)
 def test_command_before_failed(make_session, tmp_path, mode, wait_start):
     """A failed setup: the command doesn't run, and the pane exits with the
     setup's status. One that works: the command runs after it."""
@@ -314,11 +348,14 @@ def test_command_before_failed(make_session, tmp_path, mode, wait_start):
     assert os.listdir(tmp_path) == ["ran"]  # only the second pane's
 
 
-@pytest.mark.parametrize("mode, cmd", [
-    ("shell", "sh -c 'sleep 0.3; exit 7'"),
-    ("shell", "sh -c 'exit 7'"),          # gone before its pid is seen
-    ("exec", "sh -c 'sleep 0.3; exit 7'"),
-])
+@pytest.mark.parametrize(
+    "mode, cmd",
+    [
+        ("shell", "sh -c 'sleep 0.3; exit 7'"),
+        ("shell", "sh -c 'exit 7'"),  # gone before its pid is seen
+        ("exec", "sh -c 'sleep 0.3; exit 7'"),
+    ],
+)
 def test_wait_for_exit_after_it_ended(session, mode, cmd):
     """Watched only after the command ended: the callback still fires, and
     wait_for_exit() returns the status, not unknown at the timeout."""
@@ -352,8 +389,9 @@ def test_shell_loop_runs_until_the_loop_ends(session):
     """A loop the shell runs itself: each child exiting isn't the end, and
     nothing is typed into it. The loop's own status is the exit status."""
     calls = []
-    pane = session.new_pane("loop", "for i in 1 2 3; do sleep 0.5; done; false",
-                            on_exit=calls.append)
+    pane = session.new_pane(
+        "loop", "for i in 1 2 3; do sleep 0.5; done; false", on_exit=calls.append
+    )
     time.sleep(0.8)  # the first sleep is gone
     assert session.is_running(pane) and not calls
     assert wait_until(lambda: calls, timeout=10) and len(calls) == 1
@@ -399,8 +437,10 @@ def test_exec_pane_exiting_at_once_in_a_split(session):
     pane = session.new_pane("fast", "sh -c 'exit 3'", mode=PANE_MODE_EXEC)
     assert _exec_status_wait(session, pane).code == 3
     # The window's own option (the format would read the active pane's).
-    assert tmux("show-options", "-wqv", "-t", f"{session.id}:main", "remain-on-exit") \
-        in ([], ["off"])
+    assert tmux("show-options", "-wqv", "-t", f"{session.id}:main", "remain-on-exit") in (
+        [],
+        ["off"],
+    )
 
 
 def _exec_status_wait(session, pane):
@@ -427,8 +467,9 @@ class TestStopping:
         """One pane ignores SIGINT and needs SIGTERM; in parallel, the whole
         thing takes about one escalation."""
         quick = [session.new_pane(f"q{i}", "sleep 60", mode=PANE_MODE_WRAP) for i in range(3)]
-        stubborn = session.new_pane("stubborn", "sh -c 'trap \"\" INT; exec sleep 60'",
-                                    mode=PANE_MODE_WRAP)
+        stubborn = session.new_pane(
+            "stubborn", "sh -c 'trap \"\" INT; exec sleep 60'", mode=PANE_MODE_WRAP
+        )
         done = session.new_pane("done", "true", mode=PANE_MODE_WRAP)
         session.wait_for_exit(done, timeout=5.0)
 
@@ -436,8 +477,12 @@ class TestStopping:
         results = session.stop_all(sigint_timeout=1.0)
 
         assert time.time() - start < 3.0
-        assert results == {"main:q0": True, "main:q1": True, "main:q2": True,
-                           "main:stubborn": True}  # 'done' was not running
+        assert results == {
+            "main:q0": True,
+            "main:q1": True,
+            "main:q2": True,
+            "main:stubborn": True,
+        }  # 'done' was not running
         assert {session.pane_status(p).stopped for p in quick} == {"SIGINT"}
         assert all(session.exit_status(p).signal == 2 for p in quick)
         assert session.exit_status(stubborn).signal == 15

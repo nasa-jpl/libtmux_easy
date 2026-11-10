@@ -4,6 +4,7 @@ See docs/lte-session.md. The launcher runs headless here (no
 TTY), which is its CI path: it follows the command's output and exits with
 its status.
 """
+
 import os
 import subprocess
 
@@ -24,8 +25,16 @@ class TestLauncher:
     def test_exit_code_output_env_and_cwd(self, tmp_path):
         """The command's status and output; it runs with the launching env and cwd."""
         env = dict(os.environ, LTE_TEST_VAR="from_outside")
-        proc = _launch("--name", "lte-test-launch-a", "--", "sh", "-c",
-                       "echo hello var=$LTE_TEST_VAR; pwd; exit 3", env=env, cwd=tmp_path)
+        proc = _launch(
+            "--name",
+            "lte-test-launch-a",
+            "--",
+            "sh",
+            "-c",
+            "echo hello var=$LTE_TEST_VAR; pwd; exit 3",
+            env=env,
+            cwd=tmp_path,
+        )
 
         assert proc.returncode == 3, proc.stderr
         assert "hello var=from_outside" in proc.stdout
@@ -99,8 +108,7 @@ class TestCurrent:
         adopted.kill_session()
 
     def test_reuses_dashboard_and_publishes_status(self, inside):
-        window, _ = dash.open_window(inside.id, None, None, None, home_cmd="cat",
-                                     sidebar_cmd="cat")
+        window, _ = dash.open_window(inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat")
 
         adopted = TmuxSession.current()
         assert adopted._dash_window == window
@@ -116,8 +124,9 @@ class TestCurrent:
         assert inside._session_option(dash.STATUS_OPTION) == ""
 
     def test_release_puts_a_viewed_pane_back(self, inside):
-        window, sidebar = dash.open_window(inside.id, None, None, None, home_cmd="cat",
-                                           sidebar_cmd="cat")
+        window, sidebar = dash.open_window(
+            inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat"
+        )
         adopted = TmuxSession.current()
         adopted.new_window("mine")
         pane = adopted.new_pane("p", "sleep 30", mode=PANE_MODE_WRAP)

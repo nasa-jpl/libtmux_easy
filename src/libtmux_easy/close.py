@@ -37,25 +37,31 @@ from . import wrap
 from .proc import alive, comm, pane_pids
 from ._tmux import option, tmux as _tmux
 from .dash.control import Control, describe, read_status
-from .dash.options import (HOME_KIND_OPTION, HOME_OPTION, SIDEBAR_OPTION, STATUS_OPTION,
-                           WINDOW_OPTION)
+from .dash.options import (
+    HOME_KIND_OPTION,
+    HOME_OPTION,
+    SIDEBAR_OPTION,
+    STATUS_OPTION,
+    WINDOW_OPTION,
+)
 
-ACTIONS_OPTION = "@lte_on_close"   # session option: JSON list of {"cmd", "cwd", "when"}
-STATE_OPTION = "@lte_closing"      # set by the script: "stopping", then "done"
+ACTIONS_OPTION = "@lte_on_close"  # session option: JSON list of {"cmd", "cwd", "when"}
+STATE_OPTION = "@lte_closing"  # set by the script: "stopping", then "done"
 WINDOW_OPTION_CLOSE = "@lte_close_window"
-KEY_OPTION = "@lte_close_key"      # session option: set where a borrowed close key applies
-KEY = "Q"                          # borrowed by create() and lte-session, if unbound
-KEY_ROLE = "close"                 # ~/.tmux.conf: set -g @lte_key_close KEY ("" for none)
+KEY_OPTION = "@lte_close_key"  # session option: set where a borrowed close key applies
+KEY = "Q"  # borrowed by create() and lte-session, if unbound
+KEY_ROLE = "close"  # ~/.tmux.conf: set -g @lte_key_close KEY ("" for none)
 WINDOW_NAME = "close"
 WHEN = ("before", "after")
 
-TIMEOUTS = (10.0, 5.0, 2.0)        # SIGINT, SIGTERM, SIGKILL: as stop_pane()
-ACK_TIMEOUT = 2.0                  # for the script to take the 'close' command
-SCRIPT_TIMEOUT = 120.0             # for it to finish
-PAUSE = 1.5                        # the summary stays up this long before the kill
+TIMEOUTS = (10.0, 5.0, 2.0)  # SIGINT, SIGTERM, SIGKILL: as stop_pane()
+ACK_TIMEOUT = 2.0  # for the script to take the 'close' command
+SCRIPT_TIMEOUT = 120.0  # for it to finish
+PAUSE = 1.5  # the summary stays up this long before the kill
 
 
 # ---------- actions (session option) ----------
+
 
 def actions(session, run=_tmux):
     try:
@@ -90,6 +96,7 @@ def run_actions(entries, when, out=print):
 
 
 # ---------- the close sequence ----------
+
 
 class Closer:
     def __init__(self, session, timeouts=TIMEOUTS, out=print, run=_tmux):
@@ -163,8 +170,14 @@ class Closer:
             if option(dash_window, HOME_KIND_OPTION, "-wq", run=self.run) != "command":
                 skip.add(option(dash_window, HOME_OPTION, "-wq", run=self.run))
         panes = {}
-        for line in self.run("list-panes", "-s", "-t", self.session, "-F",
-                             "#{pane_id} #{pane_pid} #{pane_dead} #{window_name}.#{pane_index}"):
+        for line in self.run(
+            "list-panes",
+            "-s",
+            "-t",
+            self.session,
+            "-F",
+            "#{pane_id} #{pane_pid} #{pane_dead} #{window_name}.#{pane_index}",
+        ):
             fields = line.split(None, 3)
             if len(fields) == 4 and fields[0] not in skip and fields[2] != "1":
                 panes[fields[0]] = (int(fields[1]), fields[3])
@@ -207,6 +220,7 @@ class Closer:
 
 # ---------- the window ----------
 
+
 def self_command():
     """Shell text that runs lte-close from this install, PATH or not."""
     src = Path(__file__).resolve().parents[1]
@@ -231,10 +245,13 @@ def open_close_window(session, timeouts=TIMEOUTS):
     if window and _tmux("list-panes", "-t", window, "-F", "#{pane_id}"):
         _tmux("select-window", "-t", window)
         return window
-    command = (f"{self_command()} --here -t {shlex.quote(session)} "
-               f"--timeouts {','.join(str(t) for t in timeouts)}")
-    out = _tmux("new-window", "-t", f"{session}:", "-n", WINDOW_NAME,
-                "-P", "-F", "#{window_id}", command)
+    command = (
+        f"{self_command()} --here -t {shlex.quote(session)} "
+        f"--timeouts {','.join(str(t) for t in timeouts)}"
+    )
+    out = _tmux(
+        "new-window", "-t", f"{session}:", "-n", WINDOW_NAME, "-P", "-F", "#{window_id}", command
+    )
     if not out:
         return None
     window = out[0].strip()
@@ -252,22 +269,36 @@ def _timeouts(text):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="lte-close", description=__doc__.split("\n\n")[0],
-        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 2)[2])
+        prog="lte-close",
+        description=__doc__.split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__.split("\n\n", 2)[2],
+    )
     parser.add_argument("-t", "--target", help="session (default: the one this runs in)")
-    parser.add_argument("--timeouts", type=_timeouts, default=TIMEOUTS, metavar="INT,TERM,KILL",
-                        help="seconds to wait after each signal (default 10,5,2)")
+    parser.add_argument(
+        "--timeouts",
+        type=_timeouts,
+        default=TIMEOUTS,
+        metavar="INT,TERM,KILL",
+        help="seconds to wait after each signal (default 10,5,2)",
+    )
     parser.add_argument("--here", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("action", nargs="?", default="close",
-                        choices=("close", "add", "list", "clear"))
-    parser.add_argument("--before", action="store_true",
-                        help="add: run before the panes are stopped (default: after)")
-    parser.add_argument("command", nargs="*", help="add: the command ('--' before one with options)")
+    parser.add_argument(
+        "action", nargs="?", default="close", choices=("close", "add", "list", "clear")
+    )
+    parser.add_argument(
+        "--before",
+        action="store_true",
+        help="add: run before the panes are stopped (default: after)",
+    )
+    parser.add_argument(
+        "command", nargs="*", help="add: the command ('--' before one with options)"
+    )
     argv = sys.argv[1:] if argv is None else list(argv)
     # A command after '--' is split off by hand: argparse mishandles '--'
     # next to an optional positional.
-    after = argv[argv.index("--") + 1:] if "--" in argv else None
-    args = parser.parse_args(argv[:argv.index("--")] if after is not None else argv)
+    after = argv[argv.index("--") + 1 :] if "--" in argv else None
+    args = parser.parse_args(argv[: argv.index("--")] if after is not None else argv)
     if after is not None:
         args.command = args.command + after
 

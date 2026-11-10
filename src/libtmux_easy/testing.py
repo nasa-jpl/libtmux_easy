@@ -55,19 +55,38 @@ from .tmux_lib import TmuxSession
 
 def pytest_addoption(parser):
     group = parser.getgroup("libtmux_easy")
-    group.addoption("--tmux", action="store_true",
-                    help="run processes in tmux and attach: pytest reruns under lte-session, "
-                         "in the dashboard's home pane")
-    group.addoption("--no-attach", action="store_true",
-                    help="as --tmux, in a detached tmux session instead (tmux attach to watch)")
-    group.addoption("--keep-open", action="store_true",
-                    help="never stop processes; leave the tmux session up (implies --tmux)")
-    group.addoption("--arg", action="append", default=[], metavar="NAME=VALUE",
-                    help="a value for the tests to read with arg(NAME), like launch_test's "
-                         "NAME:=VALUE (repeatable)")
-    group.addoption("--echo", action="append", default=[], metavar="PATTERN",
-                    help="subprocesses: also print the output of those whose 'window:name' "
-                         "matches, prefixed [name]; '*' for all (repeatable)")
+    group.addoption(
+        "--tmux",
+        action="store_true",
+        help="run processes in tmux and attach: pytest reruns under lte-session, "
+        "in the dashboard's home pane",
+    )
+    group.addoption(
+        "--no-attach",
+        action="store_true",
+        help="as --tmux, in a detached tmux session instead (tmux attach to watch)",
+    )
+    group.addoption(
+        "--keep-open",
+        action="store_true",
+        help="never stop processes; leave the tmux session up (implies --tmux)",
+    )
+    group.addoption(
+        "--arg",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="a value for the tests to read with arg(NAME), like launch_test's "
+        "NAME:=VALUE (repeatable)",
+    )
+    group.addoption(
+        "--echo",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="subprocesses: also print the output of those whose 'window:name' "
+        "matches, prefixed [name]; '*' for all (repeatable)",
+    )
 
 
 def under_lte_session() -> bool:
@@ -84,8 +103,12 @@ def _wants_tmux(config):
 def pytest_cmdline_main(config):
     """--tmux in a terminal: rerun this pytest under lte-session, as the
     dashboard's home pane, and attach. Its exit status is pytest's."""
-    if (not _wants_tmux(config) or config.getoption("no_attach")
-            or under_lte_session() or not shutil.which("tmux")):
+    if (
+        not _wants_tmux(config)
+        or config.getoption("no_attach")
+        or under_lte_session()
+        or not shutil.which("tmux")
+    ):
         return None
     # pytest captures fds 0-2 by now: look at, and exec with, the real ones.
     capman = config.pluginmanager.getplugin("capturemanager")
@@ -94,8 +117,13 @@ def pytest_cmdline_main(config):
             return None
     if capman:
         capman.suspend(in_=True)
-    cmd = [sys.executable, "-m", "libtmux_easy.launch",
-           "--name", _free_session_name(f"lte_test_{os.getpid()}")]
+    cmd = [
+        sys.executable,
+        "-m",
+        "libtmux_easy.launch",
+        "--name",
+        _free_session_name(f"lte_test_{os.getpid()}"),
+    ]
     if config.getoption("keep_open"):
         cmd.append("--keep")
     cmd += ["--", sys.executable, "-m", "pytest", *config.invocation_params.args]
@@ -137,24 +165,28 @@ def pytest_configure(config):
     config.lte_mode = mode
     config.lte_keep_open = config.getoption("keep_open")
     config.lte_session = None  # the run's TmuxSession, made on first use
-    config.lte_session_name = (_free_session_name(f"lte_test_{os.getpid()}")
-                               if mode == "tmux" else None)
+    config.lte_session_name = (
+        _free_session_name(f"lte_test_{os.getpid()}") if mode == "tmux" else None
+    )
     config.lte_kept = False
     config.lte_kept_servers = []  # adopt()'s tmux servers, kept to look at
     config.lte_log_dirs = []
     config.lte_echo = config.getoption("echo")
     # The real terminal, for --echo: pytest captures fd 1 during tests,
     # but not here.
-    config.lte_tty = (os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
-                      if config.lte_echo else None)
+    config.lte_tty = (
+        os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1) if config.lte_echo else None
+    )
 
 
 def _free_session_name(base):
     """'base', or 'base-N' if a session has it: one kept by --keep-open, from
     a run whose pid this one reuses."""
     name, n = base, 1
-    while subprocess.run(["tmux", "has-session", "-t", f"={name}"],
-                         capture_output=True).returncode == 0:
+    while (
+        subprocess.run(["tmux", "has-session", "-t", f"={name}"], capture_output=True).returncode
+        == 0
+    ):
         n += 1
         name = f"{base}-{n}"
     return name
@@ -174,10 +206,13 @@ def _run_session(config):
     if config.lte_session is None:
         if config.lte_mode != "dash" and config.lte_session_name is None:  # build() without --tmux
             config.lte_session_name = _free_session_name(f"lte_test_{os.getpid()}")
-        config.lte_session = (TmuxSession.current(env=os.environ, wait_start=False)
-                              if config.lte_mode == "dash"
-                              else TmuxSession.create(config.lte_session_name, kill_existing=False,
-                                                      env=os.environ, wait_start=False))
+        config.lte_session = (
+            TmuxSession.current(env=os.environ, wait_start=False)
+            if config.lte_mode == "dash"
+            else TmuxSession.create(
+                config.lte_session_name, kill_existing=False, env=os.environ, wait_start=False
+            )
+        )
     return config.lte_session
 
 
@@ -220,7 +255,9 @@ def arg(name, default=None):
     try:
         return type(default)(value)
     except ValueError:
-        raise pytest.UsageError(f"--arg {name}={value}: expected {type(default).__name__}") from None
+        raise pytest.UsageError(
+            f"--arg {name}={value}: expected {type(default).__name__}"
+        ) from None
 
 
 def pytest_terminal_summary(terminalreporter, config):
@@ -231,14 +268,19 @@ def pytest_terminal_summary(terminalreporter, config):
         terminalreporter.write_line(f"process logs: {d}")
     for socket in getattr(config, "lte_kept_servers", ()):
         terminalreporter.write_sep(
-            "-", f"script's session kept: tmux -S {socket} attach  (then tmux -S {socket} kill-server)")
+            "-",
+            f"script's session kept: tmux -S {socket} attach  (then tmux -S {socket} kill-server)",
+        )
     if getattr(config, "lte_kept", False):
         state = "still running" if config.lte_keep_open else "kept"
         terminalreporter.write_sep(
-            "-", f"processes {state}: tmux attach -t {config.lte_session_name}  (then tmux kill-session)")
+            "-",
+            f"processes {state}: tmux attach -t {config.lte_session_name}  (then tmux kill-session)",
+        )
 
 
 # ---------- Processes, owned by a test ----------
+
 
 class Processes(_Processes):
     """A group of processes under test and their health, in any mode.
@@ -262,11 +304,24 @@ class Processes(_Processes):
     libtmux_easy.processes.Processes; the mode comes from the command line.
     """
 
-    def __init__(self, owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10.0,
-                 on_abort=None, log_dir=None, on_exit=None, sigterm_timeout=5.0, env=None):
+    def __init__(
+        self,
+        owner=None,
+        *,
+        fail_on=None,
+        stop_codes=None,
+        sigint_timeout=10.0,
+        on_abort=None,
+        log_dir=None,
+        on_exit=None,
+        sigterm_timeout=5.0,
+        env=None,
+    ):
         if not _plugin:
-            raise RuntimeError("Processes() needs the plugin: "
-                               'pytest_plugins = ["libtmux_easy.testing"] in conftest.py')
+            raise RuntimeError(
+                "Processes() needs the plugin: "
+                'pytest_plugins = ["libtmux_easy.testing"] in conftest.py'
+            )
         if owner is None:
             owner = _plugin.get("item")
             if owner is None:
@@ -280,18 +335,32 @@ class Processes(_Processes):
             scope = owner
             prefix = log_name = owner.__name__
         else:
-            raise TypeError(f"Processes(owner): a test class, e.g. Processes(cls) in "
-                            f"setup_class; got {owner!r}")
+            raise TypeError(
+                f"Processes(owner): a test class, e.g. Processes(cls) in "
+                f"setup_class; got {owner!r}"
+            )
         config = _plugin["config"]
         if log_dir is None:
             log_dir = _plugin["tmp_path_factory"].mktemp(log_name)
         tmux = None if config.lte_mode == "subprocess" else _class_tmux_backend(scope, prefix)
-        super().__init__(prefix, tmux=tmux, prefix=prefix, log_dir=str(log_dir),
-                         echo=config.lte_echo, tty=config.lte_tty,
-                         setup=_plugin["setup"], fail_on=fail_on, stop_codes=stop_codes,
-                         sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout,
-                         on_abort=on_abort, on_exit=on_exit,
-                         keep_open=config.lte_keep_open, scope=scope, env=env)
+        super().__init__(
+            prefix,
+            tmux=tmux,
+            prefix=prefix,
+            log_dir=str(log_dir),
+            echo=config.lte_echo,
+            tty=config.lte_tty,
+            setup=_plugin["setup"],
+            fail_on=fail_on,
+            stop_codes=stop_codes,
+            sigint_timeout=sigint_timeout,
+            sigterm_timeout=sigterm_timeout,
+            on_abort=on_abort,
+            on_exit=on_exit,
+            keep_open=config.lte_keep_open,
+            scope=scope,
+            env=env,
+        )
         config.lte_log_dirs.append(str(log_dir))
         self.owner = owner
 
@@ -333,8 +402,7 @@ _plugin = {}  # what Processes() needs outside a fixture; see _lte_plugin
 @pytest.fixture(scope="session", autouse=True)
 def _lte_plugin(request, tmp_path_factory, lte_pane_setup):
     """Before any setup_class: it can't take fixtures."""
-    _plugin.update(config=request.config, tmp_path_factory=tmp_path_factory,
-                   setup=lte_pane_setup)
+    _plugin.update(config=request.config, tmp_path_factory=tmp_path_factory, setup=lte_pane_setup)
     yield
     _plugin.clear()
 
@@ -417,6 +485,7 @@ def parametrize(argnames, argvalues):
         before = cls.__dict__.get("_lte_params", [{}])
         cls._lte_params = [dict(b, **dict(zip(names, values))) for b in before for values in sets]
         return cls
+
     return decorate
 
 

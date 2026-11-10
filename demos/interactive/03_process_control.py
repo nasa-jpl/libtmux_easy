@@ -7,8 +7,14 @@ escalation, stop_all() and respawn_pane().
 
 import time
 
-from common import PANE_MODE_WRAP, Tour, exits_after, ignores_sigint, \
-    ignores_sigint_and_sigterm, runs_forever
+from common import (
+    PANE_MODE_WRAP,
+    Tour,
+    exits_after,
+    ignores_sigint,
+    ignores_sigint_and_sigterm,
+    runs_forever,
+)
 
 
 def main():
@@ -19,10 +25,12 @@ def main():
             return s.new_pane(name, cmd, mode=PANE_MODE_WRAP, on_exit=tour.event)
 
         tour.step("Exit events")
-        tour.say("""
+        tour.say(
+            """
             new_pane(..., on_exit=callback) calls back the moment the command ends,
             for any reason. Here the callback prints an "event:" line.
-        """)
+        """
+        )
         tour.pause("start a worker that crashes in 5 s")
         s.new_window("events")
         pane("crashy", exits_after(5, code=3))
@@ -31,10 +39,12 @@ def main():
 
         tour.step("A Ctrl-C typed by a person is an exit too")
         victim = pane("interrupt_me", runs_forever())
-        tour.say("""
+        tour.say(
+            """
             Select events:interrupt_me in the sidebar, Enter to focus it, and press
             Ctrl-C. Then come back to home: the event is printed here.
-        """)
+        """
+        )
         if tour.auto:
             time.sleep(1)
             victim.send_keys("C-c", enter=False)
@@ -43,15 +53,20 @@ def main():
         tour.pause("continue")
 
         tour.step("stop_pane() escalates as far as it has to")
-        tour.say("""
+        tour.say(
+            """
             SIGINT first (like Ctrl-C), then SIGTERM, then SIGKILL, each after a
             timeout (2 s here). Escalating past SIGINT means the process didn't
             shut down cleanly; its status says how it was stopped (yellow).
-        """)
+        """
+        )
         tour.pause("start three: polite, stubborn (ignores SIGINT), immortal (ignores both)")
         s.new_window("stop")
-        workers = [pane("polite", runs_forever()), pane("stubborn", ignores_sigint()),
-                   pane("immortal", ignores_sigint_and_sigterm())]
+        workers = [
+            pane("polite", runs_forever()),
+            pane("stubborn", ignores_sigint()),
+            pane("immortal", ignores_sigint_and_sigterm()),
+        ]
         tour.pause("stop them one by one with stop_pane()")
         for p in workers:
             print(f"\n  stop_pane({s.get_pane_name(p)!r})")

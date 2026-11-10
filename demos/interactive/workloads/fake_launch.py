@@ -34,12 +34,16 @@ def log(level, name, message):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--crash-after", type=float, default=3.0,
-                        help="seconds before one child dies; 0 disables the crash")
-    parser.add_argument("--crash-code", type=int, default=3,
-                        help="exit code for the dying child")
-    parser.add_argument("--children", type=int, default=2,
-                        help="number of healthy children to supervise")
+    parser.add_argument(
+        "--crash-after",
+        type=float,
+        default=3.0,
+        help="seconds before one child dies; 0 disables the crash",
+    )
+    parser.add_argument("--crash-code", type=int, default=3, help="exit code for the dying child")
+    parser.add_argument(
+        "--children", type=int, default=2, help="number of healthy children to supervise"
+    )
     args = parser.parse_args()
 
     print("[INFO] [launch]: All log files can be found below /tmp/fake_launch", flush=True)
@@ -81,8 +85,7 @@ def main():
             # The line every log scanner keys off. Note it is the ONLY place
             # the child's exit code is recorded -- and that this supervisor
             # deliberately carries on afterwards.
-            log("ERROR", name,
-                f"process has died [pid {proc.pid}, exit code {code}, cmd '{cmd}'].")
+            log("ERROR", name, f"process has died [pid {proc.pid}, exit code {code}, cmd '{cmd}'].")
         time.sleep(0.1)
 
     print("[INFO] [launch]: shutdown requested, exiting", flush=True)

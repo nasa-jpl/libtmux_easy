@@ -5,6 +5,7 @@
 The test gets everything start() has: ready= per process, its own gates,
 restarts, subprocess or tmux. The script's tmux code (main()) is not tested.
 """
+
 import os
 import urllib.request
 

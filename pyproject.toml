@@ -68,3 +68,6 @@ libtmux_easy = ["lte_rc.bash"]
 "Homepage" = "https://github.com/nasa-jpl/libtmux_easy"
 "Bug Tracker" = "https://github.com/nasa-jpl/libtmux_easy/issues"
 "Repository" = "https://github.com/nasa-jpl/libtmux_easy"
+
+[tool.black]
+line-length = 100

@@ -1,5 +1,6 @@
 """lte-close and the library's close API: close actions, the graceful stop
 (script first, then every other pane), and the close key."""
+
 import subprocess
 import threading
 
@@ -27,9 +28,13 @@ def plain():
     name = "lte-test-close"
     subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
-    subprocess.run(["tmux", "new-window", "-t", f"{name}:", "bash --norc -c \"trap '' INT; sleep 60\""],
-                   check=True)
-    subprocess.run(["tmux", "new-window", "-t", f"{name}:", "bash --norc"], check=True)  # idle shell
+    subprocess.run(
+        ["tmux", "new-window", "-t", f"{name}:", "bash --norc -c \"trap '' INT; sleep 60\""],
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "new-window", "-t", f"{name}:", "bash --norc"], check=True
+    )  # idle shell
     yield tmux("display-message", "-p", "-t", name, "#{session_id}")[0].strip()
     subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
 
@@ -50,8 +55,11 @@ def test_stops_every_pane_then_kills(plain):
 def test_actions_run_before_and_after(plain, tmp_path):
     log = tmp_path / "log"
     close.add_action(plain, f"echo after >> {log}")
-    close.add_action(plain, f"echo before >> {log}; pgrep -f 'sleep 60' >/dev/null && echo up >> {log}",
-                     when="before")
+    close.add_action(
+        plain,
+        f"echo before >> {log}; pgrep -f 'sleep 60' >/dev/null && echo up >> {log}",
+        when="before",
+    )
     assert [a["when"] for a in close.actions(plain)] == ["after", "before"]
 
     close.Closer(plain, timeouts=(1.0, 1.0, 1.0), out=lambda _: None)()

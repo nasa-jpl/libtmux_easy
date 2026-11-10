@@ -18,7 +18,7 @@ import tempfile
 
 from ._tmux import option as _option, tmux as _tmux
 
-ENV = "LTE_TMUX_DEFAULTS"     # "0": never source CONF
+ENV = "LTE_TMUX_DEFAULTS"  # "0": never source CONF
 DONE_OPTION = "@lte_starter"  # global: "1" sourced, "0" checked and skipped
 
 CONF = """\
@@ -57,8 +57,9 @@ def apply(run=_tmux):
     if has_config(run):
         run("set-option", "-gq", DONE_OPTION, "0")
         return False
-    with tempfile.NamedTemporaryFile("w", suffix=".tmux", prefix="lte_starter_",
-                                     delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".tmux", prefix="lte_starter_", delete=False
+    ) as handle:
         handle.write(CONF)
     try:
         run("source-file", handle.name)
@@ -69,8 +70,9 @@ def apply(run=_tmux):
 
 
 def main(argv=None):
-    argparse.ArgumentParser(prog="lte-defaults", description=__doc__.splitlines()[0]) \
-        .parse_args(argv)
+    argparse.ArgumentParser(prog="lte-defaults", description=__doc__.splitlines()[0]).parse_args(
+        argv
+    )
     sys.stdout.write(CONF)
     return 0
 

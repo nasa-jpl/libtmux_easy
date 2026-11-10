@@ -52,42 +52,51 @@ def main():
             s.dashboard_pane(f"tail -n +1 -f {show.path}", title="matches", size="30%")
 
         tour.step("React to a line")
-        tour.say("""
+        tour.say(
+            """
             new_pane(on_output={pattern: callback}) pipes the pane from its first
             byte and calls back on each matching line. Matching is on plain
             text: the server's colors don't get in the way. Then
             wait_for_output() blocks for the ready line and hands back the
             regex match, here the port.
-        """)
+        """
+        )
         tour.pause("start a server that fails every 7th request")
         s.new_window("web")
-        web = s.new_pane("server", server("--port", 8080), mode="exec",
-                         on_output={r"\[ERROR\]": show})
+        web = s.new_pane(
+            "server", server("--port", 8080), mode="exec", on_output={r"\[ERROR\]": show}
+        )
         m = s.wait_for_output(web, r"Serving HTTP on \S+ port (\d+)", timeout=10)
         print(f"  ready: port {m.match.group(1)}  ({m.line!r})")
-        tour.say("""
+        tour.say(
+            """
             The callback writes each match to the matches pane, under this one
             (dashboard_pane(): it stays put while you browse). Wait for three
             new errors (since="now": earlier lines don't count), then
             unwatch_output() stops the watch; the server keeps running.
-        """)
+        """
+        )
         for _ in range(3):
             s.wait_for_output(web, r"\[ERROR\]", timeout=30, since="now")
         s.unwatch_output(web)
-        tour.say("""
+        tour.say(
+            """
             That pane is only watched: its file is a temp one, deleted with
             the session.
-        """)
+        """
+        )
         tour.pause("go on")
 
         tour.step("Capture now, search later")
-        tour.say(f"""
+        tour.say(
+            f"""
             capture() saves output without watching it: no events, no reading,
             just a file per pane. new_window(pane_capture=DIR) covers every pane made
             in the window, now or later. These files are kept:
 
                 {keep}
-        """)
+        """
+        )
         tour.pause("start two workers in a captured window")
         s.new_window("workers", pane_capture=keep)
         s.new_pane("alpha", runs_forever("alpha"), mode="wrap")
@@ -100,11 +109,13 @@ def main():
         tour.say("search_output() scans a pane's, window's or the session's files once.")
 
         tour.step("Catch the answer to something you send")
-        tour.say("""
+        tour.say(
+            """
             expect() arms a watch on entry and waits at exit, so a fast answer
             can't slip past. output_mark() and since= read only what came after
             a point: earlier matches don't count.
-        """)
+        """
+        )
         tour.pause("send a command to a shell pane and catch its answer")
         s.new_window("shell")
         sh = s.new_pane("bash", "bash --norc", mode="exec")
@@ -122,7 +133,8 @@ def main():
 
         tour.step("Save one command's output")
         tee = os.path.join(keep, "job.log")
-        tour.say(f"""
+        tour.say(
+            f"""
             A pane capture saves all the pane shows: rc output, prompt, typed
             lines. cmd_capture= saves the command's output only, plain text:
             send_keys(cmd, cmd_capture="{os.path.basename(tee)}") in a wrap
@@ -130,14 +142,16 @@ def main():
             the run and closes the pipe when it ends; a watch or search finds
             the file by itself. A rerun overwrites it; 'lte-run --tee -a',
             typed by hand, appends.
-        """)
+        """
+        )
         tour.pause("run a job twice: once with cmd_capture, once with -a")
         s.new_window("jobs")
         job = s.new_pane("job", "true", mode="wrap")
         s.wait_for_exit(job, timeout=10)
         with s.expect(job, "job done", timeout=10):
-            s.send_keys("sh -c 'echo job run 1; sleep 1; echo job done'", target_pane=job,
-                        cmd_capture=tee)
+            s.send_keys(
+                "sh -c 'echo job run 1; sleep 1; echo job done'", target_pane=job, cmd_capture=tee
+            )
         path = s.output_path(job)
         print(f"  file: {os.path.basename(path)}")
         with s.expect(job, "job run 2", timeout=10):
@@ -147,28 +161,36 @@ def main():
         print("  the file now:", text.splitlines())
 
         tour.step("Watch the whole session")
-        tour.say("""
+        tour.say(
+            """
             watch_output(None, pattern) covers every pane in the session, the
             ones made later too, by the library or by hand: tmux's own hooks
             pipe a new pane from its first byte.
-        """)
+        """
+        )
         tour.pause("watch for 'hello' everywhere, then make a pane by hand")
         hello = s.watch_output(None, r"\bhello\b", show, since="now")
         if not tour.auto:
-            tour.say("""
+            tour.say(
+                """
                 Make one yourself: select jobs:job, Enter, then prefix % (or
                 prefix ") and type 'echo hello'. Or wait: one is made for you in 15 s.
-            """)
+            """
+            )
         if hello.wait(timeout=1 if tour.auto else 15) is None:
-            s.server.cmd("split-window", "-d", "-t", f"{s.id}:jobs", "echo hello, made for you; sleep 30")
+            s.server.cmd(
+                "split-window", "-d", "-t", f"{s.id}:jobs", "echo hello, made for you; sleep 30"
+            )
             hello.wait(timeout=5)
         s.unwatch_output(None)
         print(f"  {hello.count} match, then unwatch_output(None): the session watch is off.")
-        tour.say(f"""
+        tour.say(
+            f"""
             Kept after the tour (you chose to capture them): {keep}
             Deleted with the session (only watched): the server's file.
             Set session.keep_output = True to keep those too.
-        """)
+        """
+        )
 
 
 if __name__ == "__main__":

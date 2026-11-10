@@ -1,5 +1,6 @@
 """Tests for the starter tmux settings (src/libtmux_easy/starter.py). Each test
 gets its own tmux server, with no config file unless it writes one."""
+
 import subprocess
 
 import pytest
@@ -18,16 +19,18 @@ def server(tmp_path, monkeypatch):
         subprocess.run(["tmux", "-S", sock, *args, "new-session", "-d", "-s", "t"], check=True)
 
     def run(*args):
-        return subprocess.run(["tmux", "-S", sock, *args], capture_output=True,
-                              text=True).stdout.splitlines()
+        return subprocess.run(
+            ["tmux", "-S", sock, *args], capture_output=True, text=True
+        ).stdout.splitlines()
 
     yield start, run
     subprocess.run(["tmux", "-S", sock, "kill-server"], capture_output=True)
 
 
 def _applied(run):
-    return run("show-options", "-gv", "mouse") == ["on"] and \
-        "split-window -h" in "\n".join(run("list-keys", "-T", "prefix", "|"))
+    return run("show-options", "-gv", "mouse") == ["on"] and "split-window -h" in "\n".join(
+        run("list-keys", "-T", "prefix", "|")
+    )
 
 
 def test_no_config_gets_the_starter_once(server):

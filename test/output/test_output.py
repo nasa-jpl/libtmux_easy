@@ -1,5 +1,6 @@
 """Output capture and watches: capture(), search_output(), watch_output(),
 wait_for_output(), expect(), new_pane(on_output=, pane_capture=, cmd_capture=)."""
+
 import contextlib
 import os
 import threading
@@ -35,11 +36,11 @@ def read(path):
 
 def test_plain_lines():
     data = b"\x1b[31mERROR\x1b[0m: boom\r\nwork 10%\rwork 99%\r\n\npartial"
-    assert list(output.plain_lines(data)) == [(0, "ERROR: boom"), (22, "work 99%"),
-                                              (42, "partial")]
+    assert list(output.plain_lines(data)) == [(0, "ERROR: boom"), (22, "work 99%"), (42, "partial")]
 
 
 # ----- watches -----
+
 
 @pytest.mark.parametrize("mode", MODES)
 def test_on_output_each_mode(session, mode):
@@ -54,8 +55,12 @@ def test_on_output_each_mode(session, mode):
 
 def test_plain_text(session):
     lines, cb = collect()
-    session.new_pane("p", r"printf '\033[31mERROR\033[0m: boom\r\nwork 10%%\rwork 99%%\rERROR done\n'; sleep 30",
-                     mode=PANE_MODE_EXEC, on_output={"ERROR": cb})
+    session.new_pane(
+        "p",
+        r"printf '\033[31mERROR\033[0m: boom\r\nwork 10%%\rwork 99%%\rERROR done\n'; sleep 30",
+        mode=PANE_MODE_EXEC,
+        on_output={"ERROR": cb},
+    )
     assert wait_until(lambda: len(lines) == 2)
     assert lines == ["ERROR: boom", "ERROR done"]
 
@@ -63,8 +68,12 @@ def test_plain_text(session):
 def test_partial_line(session):
     """A prompt with no newline matches once it has been quiet, and only once."""
     lines, cb = collect()
-    session.new_pane("p", "printf 'Password: '; sleep 1; echo; sleep 30",
-                     mode=PANE_MODE_EXEC, on_output={"Password": cb})
+    session.new_pane(
+        "p",
+        "printf 'Password: '; sleep 1; echo; sleep 30",
+        mode=PANE_MODE_EXEC,
+        on_output={"Password": cb},
+    )
     assert wait_until(lambda: lines)
     time.sleep(1.5)
     assert lines == ["Password: "]
@@ -91,8 +100,11 @@ def test_wait_for_output_line_before_the_reader(session, tmp_path, monkeypatch):
     reader gets the watch: it counts. Was missed (Processes' first pane in
     tmux mode, a fast shell); the reader is held back here to hit it."""
     go = tmp_path / "go"
-    pane = session.new_pane("p", f"echo early; until [ -e {go} ]; do sleep 0.01; done; "
-                                 "echo late; sleep 30", mode=PANE_MODE_WRAP)
+    pane = session.new_pane(
+        "p",
+        f"echo early; until [ -e {go} ]; do sleep 0.01; done; " "echo late; sleep 30",
+        mode=PANE_MODE_WRAP,
+    )
     wait_until(lambda: "early" in session.output_text(pane))
     add = output.OutputReader.add
 
@@ -108,8 +120,9 @@ def test_wait_for_output_line_before_the_reader(session, tmp_path, monkeypatch):
 def test_watch_tee_first_no_scrollback_twice(session, tmp_path):
     """lte-run --tee piped the pane already: its file, not the scrollback
     too (they overlap), so each line comes once."""
-    pane = session.new_pane("p", "echo one; sleep 30", mode=PANE_MODE_WRAP,
-                            cmd_capture=str(tmp_path / "p.log"))
+    pane = session.new_pane(
+        "p", "echo one; sleep 30", mode=PANE_MODE_WRAP, cmd_capture=str(tmp_path / "p.log")
+    )
     wait_until(lambda: b"one" in read(tmp_path / "p.log"))
     lines, cb = collect()
     session.watch_output(pane, r"^one", cb)
@@ -118,8 +131,12 @@ def test_watch_tee_first_no_scrollback_twice(session, tmp_path):
 
 
 def test_wait_for_output_sees_earlier_capture(session, tmp_path):
-    pane = session.new_pane("p", "echo listening on 8080; sleep 30", mode=PANE_MODE_EXEC,
-                            pane_capture=str(tmp_path / "p.log"))
+    pane = session.new_pane(
+        "p",
+        "echo listening on 8080; sleep 30",
+        mode=PANE_MODE_EXEC,
+        pane_capture=str(tmp_path / "p.log"),
+    )
     time.sleep(0.5)
     m = session.wait_for_output(pane, r"listening on (\d+)", timeout=5)
     assert m.match.group(1) == "8080" and m.offset == 0
@@ -164,8 +181,9 @@ def test_last_words_wrap(session):
 
 def test_respawn_keeps_watch(session):
     lines, cb = collect()
-    pane = session.new_pane("p", "echo hello; sleep 0.5", mode=PANE_MODE_EXEC,
-                            on_output={"hello": cb})
+    pane = session.new_pane(
+        "p", "echo hello; sleep 0.5", mode=PANE_MODE_EXEC, on_output={"hello": cb}
+    )
     assert wait_until(lambda: lines == ["hello"])
     session.respawn_pane(pane)
     assert wait_until(lambda: lines == ["hello", "hello"])
@@ -203,10 +221,12 @@ def test_flood_elsewhere(session):
 def test_callback_can_watch(session):
     """Callbacks run under the reader's lock; it's reentrant."""
     got = threading.Event()
-    pane = session.new_pane("p", "sleep 0.5; echo one; sleep 0.5; echo two; sleep 30",
-                            mode=PANE_MODE_EXEC)
-    session.watch_output(pane, "one", lambda m: session.watch_output(pane, "two", lambda _: got.set()),
-                         once=True)
+    pane = session.new_pane(
+        "p", "sleep 0.5; echo one; sleep 0.5; echo two; sleep 30", mode=PANE_MODE_EXEC
+    )
+    session.watch_output(
+        pane, "one", lambda m: session.watch_output(pane, "two", lambda _: got.set()), once=True
+    )
     assert got.wait(5)
 
 
@@ -248,11 +268,16 @@ def test_watch_window_and_session(session):
 
 # ----- capture -----
 
+
 def test_capture_pane_from_first_byte(session, tmp_path):
     """pane_capture=PATH, and pane_capture=True (the default dir)."""
     path = tmp_path / "web.log"
-    pane = session.new_pane("web", r"printf '\033[32mfirst\033[0m\n'; sleep 30",
-                            mode=PANE_MODE_EXEC, pane_capture=str(path))
+    pane = session.new_pane(
+        "web",
+        r"printf '\033[32mfirst\033[0m\n'; sleep 30",
+        mode=PANE_MODE_EXEC,
+        pane_capture=str(path),
+    )
     assert wait_until(lambda: path.exists() and b"first" in read(path))
     assert b"\x1b[32m" in read(path)  # raw
     assert session.output_path(pane) == str(path)
@@ -277,7 +302,9 @@ def test_capture_exec_skips_the_starting_shell(make_session, tmp_path):
     finally:
         tmux("set-option", "-gu", "default-command")
     path = tmp_path / "out.log"
-    pane = session.new_pane("p", "echo first; sleep 30", mode=PANE_MODE_EXEC, pane_capture=str(path))
+    pane = session.new_pane(
+        "p", "echo first; sleep 30", mode=PANE_MODE_EXEC, pane_capture=str(path)
+    )
     assert wait_until(lambda: b"first" in read(path))
     assert [m.line for m in session.search_output(pane, ".")] == ["first"]
 
@@ -332,10 +359,26 @@ def test_session_capture(make_session, tmp_path):
     from their first line."""
     s = make_session(pane_capture=str(tmp_path))
     s.new_pane("web", "echo hello; sleep 30", mode=PANE_MODE_EXEC)
-    hand = s.server.cmd("split-window", "-t", s.current_window.id, "-P", "-F", "#{pane_id}",
-                        "echo by hand; sleep 30").stdout[0]
-    win = s.server.cmd("new-window", "-t", f"{s.id}:", "-n", "w x", "-P", "-F", "#{pane_id}",
-                       "echo new window; sleep 30").stdout[0]
+    hand = s.server.cmd(
+        "split-window",
+        "-t",
+        s.current_window.id,
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "echo by hand; sleep 30",
+    ).stdout[0]
+    win = s.server.cmd(
+        "new-window",
+        "-t",
+        f"{s.id}:",
+        "-n",
+        "w x",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "echo new window; sleep 30",
+    ).stdout[0]
     assert wait_until(lambda: b"hello" in read(tmp_path / "main.web.log"))
     assert wait_until(lambda: b"by hand" in read(tmp_path / f"main.{hand}.log"))
     assert wait_until(lambda: b"new window" in read(tmp_path / f"w_x.{win}.log"))
@@ -347,14 +390,16 @@ def test_capture_high_pane_ids(session, tmp_path):
     strftime in pipe-pane's command unless escaped."""
     for i in range(5):
         session.new_pane(f"p{i}", "sleep 30", mode=PANE_MODE_EXEC)
-    hand = session.server.cmd("split-window", "-d", "-t", session.current_window.id, "-P",
-                              "-F", "#{pane_id}", "sleep 30").stdout[0]
+    hand = session.server.cmd(
+        "split-window", "-d", "-t", session.current_window.id, "-P", "-F", "#{pane_id}", "sleep 30"
+    ).stdout[0]
     session.capture("main", str(tmp_path))
     path = tmp_path / f"main.{hand}.log"
     assert int(hand[1:]) >= 4 and session.output_path(hand) == str(path)
     assert wait_until(path.exists)
     assert sorted(os.listdir(tmp_path)) == sorted(
-        [f"main.p{i}.log" for i in range(5)] + [path.name])
+        [f"main.p{i}.log" for i in range(5)] + [path.name]
+    )
 
 
 def test_window_capture_and_opt_out(session, tmp_path):
@@ -389,8 +434,9 @@ def test_capture_later_mark_search_stop(session, tmp_path):
 def test_since_start_is_the_default(session, tmp_path):
     """watch_output(), like wait_for_output() and the reads, counts what
     the pane printed already; since="now" doesn't."""
-    pane = session.new_pane("p", "echo old; sleep 30", mode=PANE_MODE_EXEC,
-                            pane_capture=str(tmp_path / "p.log"))
+    pane = session.new_pane(
+        "p", "echo old; sleep 30", mode=PANE_MODE_EXEC, pane_capture=str(tmp_path / "p.log")
+    )
     assert session.wait_for_output(pane, "old", timeout=5)
     every, now = session.watch_output(pane, "old"), session.watch_output(pane, "old", since="now")
     assert wait_until(lambda: every.count == 1)
@@ -423,8 +469,10 @@ def test_window_mark(session):
     assert set(mark) == {a.id}
     session.send_keys("echo a2", target_pane=a)
     session.new_pane("b", "echo b1; sleep 30", mode=PANE_MODE_EXEC)
-    assert wait_until(lambda: sorted(m.line for m in session.search_output(
-        "main", "^[ab][12]$", since=mark)) == ["a2", "b1"])
+    assert wait_until(
+        lambda: sorted(m.line for m in session.search_output("main", "^[ab][12]$", since=mark))
+        == ["a2", "b1"]
+    )
 
 
 def test_watch_now_ignores_earlier_capture(session, tmp_path):
@@ -442,11 +490,16 @@ def test_watch_now_ignores_earlier_capture(session, tmp_path):
 
 # ----- cmd_capture (lte-run --tee) -----
 
+
 def test_tee_starts_pipe_then_watch(session, tmp_path):
     """No capture: lte-run --tee pipes the pane; a later watch reads its file."""
     tee = tmp_path / "run.log"
-    pane = session.new_pane("p", "echo started; sleep 1; echo later; sleep 30",
-                            mode=PANE_MODE_WRAP, cmd_capture=str(tee))
+    pane = session.new_pane(
+        "p",
+        "echo started; sleep 1; echo later; sleep 30",
+        mode=PANE_MODE_WRAP,
+        cmd_capture=str(tee),
+    )
     assert wait_until(lambda: tee.exists() and b"started" in read(tee))
     assert session.output_path(pane) == str(tee)
     assert session.wait_for_output(pane, "started", timeout=5).line == "started"
@@ -474,13 +527,15 @@ def test_send_keys_cmd_capture(session, tmp_path):
     pane = session.new_pane("p", "true", mode=PANE_MODE_WRAP)
     assert session.wait_for_exit(pane, timeout=5).code == 0
     log = tmp_path / "cmd.log"
-    session.send_keys(r"printf '\033[1mbold\033[0m\n'; exit 3", target_pane=pane,
-                      cmd_capture=str(log))
+    session.send_keys(
+        r"printf '\033[1mbold\033[0m\n'; exit 3", target_pane=pane, cmd_capture=str(log)
+    )
     assert wait_until(lambda: session.exit_status(pane).code == 3)
     assert read(log) == b"bold\n"
     shell = session.new_pane("s", "sleep 30", mode=PANE_MODE_SHELL)
     with pytest.raises(ValueError, match="cmd_capture"):
         session.send_keys("true", target_pane=shell, cmd_capture=str(tmp_path / "x.log"))
+
 
 def test_tee_takes_over_capture(make_session, tmp_path):
     """Under a session capture, the run's output goes to --tee's file; the
@@ -511,11 +566,15 @@ def test_tee_never_loses_pipe_to_capture(session, tmp_path):
         thread = threading.Thread(target=hammer)
         thread.start()
         try:
-            session.send_keys(f"{_wrap_prefix()} --tee {tee} -- sh -c "
-                              "'for n in 1 2 3 4 5; do echo line$n; sleep 0.05; done'",
-                              target_pane=pane)
-            assert wait_until(lambda: tee.exists() and read(tee).split() == [
-                line.encode() for line in expected], timeout=5), f"run {i} lost output"
+            session.send_keys(
+                f"{_wrap_prefix()} --tee {tee} -- sh -c "
+                "'for n in 1 2 3 4 5; do echo line$n; sleep 0.05; done'",
+                target_pane=pane,
+            )
+            assert wait_until(
+                lambda: tee.exists() and read(tee).split() == [line.encode() for line in expected],
+                timeout=5,
+            ), f"run {i} lost output"
         finally:
             stop.set()
             thread.join()
@@ -536,10 +595,12 @@ def test_reader_idle(session):
 def test_reader_polls_without_inotify(session, monkeypatch):
     def unavailable():
         raise OSError("no inotify")
+
     monkeypatch.setattr(output, "_Inotify", unavailable)
     lines, cb = collect()
-    session.new_pane("p", "sleep 0.3; echo hit; sleep 30", mode=PANE_MODE_EXEC,
-                     on_output={"hit": cb})
+    session.new_pane(
+        "p", "sleep 0.3; echo hit; sleep 30", mode=PANE_MODE_EXEC, on_output={"hit": cb}
+    )
     assert session._reader._inotify is None
     assert wait_until(lambda: lines == ["hit"])
 

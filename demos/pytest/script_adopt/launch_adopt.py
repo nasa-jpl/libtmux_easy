@@ -21,9 +21,12 @@ session.new_window("servers")
 session.new_pane("web", f"{PY} -u -m http.server {args.port} --bind 127.0.0.1")
 session.wait_for_output("servers:web", r"Serving HTTP", timeout=10)
 session.new_window("workers")
-session.new_pane("ticker", f"{PY} -u -c 'import time\n"
-                           "try:\n    [print(\"tick\", i) or time.sleep(0.5) for i in range(10**6)]\n"
-                           "except KeyboardInterrupt: pass'")
+session.new_pane(
+    "ticker",
+    f"{PY} -u -c 'import time\n"
+    'try:\n    [print("tick", i) or time.sleep(0.5) for i in range(10**6)]\n'
+    "except KeyboardInterrupt: pass'",
+)
 session.new_window("jobs")
 session.new_pane("migrate", "echo migrating; sleep 1; echo migrated")
 session.attach()  # a test: nothing (LTE_HEADLESS)

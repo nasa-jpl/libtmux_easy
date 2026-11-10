@@ -20,8 +20,9 @@ TOURS = sorted(p.name for p in HERE.glob("[0-9][0-9]_*.py"))
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--only", help="only tours whose filename contains this")
     parser.add_argument("--verbose", action="store_true", help="show each tour's output")
     args = parser.parse_args()
@@ -33,16 +34,25 @@ def main():
     failed = []
     for name in tours:
         start = time.monotonic()
-        proc = subprocess.run([sys.executable, str(HERE / name), "--auto"], cwd=HERE,
-                              capture_output=not args.verbose, text=True, timeout=300)
+        proc = subprocess.run(
+            [sys.executable, str(HERE / name), "--auto"],
+            cwd=HERE,
+            capture_output=not args.verbose,
+            text=True,
+            timeout=300,
+        )
         ok = proc.returncode == 0
-        print(f"  {'ok  ' if ok else 'FAIL'}  {name:<26} {time.monotonic() - start:4.0f}s",
-              flush=True)
+        print(
+            f"  {'ok  ' if ok else 'FAIL'}  {name:<26} {time.monotonic() - start:4.0f}s", flush=True
+        )
         if not ok:
             failed.append(name)
             if not args.verbose:
-                print("\n".join(f"        {line}" for line in
-                                (proc.stdout + proc.stderr).splitlines()[-30:]))
+                print(
+                    "\n".join(
+                        f"        {line}" for line in (proc.stdout + proc.stderr).splitlines()[-30:]
+                    )
+                )
     print(f"{len(tours) - len(failed)}/{len(tours)} tours finished")
     return 1 if failed else 0
 

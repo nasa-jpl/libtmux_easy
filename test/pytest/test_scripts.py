@@ -1,6 +1,7 @@
 """Testing a tmux session script (docs/testing-scripts.md): the three methods
 -- layout (start() a script's panes()), build(), adopt() -- in an inner
 pytest, with subprocesses and in a detached tmux session."""
+
 import pytest
 
 from inner import MODES
@@ -85,8 +86,13 @@ class TestAdopt(Checks):
 def test_one_system_three_ways(run, mode):
     proc, out = run(THREE_WAYS, mode=mode, files={"system.py": SYSTEM})
     for cls in ("TestLayout", "TestBuild", "TestAdopt"):
-        for test in ("test_names", "test_output", "test_job_exit", "test_kill_is_seen",
-                     "test_stop"):
+        for test in (
+            "test_names",
+            "test_output",
+            "test_job_exit",
+            "test_kill_is_seen",
+            "test_stop",
+        ):
             assert f"PASSED test_inner.py::{cls}::{test}" in out, out
     assert proc.returncode == 0, out
 
@@ -161,8 +167,12 @@ class TestBuild:
 @pytest.mark.parametrize("mode", MODES)
 def test_build(run, mode):
     proc, out = run(BUILD_TESTS, mode=mode, files={"script.py": SCRIPT})
-    for test in ("test_names", "test_monitor_sees_a_kill", "test_restart",
-                 "test_names_unique_in_the_class"):
+    for test in (
+        "test_names",
+        "test_monitor_sees_a_kill",
+        "test_restart",
+        "test_names_unique_in_the_class",
+    ):
         assert f"PASSED test_inner.py::TestBuild::{test}" in out, out
     assert "ERROR" not in out.split("short test summary")[-1], out
 
@@ -324,8 +334,14 @@ def test_adopt_and_build_come_first():
 @pytest.mark.parametrize("mode", MODES)
 def test_adopt_edges(run, mode):
     proc, out = run(EDGES, mode=mode)
-    for test in ("test_two_sessions", "test_reads_from_the_first_byte[True]",
-                 "test_reads_from_the_first_byte[False]", "test_no_panes", "test_script_fails",
-                 "test_adopted_panes_cant_start_again", "test_adopt_and_build_come_first"):
+    for test in (
+        "test_two_sessions",
+        "test_reads_from_the_first_byte[True]",
+        "test_reads_from_the_first_byte[False]",
+        "test_no_panes",
+        "test_script_fails",
+        "test_adopted_panes_cant_start_again",
+        "test_adopt_and_build_come_first",
+    ):
         assert f"PASSED test_inner.py::{test}" in out, out
     assert proc.returncode == 0, out

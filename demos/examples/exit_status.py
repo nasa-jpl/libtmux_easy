@@ -9,12 +9,13 @@ session.new_window("modes")
 cases = [
     ("shell", "sh -c 'exit 130'"),
     ("shell", "sh -c 'kill -INT $$'"),
-    ("wrap", "sh -c 'exit 130'"),       # lte-run reports the real status
+    ("wrap", "sh -c 'exit 130'"),  # lte-run reports the real status
     ("wrap", "sh -c 'kill -INT $$'"),
-    ("exec", "sh -c 'exit 3'"),         # the command is the pane's process: tmux records it
+    ("exec", "sh -c 'exit 3'"),  # the command is the pane's process: tmux records it
 ]
-panes = [(mode, cmd, session.new_pane(f"p{i}", cmd, mode=mode))
-         for i, (mode, cmd) in enumerate(cases)]
+panes = [
+    (mode, cmd, session.new_pane(f"p{i}", cmd, mode=mode)) for i, (mode, cmd) in enumerate(cases)
+]
 
 for mode, cmd, pane in panes:
     status = session.wait_for_exit(pane, timeout=10)  # an ExitStatus: .code, .signal, .inferred

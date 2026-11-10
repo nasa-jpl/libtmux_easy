@@ -9,6 +9,7 @@ LTE_DEMO_CRASH=1 makes the ticker die mid-test, which fails the test (and
 with --no-attach keeps the session for 'tmux attach'). With --tmux -s,
 LTE_PDB=1 drops into pdb in the last test, and LTE_ASK=1 waits for input.
 """
+
 import os
 import sys
 import urllib.request
@@ -17,10 +18,12 @@ from libtmux_easy.testing import Processes
 
 PORT = 8765 + os.getpid() % 1000
 CRASH = "sys.exit(3) if i == 4 else None; " if os.environ.get("LTE_DEMO_CRASH") else ""
-TICKER = (f"{sys.executable} -u -c 'import sys, time\n"
-          f"try:\n"
-          f"    for i in range(10**6): {CRASH}print(\"tick\", i); time.sleep(0.5)\n"
-          f"except KeyboardInterrupt: pass'")
+TICKER = (
+    f"{sys.executable} -u -c 'import sys, time\n"
+    f"try:\n"
+    f'    for i in range(10**6): {CRASH}print("tick", i); time.sleep(0.5)\n'
+    f"except KeyboardInterrupt: pass'"
+)
 
 
 def answers():
@@ -34,7 +37,9 @@ class TestDashboard:
     @classmethod
     def setup_class(cls):
         cls.procs = Processes(cls)
-        cls.web = cls.procs.start("servers:web", f"{sys.executable} -m http.server {PORT} --bind 127.0.0.1")
+        cls.web = cls.procs.start(
+            "servers:web", f"{sys.executable} -m http.server {PORT} --bind 127.0.0.1"
+        )
         cls.ticker = cls.procs.start("workers:ticker", TICKER)
 
     @classmethod

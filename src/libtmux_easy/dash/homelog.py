@@ -35,5 +35,6 @@ class _SkipIfTeed(logging.Filter):
     log_home() (e.g. a late logging.basicConfig()) writes to the tee itself."""
 
     def filter(self, record):
-        return not any(isinstance(getattr(h, "stream", None), _Tee)
-                       for h in logging.getLogger().handlers)
+        return not any(
+            isinstance(getattr(h, "stream", None), _Tee) for h in logging.getLogger().handlers
+        )

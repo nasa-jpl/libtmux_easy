@@ -10,8 +10,11 @@ session = TmuxSession.create("lte_example_output", mode="wrap")
 session.new_window("app", pane_capture=logs)  # every pane in it saved to a file
 
 # A callback for each matching line, from the pane's first byte.
-server = session.new_pane("server", "python3 -u -m http.server 8767",
-                          on_output={r'"GET ': lambda m: print("  request:", m.line)})
+server = session.new_pane(
+    "server",
+    "python3 -u -m http.server 8767",
+    on_output={r'"GET ': lambda m: print("  request:", m.line)},
+)
 
 # Block until a line matches; what was printed already counts.
 m = session.wait_for_output(server, r"port (\d+)", timeout=10)

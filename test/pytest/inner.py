@@ -1,4 +1,5 @@
 """Shared by the plugin tests: the modes an inner pytest runs in, a test process."""
+
 MODES = {"subprocess": [], "tmux": ["--tmux", "--no-attach"]}
 
 # Prints, then runs until SIGINT and exits 0 -- or with 'die', exits 3 first.

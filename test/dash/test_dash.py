@@ -1,6 +1,7 @@
 """The dashboard: the viewport's pane swapping, actions over the control
 socket, the home log, and the sidebar. Only dashboard() and the sidebar
 need Textual."""
+
 import asyncio
 import importlib.util
 import json
@@ -19,8 +20,9 @@ from libtmux_easy.dash import window as dash_window
 from libtmux_easy._tmux import option, tmux
 from libtmux_easy.wrap import SOCKET_NAME
 
-needs_textual = pytest.mark.skipif(importlib.util.find_spec("textual") is None,
-                                   reason="needs Textual")
+needs_textual = pytest.mark.skipif(
+    importlib.util.find_spec("textual") is None, reason="needs Textual"
+)
 
 
 @pytest.fixture
@@ -28,13 +30,28 @@ def viewport(session):
     """A dashboard window built by hand: a stand-in sidebar and a home pane,
     with the window options dashboard() would set."""
     run = session._tmux_run
-    out = run("new-window", "-d", "-t", f"{session.id}:", "-n", "dash",
-              "-P", "-F", "#{window_id} #{pane_id}", "cat")
+    out = run(
+        "new-window",
+        "-d",
+        "-t",
+        f"{session.id}:",
+        "-n",
+        "dash",
+        "-P",
+        "-F",
+        "#{window_id} #{pane_id}",
+        "cat",
+    )
     window, home = out[0].split()
-    sidebar = run("split-window", "-h", "-b", "-d", "-l", "30", "-t", home,
-                  "-P", "-F", "#{pane_id}", "cat")[0].strip()
-    for name, value in ((dash.HOME_OPTION, home), (dash.VIEW_OPTION, home),
-                        (dash.HOME_CMD_OPTION, "cat"), (dash.WIDTH_OPTION, "30")):
+    sidebar = run(
+        "split-window", "-h", "-b", "-d", "-l", "30", "-t", home, "-P", "-F", "#{pane_id}", "cat"
+    )[0].strip()
+    for name, value in (
+        (dash.HOME_OPTION, home),
+        (dash.VIEW_OPTION, home),
+        (dash.HOME_CMD_OPTION, "cat"),
+        (dash.WIDTH_OPTION, "30"),
+    ):
         run("set-option", "-wq", "-t", window, name, value)
     return dash.Viewport(window, run=run, sidebar=sidebar)
 
@@ -56,7 +73,9 @@ class TestViewport:
         b = session.new_pane("b", "sleep 60")
         session.new_window("other")
         c = session.new_pane("c", "sleep 60")
-        layouts = {w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in ("main", "other")}
+        layouts = {
+            w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in ("main", "other")
+        }
 
         for pane in (a, b, c, a):
             viewport.show(pane.id)
@@ -64,7 +83,9 @@ class TestViewport:
         viewport.restore()
 
         assert viewport.view == viewport.home
-        assert {w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in layouts} == layouts
+        assert {
+            w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in layouts
+        } == layouts
         assert session.get_pane_name(b) == "main:b"
 
     def test_library_tracks_a_pane_on_show(self, session, viewport):
@@ -104,7 +125,6 @@ class TestViewport:
         assert panes[b.id] == viewport.window
         assert viewport.home not in (old_home, "")
         assert panes[viewport.home] == main  # the new home fills b's slot
-
 
     def test_active(self, session, viewport):
         session._tmux_run("select-window", "-t", viewport.window)
@@ -151,8 +171,19 @@ class TestViewport:
         a = session.new_pane("a", "sleep 60")
         b = session.new_pane("b", "true")
         session.wait_for_pane_idle(b, timeout=5.0)
-        extra_id = session._tmux_run("split-window", "-d", "-v", "-l", "5", "-t", viewport.sidebar,
-                                     "-P", "-F", "#{pane_id}", "sleep 60")[0].strip()
+        extra_id = session._tmux_run(
+            "split-window",
+            "-d",
+            "-v",
+            "-l",
+            "5",
+            "-t",
+            viewport.sidebar,
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "sleep 60",
+        )[0].strip()
         extra = session.get_pane(extra_id)
         column = "#{pane_left} #{pane_width}"
         assert _fmt(session, extra.id, column) == _fmt(session, viewport.sidebar, column)
@@ -202,8 +233,9 @@ class TestControl:
 
         assert control.send("stop_all", None)
 
-        assert _wait_until(lambda: not session.is_running(a) and not session.is_running(b),
-                           timeout=10.0)
+        assert _wait_until(
+            lambda: not session.is_running(a) and not session.is_running(b), timeout=10.0
+        )
         assert session.exit_status(a).signal == session.exit_status(b).signal == 2
 
     def test_shutdown_stops_then_kills(self, make_session):
@@ -227,6 +259,7 @@ class TestControl:
 @needs_textual
 def test_sidebar_labels():
     from libtmux_easy.dash.app import describe, describe_long
+
     exit2 = {"code": None, "signal": 2, "inferred": False}
     assert describe({"running": True}) == ("running", "running")
     assert describe({"exit_status": exit2, "stopped": "SIGINT"}) == ("stopped", "stopped")
@@ -234,13 +267,16 @@ def test_sidebar_labels():
     assert describe({"exit_status": exit2}) == ("SIGINT", "failed")
     assert describe({"exit_status": {"code": 0}}) == ("exit 0", "ok")
     assert describe({"exit_status": {}}) == ("unknown", "unknown")
-    assert describe_long({"exit_status": exit2, "stopped": "SIGTERM"}) == \
-        "stopped, needed SIGTERM: killed by SIGINT (2)"
+    assert (
+        describe_long({"exit_status": exit2, "stopped": "SIGTERM"})
+        == "stopped, needed SIGTERM: killed by SIGINT (2)"
+    )
 
 
 @needs_textual
 def test_clip():
     from libtmux_easy.dash.app import clip
+
     assert clip("ros2 run pkg node", 40) == "ros2 run pkg node"
     assert clip("ros2 run pkg node", 10) == "ros2 run\npkg node"
     assert clip("ros2 run pkg node --ros-args", 10) == "ros2 run\npkg nod..."
@@ -278,8 +314,9 @@ class TestDashboard:
         a = session.new_pane("a", "sleep 60", mode=PANE_MODE_WRAP)
         session.dashboard(select=False)
         window = session._dash_window
-        assert session._tmux_run("show-options", "-qv", "-t", session.id,
-                                 dash.WINDOW_OPTION) == [window]
+        assert session._tmux_run("show-options", "-qv", "-t", session.id, dash.WINDOW_OPTION) == [
+            window
+        ]
         assert _wait_until(lambda: "main" in pane_text(session.get_pane(session._dash_sidebar)))
 
         dash.Viewport(window, run=session._tmux_run).show(a.id)
@@ -289,7 +326,6 @@ class TestDashboard:
         assert session.get_pane_name(a) == "main:a"
         assert session._tmux_run("show-options", "-qv", "-t", session.id, dash.WINDOW_OPTION) == []
         assert _fmt(session, a.id, "#{window_name}") == "main"
-
 
     def test_is_the_first_window(self, make_session):
         """Even opened before the first new_window(), which must still reuse
@@ -314,16 +350,21 @@ def test_open_window_from_outside_a_session_object(tmp_path):
     try:
         home_log = tmp_path / "home.log"
         window, sidebar = dash.open_window(
-            "lte-test-ext", str(tmp_path / "status.json"), str(home_log),
-            str(tmp_path / "ctl.sock"), sidebar_cmd="cat")
+            "lte-test-ext",
+            str(tmp_path / "status.json"),
+            str(home_log),
+            str(tmp_path / "ctl.sock"),
+            sidebar_cmd="cat",
+        )
         assert option("lte-test-ext", dash.WINDOW_OPTION) == window
         assert option("lte-test-ext", dash.SIDEBAR_OPTION) == sidebar
         home = option(window, dash.HOME_OPTION, "-wq")
         assert option(window, dash.VIEW_OPTION, "-wq") == home
 
         home_log.write_text("hello from outside\n")
-        assert _wait_until(lambda: "hello from outside" in "\n".join(
-            tmux("capture-pane", "-p", "-t", home)))
+        assert _wait_until(
+            lambda: "hello from outside" in "\n".join(tmux("capture-pane", "-p", "-t", home))
+        )
     finally:
         subprocess.run(["tmux", "kill-session", "-t", "lte-test-ext"], capture_output=True)
 
@@ -331,7 +372,9 @@ def test_open_window_from_outside_a_session_object(tmp_path):
 def test_dashboard_without_textual_explains(monkeypatch, session):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None)
     which = shutil.which
-    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None if name == "lte-dash" else which(name, *a, **k))
+    monkeypatch.setattr(
+        shutil, "which", lambda name, *a, **k: None if name == "lte-dash" else which(name, *a, **k)
+    )
     with pytest.raises(RuntimeError, match="pipx install"):
         session.dashboard()
     assert session._dash_window is None
@@ -349,12 +392,23 @@ class FakeViewport:
         self.is_active = True
         self.shown = []
 
-    def repair(self): pass
-    def restore(self): self.shown.append("restore")
-    def show(self, pane_id): self.shown.append(pane_id)
-    def active(self): return self.is_active
-    def panes(self): return self._panes
-    def option(self, name): return self.options.get(name, "")
+    def repair(self):
+        pass
+
+    def restore(self):
+        self.shown.append("restore")
+
+    def show(self, pane_id):
+        self.shown.append(pane_id)
+
+    def active(self):
+        return self.is_active
+
+    def panes(self):
+        return self._panes
+
+    def option(self, name):
+        return self.options.get(name, "")
 
     def run(self, *args):
         self.calls.append(args)
@@ -363,9 +417,16 @@ class FakeViewport:
 
 def entry(pane_id, name, running=False, code=None, stopped=None):
     """A status-file entry."""
-    return {"pane_id": pane_id, "name": name, "mode": "wrap", "command": "x",
-            "target_pids": [], "running": running, "stopped": stopped,
-            "exit_status": {"code": code, "signal": None, "inferred": False}}
+    return {
+        "pane_id": pane_id,
+        "name": name,
+        "mode": "wrap",
+        "command": "x",
+        "target_pids": [],
+        "running": running,
+        "stopped": stopped,
+        "exit_status": {"code": code, "signal": None, "inferred": False},
+    }
 
 
 def _run_app(viewport, status, scenario=None):
@@ -411,9 +472,15 @@ def test_sidebar_summary_counts():
     from textual.widgets import Static
 
     async def scenario(app, pilot):
-        app.entries = {e["pane_id"]: e for e in (
-            entry("%5", "a:one", running=True), entry("%6", "a:two", running=True),
-            entry("%7", "a:three", code=0, stopped="SIGINT"), entry("%8", "b:four", code=3))}
+        app.entries = {
+            e["pane_id"]: e
+            for e in (
+                entry("%5", "a:one", running=True),
+                entry("%6", "a:two", running=True),
+                entry("%7", "a:three", code=0, stopped="SIGINT"),
+                entry("%8", "b:four", code=3),
+            )
+        }
         app.poll()
         await pilot.pause(0.1)
         return str(app.query_one("#summary", Static).render())
@@ -423,12 +490,15 @@ def test_sidebar_summary_counts():
 
 
 @needs_textual
-@pytest.mark.parametrize("names, width, window_width, expect", [
-    (["w:a_rather_long_pane_name_here", "w:x"], dash.AUTO, 200, 7 + 28 + 12),
-    ([], dash.AUTO, 200, dash.MIN_WIDTH),             # nothing listed yet
-    (["w:" + "n" * 80], dash.AUTO, 100, 50),          # at most half the window
-    (["w:x"], "30", 200, None),                       # a fixed width is left alone
-])
+@pytest.mark.parametrize(
+    "names, width, window_width, expect",
+    [
+        (["w:a_rather_long_pane_name_here", "w:x"], dash.AUTO, 200, 7 + 28 + 12),
+        ([], dash.AUTO, 200, dash.MIN_WIDTH),  # nothing listed yet
+        (["w:" + "n" * 80], dash.AUTO, 100, 50),  # at most half the window
+        (["w:x"], "30", 200, None),  # a fixed width is left alone
+    ],
+)
 def test_sidebar_autosizes_once(tmp_path, names, width, window_width, expect):
     """Width "auto": fit the longest name plus the longest status, at start."""
     status = tmp_path / "s.json"
@@ -457,6 +527,7 @@ def test_sidebar_shows_subprocess_tree(tmp_path):
         idle["target_pids"] = [os.getpid() + 2**22]  # no such process
         status.write_text(json.dumps([busy, idle]))
         from libtmux_easy.proc import descendant_tree
+
         assert _wait_until(lambda: descendant_tree(proc.pid))  # sh has started sleep
 
         async def scenario(app, pilot):
@@ -495,6 +566,7 @@ def test_sidebar_starts_on_initial_pane(tmp_path):
 @needs_textual
 def test_sidebar_help_closes_unzoomed(tmp_path):
     """The help zooms the sidebar; every way of closing it unzooms."""
+
     class Zooming(FakeViewport):
         zoomed = False
 

@@ -33,8 +33,9 @@ from .._tmux import option as _option, tmux as _tmux
 
 TABLE = "prefix"
 
-_LISTED = re.compile(r"^bind-key\s+(?P<flags>(?:-\S+\s+)*?)-T\s+(?P<table>\S+)\s+"
-                     r"(?P<key>\S+)\s+(?P<command>.*)$")
+_LISTED = re.compile(
+    r"^bind-key\s+(?P<flags>(?:-\S+\s+)*?)-T\s+(?P<table>\S+)\s+" r"(?P<key>\S+)\s+(?P<command>.*)$"
+)
 
 
 def _slug(key):
@@ -53,8 +54,9 @@ def _source(run, text):
     with tempfile.NamedTemporaryFile("w", suffix=".tmux", delete=False) as handle:
         handle.write(text + "\n")
     try:
-        check = subprocess.run(["tmux", "source-file", "-n", handle.name],
-                               capture_output=True, text=True)
+        check = subprocess.run(
+            ["tmux", "source-file", "-n", handle.name], capture_output=True, text=True
+        )
         if check.returncode != 0:
             raise ValueError(f"bad tmux command: {check.stderr.strip() or text}")
         run("source-file", handle.name)
@@ -99,8 +101,11 @@ def borrow(key, option, command, message=None, run=_tmux, if_free=False):
             fallback = match["command"]
         else:
             fallback = f'display-message "{_escape(message or key + " is not bound here")}"'
-        _source(run, f"bind-key -T {TABLE} {key} if-shell -F '#{{{option}}}' "
-                     f"{{ {command} }} {{ {fallback} }}")
+        _source(
+            run,
+            f"bind-key -T {TABLE} {key} if-shell -F '#{{{option}}}' "
+            f"{{ {command} }} {{ {fallback} }}",
+        )
         run("set-option", "-gq", saved_option, saved)
     run("set-option", "-gq", users_option, str(users + 1))
     return True
@@ -134,8 +139,8 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     # COMMAND is everything after '--', split off by hand: argparse's
     # REMAINDER would also swallow an option given before it.
-    command = argv[argv.index("--") + 1:] if "--" in argv else []
-    args = parser.parse_args(argv[:argv.index("--")] if "--" in argv else argv)
+    command = argv[argv.index("--") + 1 :] if "--" in argv else []
+    args = parser.parse_args(argv[: argv.index("--")] if "--" in argv else argv)
     if args.action == "borrow":
         if not command:
             parser.error("borrow needs '-- COMMAND'")

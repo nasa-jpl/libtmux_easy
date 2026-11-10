@@ -1,11 +1,17 @@
 """libtmux_easy.proc: finding and inspecting processes, against real
 subprocesses and tmux sessions."""
+
 import os
 import subprocess
 
 from helpers import wait_until
-from libtmux_easy.proc import (cmdline, descendant_tree, get_child_pids, get_session_pids,
-                               pane_child_processes)
+from libtmux_easy.proc import (
+    cmdline,
+    descendant_tree,
+    get_child_pids,
+    get_session_pids,
+    pane_child_processes,
+)
 
 
 def test_get_child_pids():
@@ -43,8 +49,10 @@ def test_descendant_tree():
 
     ps axf order: depth first, siblings by pid. Leaves and unknown pids give [].
     """
-    table = {pid: ("S", ppid, pid) for pid, ppid in
-             ((1, 0), (20, 1), (12, 10), (10, 1), (13, 11), (11, 10))}
+    table = {
+        pid: ("S", ppid, pid)
+        for pid, ppid in ((1, 0), (20, 1), (12, 10), (10, 1), (13, 11), (11, 10))
+    }
     assert descendant_tree(10, table) == [(1, 11), (2, 13), (1, 12)]
     assert descendant_tree(1, table) == [(1, 10), (2, 11), (3, 13), (2, 12), (1, 20)]
     assert descendant_tree(13, table) == []

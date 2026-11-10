@@ -17,9 +17,12 @@ def panes(port):
     """The system: ('window:pane', command), in start order."""
     return [
         ("servers:web", f"{PY} -u -m http.server {port} --bind 127.0.0.1"),
-        ("workers:ticker", f"{PY} -u -c 'import time\n"
-                           "try:\n    [print(\"tick\", i) or time.sleep(0.5) for i in range(10**6)]\n"
-                           "except KeyboardInterrupt: pass'"),
+        (
+            "workers:ticker",
+            f"{PY} -u -c 'import time\n"
+            'try:\n    [print("tick", i) or time.sleep(0.5) for i in range(10**6)]\n'
+            "except KeyboardInterrupt: pass'",
+        ),
         ("jobs:migrate", "echo migrating; sleep 1; echo migrated"),
     ]
 

@@ -13,7 +13,9 @@ session.new_pane("top", "top")
 # Another window, another layout. mode="wrap" tracks the exact exit status.
 session.new_window("server", layout="even-vertical")
 session.new_pane("http", "python3 -m http.server 8765", mode="wrap")
-session.new_pane("client", "while sleep 2; do curl -s -o /dev/null -w '%{http_code}\\n' localhost:8765; done")
+session.new_pane(
+    "client", "while sleep 2; do curl -s -o /dev/null -w '%{http_code}\\n' localhost:8765; done"
+)
 
 # Panes are named window:pane.
 session.send_keys("echo 'typed into work:shell'", target_pane="work:shell")

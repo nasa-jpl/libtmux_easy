@@ -19,8 +19,14 @@ from .. import close, proc
 from .._tmux import option
 from . import winhook
 from .control import describe, describe_long, read_status
-from .options import (AUTO, HOME_KIND_OPTION, HOME_STATUS_OPTION, INITIAL_OPTION, MIN_WIDTH,
-                      WIDTH_OPTION)
+from .options import (
+    AUTO,
+    HOME_KIND_OPTION,
+    HOME_STATUS_OPTION,
+    INITIAL_OPTION,
+    MIN_WIDTH,
+    WIDTH_OPTION,
+)
 
 HOME = "home"  # tree node data for the home entry
 
@@ -77,8 +83,14 @@ terminal's own selection).
 ROW_EXTRA = 4 + 1 + 2
 STATUS_WIDTH = 12
 
-STATUS_COLORS = {"starting": "cyan", "running": "green", "ok": "green", "failed": "red",
-                 "stopped": "#e5c847", "unknown": "magenta"}  # hex: the theme maps "yellow" to orange
+STATUS_COLORS = {
+    "starting": "cyan",
+    "running": "green",
+    "ok": "green",
+    "failed": "red",
+    "stopped": "#e5c847",
+    "unknown": "magenta",
+}  # hex: the theme maps "yellow" to orange
 
 
 def clip(text, width, lines=2):
@@ -92,8 +104,8 @@ def clip(text, width, lines=2):
     if len(wrapped) <= lines:
         return "\n".join(wrapped)
     last = wrapped[lines - 1]
-    last = last[:width - 3] if len(last) > width - 3 else last
-    return "\n".join(wrapped[:lines - 1] + [last + "..."])
+    last = last[: width - 3] if len(last) > width - 3 else last
+    return "\n".join(wrapped[: lines - 1] + [last + "..."])
 
 
 class HelpScreen(ModalScreen):
@@ -166,17 +178,17 @@ class DashApp(App):
         self.viewport = viewport
         self.status_path = status_path
         self.control = control
-        self.entries = {}       # pane id -> status-file entry
-        self.pane_nodes = {}    # pane id -> TreeNode
+        self.entries = {}  # pane id -> status-file entry
+        self.pane_nodes = {}  # pane id -> TreeNode
         self.window_nodes = {}  # window name -> TreeNode
-        self.alive = set()      # pane ids tmux still has
+        self.alive = set()  # pane ids tmux still has
         self.online = control.online()
         self._show_timer = None
-        self._path = None       # status file read last poll
+        self._path = None  # status file read last poll
         self._armed = None  # (action, time) awaiting a confirming press
-        self._active = True     # the dashboard window is the current one
-        self._hook = None       # winhook index
-        self._procs = None      # the process tree shown last: (title, text)
+        self._active = True  # the dashboard window is the current one
+        self._hook = None  # winhook index
+        self._procs = None  # the process tree shown last: (title, text)
 
     def compose(self) -> ComposeResult:
         tree = PaneTree("session", id="panes")
@@ -220,14 +232,14 @@ class DashApp(App):
             return
         names = [e["name"].rpartition(":")[2] for e in self.entries.values()]
         width = ROW_EXTRA + max(map(len, names), default=0) + STATUS_WIDTH
-        window = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
-                                   "#{window_width}")
+        window = self.viewport.run(
+            "display-message", "-p", "-t", self.viewport.window, "#{window_width}"
+        )
         cap = int(window[0]) // 2 if window and window[0].strip().isdigit() else width
         width = max(MIN_WIDTH, min(width, cap))
         self.viewport.run("resize-pane", "-t", self.viewport.sidebar, "-x", str(width))
         # The layout repair (Viewport._fit) restores this from now on.
-        self.viewport.run("set-option", "-wq", "-t", self.viewport.window,
-                          WIDTH_OPTION, str(width))
+        self.viewport.run("set-option", "-wq", "-t", self.viewport.window, WIDTH_OPTION, str(width))
 
     # ---------- status ----------
 
@@ -260,8 +272,9 @@ class DashApp(App):
                 node.remove()
                 del self.pane_nodes[pane_id]
                 if not old_group.children:
-                    self.window_nodes = {w: n for w, n in self.window_nodes.items()
-                                         if n is not old_group}
+                    self.window_nodes = {
+                        w: n for w, n in self.window_nodes.items() if n is not old_group
+                    }
                     old_group.remove()
             if pane_id not in self.pane_nodes:
                 wnode = self.window_nodes.get(window)
@@ -276,11 +289,11 @@ class DashApp(App):
         """React to window changes at once (winhook), not at the next poll.
         The handler is in place before the hook: SIGUSR1 would kill us."""
         loop = asyncio.get_running_loop()
-        signal.signal(signal.SIGUSR1,
-                      lambda *_: loop.call_soon_threadsafe(self._follow_window))
+        signal.signal(signal.SIGUSR1, lambda *_: loop.call_soon_threadsafe(self._follow_window))
         session = self._session_id()
-        self._hook = winhook.install(session, os.getpid(), run=self.viewport.run) \
-            if session else None
+        self._hook = (
+            winhook.install(session, os.getpid(), run=self.viewport.run) if session else None
+        )
 
     def on_unmount(self):
         if self._hook is not None:
@@ -304,8 +317,9 @@ class DashApp(App):
 
     def check_online(self):
         online = self.control.online()
-        home_status = (option(self.viewport.window, HOME_STATUS_OPTION)
-                       if self.home_kind == "command" else "")
+        home_status = (
+            option(self.viewport.window, HOME_STATUS_OPTION) if self.home_kind == "command" else ""
+        )
         if (online, home_status) != (self.online, self.home_status):
             self.online, self.home_status = online, home_status
             self.home_node.set_label(self._home_label())
@@ -316,8 +330,7 @@ class DashApp(App):
             # lte-session: the command's own state. Between tests no script
             # is listening, which is normal, so that's not shown.
             status = self.home_status or "running"
-            color = ("running" if status == "running" else
-                     "ok" if status == "exited 0" else "failed")
+            color = "running" if status == "running" else "ok" if status == "exited 0" else "failed"
             label.append(f"  {status}", style=STATUS_COLORS[color])
         elif not self.online:
             label.append("  script exited", style="dim")
@@ -362,9 +375,14 @@ class DashApp(App):
         """The top line: running, stopped and failed always; exit 0,
         starting and unknown when there are any."""
         text = Text()
-        for kind, word, always in (("running", "running", True), ("stopped", "stopped", True),
-                                   ("failed", "failed", True), ("ok", "ok", False),
-                                   ("starting", "starting", False), ("unknown", "unknown", False)):
+        for kind, word, always in (
+            ("running", "running", True),
+            ("stopped", "stopped", True),
+            ("failed", "failed", True),
+            ("ok", "ok", False),
+            ("starting", "starting", False),
+            ("unknown", "unknown", False),
+        ):
             n = counts.get(kind, 0)
             if n or always:
                 if text:
@@ -450,8 +468,9 @@ class DashApp(App):
             self._show_timer = None
 
     def _session_id(self):
-        out = self.viewport.run("display-message", "-p", "-t", self.viewport.window,
-                                "#{session_id}")
+        out = self.viewport.run(
+            "display-message", "-p", "-t", self.viewport.window, "#{session_id}"
+        )
         session = out[0].strip() if out else ""
         return session if session.startswith("$") else None
 
@@ -501,12 +520,14 @@ class DashApp(App):
             widget.collapsed = not widget.collapsed
 
     def action_resize(self, delta):
-        self.viewport.run("resize-pane", "-t", self.viewport.sidebar,
-                           "-R" if delta > 0 else "-L", str(abs(delta)))
+        self.viewport.run(
+            "resize-pane", "-t", self.viewport.sidebar, "-R" if delta > 0 else "-L", str(abs(delta))
+        )
 
     def _zoomed(self):
-        out = self.viewport.run("display-message", "-p", "-t", self.viewport.sidebar,
-                                "#{window_zoomed_flag}")
+        out = self.viewport.run(
+            "display-message", "-p", "-t", self.viewport.sidebar, "#{window_zoomed_flag}"
+        )
         return bool(out) and out[0].strip() == "1"
 
     def _unzoom(self, _result=None):
@@ -564,6 +585,10 @@ class DashApp(App):
         # lte-close: the session's close actions, and a window showing progress.
         session = self._session_id()
         if session:
-            subprocess.Popen(shlex.split(close.self_command()) + ["-t", session],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen(
+                shlex.split(close.self_command()) + ["-t", session],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )

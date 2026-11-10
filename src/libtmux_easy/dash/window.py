@@ -12,9 +12,19 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 from .._tmux import tmux as _tmux
-from .options import (AUTO, HOME_CMD_OPTION, HOME_KIND_OPTION, HOME_OPTION, INITIAL_OPTION,
-                      INSTALL_HINT, MIN_WIDTH, SIDEBAR_OPTION, VIEW_OPTION, WIDTH_OPTION,
-                      WINDOW_OPTION)
+from .options import (
+    AUTO,
+    HOME_CMD_OPTION,
+    HOME_KIND_OPTION,
+    HOME_OPTION,
+    INITIAL_OPTION,
+    INSTALL_HINT,
+    MIN_WIDTH,
+    SIDEBAR_OPTION,
+    VIEW_OPTION,
+    WIDTH_OPTION,
+    WINDOW_OPTION,
+)
 
 
 def launcher():
@@ -26,8 +36,10 @@ def launcher():
         path = [str(Path(__file__).resolve().parents[2])]
         if textual not in _site_dirs():
             path.append(textual)  # a private copy, e.g. the .deb's bundle
-        return (f"env PYTHONPATH={shlex.quote(os.pathsep.join(path))} "
-                f"{shlex.quote(sys.executable)} -m libtmux_easy.dash")
+        return (
+            f"env PYTHONPATH={shlex.quote(os.pathsep.join(path))} "
+            f"{shlex.quote(sys.executable)} -m libtmux_easy.dash"
+        )
     if shutil.which("lte-dash"):
         return "lte-dash"
     raise RuntimeError(INSTALL_HINT)
@@ -54,9 +66,21 @@ def _site_dirs():
     return {str(Path(d).resolve()) for d in dirs}
 
 
-def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=AUTO,
-                mouse=True, run=_tmux, sidebar_cmd=None, home_cmd=None, key=None,
-                initial=None):
+def open_window(
+    session,
+    status_file,
+    home_log,
+    ctl=None,
+    *,
+    name="dash",
+    width=AUTO,
+    mouse=True,
+    run=_tmux,
+    sidebar_cmd=None,
+    home_cmd=None,
+    key=None,
+    initial=None,
+):
     """Create a dashboard window in 'session' (an id like '$1', or a name; not
     '=name', which tmux 3.4's set-option rejects as "no such session").
     Returns (window id, sidebar pane id).
@@ -84,12 +108,28 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
         tail = f"trap '' INT; exec tail -n +1 -F {shlex.quote(home_log)}"
         home_cmd = f"sh -c {shlex.quote(tail)}"
     # First, before the session's other windows ('-b' shifts them up).
-    out = run("new-window", "-b", "-d", "-t", f"{session}:^", "-n", name,
-              "-P", "-F", "#{window_id} #{pane_id}", home_cmd)
+    out = run(
+        "new-window",
+        "-b",
+        "-d",
+        "-t",
+        f"{session}:^",
+        "-n",
+        name,
+        "-P",
+        "-F",
+        "#{window_id} #{pane_id}",
+        home_cmd,
+    )
     window_id, home = out[0].split()
-    for opt, value in ((HOME_OPTION, home), (VIEW_OPTION, home),
-                       (HOME_CMD_OPTION, home_cmd), (WIDTH_OPTION, str(width)),
-                       (HOME_KIND_OPTION, home_kind), (INITIAL_OPTION, initial or "")):
+    for opt, value in (
+        (HOME_OPTION, home),
+        (VIEW_OPTION, home),
+        (HOME_CMD_OPTION, home_cmd),
+        (WIDTH_OPTION, str(width)),
+        (HOME_KIND_OPTION, home_kind),
+        (INITIAL_OPTION, initial or ""),
+    ):
         run("set-option", "-wq", "-t", window_id, opt, value)
 
     if status_file:
@@ -99,8 +139,20 @@ def open_window(session, status_file, home_log, ctl=None, *, name="dash", width=
     if key is not None:
         sidebar_cmd += f" --key {shlex.quote(key)}"
     start = MIN_WIDTH if width == AUTO else width
-    sidebar = run("split-window", "-h", "-b", "-d", "-l", str(start), "-t", home,
-                  "-P", "-F", "#{pane_id}", sidebar_cmd)[0].strip()
+    sidebar = run(
+        "split-window",
+        "-h",
+        "-b",
+        "-d",
+        "-l",
+        str(start),
+        "-t",
+        home,
+        "-P",
+        "-F",
+        "#{pane_id}",
+        sidebar_cmd,
+    )[0].strip()
     run("select-pane", "-t", home, "-T", "home")
     run("select-pane", "-t", sidebar, "-T", "lte-dash")
     run("set-option", "-q", "-t", session, WINDOW_OPTION, window_id)

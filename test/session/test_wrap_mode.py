@@ -3,6 +3,7 @@ Tests for wrap mode: panes whose command runs under lte-run
 (src/libtmux_easy/wrap.py), which reports the exact pid and exit status over
 the session's control socket. See docs/wrap-mode.md.
 """
+
 import logging
 import os
 import signal
@@ -23,9 +24,15 @@ def test_wrapper_import_stays_light():
     """lte-run starts once per pane, and its console script imports the package
     __init__ first. Pulling libtmux and psutil in there cost ~4x the startup
     time and +7 MB per pane."""
-    probe = "import sys, libtmux_easy.wrap; print('libtmux' in sys.modules, 'psutil' in sys.modules)"
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
-                         env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+    probe = (
+        "import sys, libtmux_easy.wrap; print('libtmux' in sys.modules, 'psutil' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+    )
     assert out.stdout.split() == ["False", "False"], out.stderr
 
 
@@ -43,15 +50,23 @@ class TestWrapStandalone:
         # A subprocess, not wrap.main(): main() changes signal dispositions
         # for the rest of the process it runs in.
         env = dict(env, PYTHONPATH=os.pathsep.join(sys.path))
-        return subprocess.run([sys.executable, "-m", "libtmux_easy.wrap", *argv], env=env,
-                              capture_output=True, text=True, timeout=10)
+        return subprocess.run(
+            [sys.executable, "-m", "libtmux_easy.wrap", *argv],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
 
-    @pytest.mark.parametrize("argv, code, stderr", [
-        (("sh", "-c", "exit 42"), 42, ""),
-        (("sh", "-c", "kill -INT $$"), -signal.SIGINT, ""),   # the signal, re-raised
-        (("no-such-command-xyz",), 127, "lte-run: no-such-command-xyz"),
-        (("--bogus", "true"), 2, ""),
-    ])
+    @pytest.mark.parametrize(
+        "argv, code, stderr",
+        [
+            (("sh", "-c", "exit 42"), 42, ""),
+            (("sh", "-c", "kill -INT $$"), -signal.SIGINT, ""),  # the signal, re-raised
+            (("no-such-command-xyz",), 127, "lte-run: no-such-command-xyz"),
+            (("--bogus", "true"), 2, ""),
+        ],
+    )
     def test_wrap_standalone_status(self, env, argv, code, stderr):
         proc = self._run(env, *argv)
         assert proc.returncode == code
@@ -144,8 +159,9 @@ class TestWrapMode:
         assert session.stop_pane(pane, sigint_timeout=1.0, sigterm_timeout=1.0) is True
 
         assert session.exit_status(pane).signal == 9
-        assert _wait_until(lambda: not any(p.is_running() and p.status() != psutil.STATUS_ZOMBIE
-                                           for p in sleeps))
+        assert _wait_until(
+            lambda: not any(p.is_running() and p.status() != psutil.STATUS_ZOMBIE for p in sleeps)
+        )
 
     def test_wrap_manual_rerun_tracked(self, session):
         """A rerun typed into the pane (up-arrow, Enter) is a new run."""
@@ -173,13 +189,16 @@ class TestWrapMode:
         pane = session.new_pane("x", "sh -c 'exit 4'", mode=PANE_MODE_WRAP)
         assert session.wait_for_exit(pane, timeout=5.0).code == 4
 
-        session.server.cmd("send-keys", "-t", pane.id, "-l",
-                           f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 6'")
+        session.server.cmd(
+            "send-keys", "-t", pane.id, "-l", f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 6'"
+        )
         session.server.cmd("send-keys", "-t", pane.id, "Enter")
 
         assert _wait_until(lambda: session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 6'")
         assert session.wait_for_exit(pane, timeout=5.0).code == 6
-        assert _wait_until(lambda: dash.read_status(path)[0]["command"] == "sh -c 'sleep 0.3; exit 6'")
+        assert _wait_until(
+            lambda: dash.read_status(path)[0]["command"] == "sh -c 'sleep 0.3; exit 6'"
+        )
         session.respawn_pane(pane)
         assert session.wait_for_exit(pane, timeout=5.0).code == 6
 
@@ -197,8 +216,9 @@ class TestWrapMode:
 
     def test_wrap_on_exit_fires_once(self, session):
         calls = []
-        pane = session.new_pane("x", "sh -c 'sleep 0.5; exit 3'", mode=PANE_MODE_WRAP,
-                                on_exit=calls.append)
+        pane = session.new_pane(
+            "x", "sh -c 'sleep 0.5; exit 3'", mode=PANE_MODE_WRAP, on_exit=calls.append
+        )
         assert _wait_until(lambda: calls)
         time.sleep(0.5)
 
@@ -239,8 +259,12 @@ class TestWrapMode:
         """In a pane: the command keeps its terminal, tmux copies its output,
         and the file is complete when the exit is reported."""
         log = tmp_path / "pane.log"
-        pane = session.new_pane("x", "sh -c 'test -t 1 && echo tty; echo done; exit 5'",
-                                mode=PANE_MODE_WRAP, cmd_capture=str(log))
+        pane = session.new_pane(
+            "x",
+            "sh -c 'test -t 1 && echo tty; echo done; exit 5'",
+            mode=PANE_MODE_WRAP,
+            cmd_capture=str(log),
+        )
         assert session.wait_for_exit(pane, timeout=5.0).code == 5
         assert log.read_text() == "tty\ndone\n"
         assert _wait_until(lambda: session._pane_fmt(pane, "#{pane_pipe}") == "0")
@@ -290,8 +314,9 @@ class TestWrapMode:
         rc.write_text("sleep 0.5\necho from-rc\n")
         session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
         lines = []
-        pane = session.new_pane("x", "echo hello; sleep 60",
-                                on_output={"": lambda m: lines.append(m.line)})
+        pane = session.new_pane(
+            "x", "echo hello; sleep 60", on_output={"": lambda m: lines.append(m.line)}
+        )
 
         session.wait_for_output(pane, "hello", timeout=10)
         assert _wait_until(lambda: "hello" in lines)
@@ -328,7 +353,8 @@ class TestWrapMode:
         contains '-t' (here '--topic'): its keys used to land in the first
         pane. See _pane_cmd()."""
         session.new_pane("first", "sleep 30", mode=PANE_MODE_WRAP)
-        pane = session.new_pane("second", "sleep 0.1 && sh -c 'exit 7' --topic x",
-                                mode=PANE_MODE_WRAP)
+        pane = session.new_pane(
+            "second", "sleep 0.1 && sh -c 'exit 7' --topic x", mode=PANE_MODE_WRAP
+        )
 
         assert session.wait_for_exit(pane, timeout=5.0).code == 7

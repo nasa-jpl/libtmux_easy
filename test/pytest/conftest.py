@@ -1,4 +1,5 @@
 """The 'run' fixture: an inner pytest with the plugin (see inner.py)."""
+
 import os
 import re
 import shutil
@@ -27,10 +28,26 @@ def run(tmp_path):
         (tmp_path / "test_inner.py").write_text(tests)
         full_env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
         full_env.update(env or {}, PYTHONPATH=SRC)
-        proc = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                               "-p", "no:libtmux", "-rA", *MODES[mode], *args, "test_inner.py"],
-                              cwd=tmp_path, env=full_env, capture_output=True, text=True,
-                              timeout=120)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "no:cacheprovider",
+                "-p",
+                "no:libtmux",
+                "-rA",
+                *MODES[mode],
+                *args,
+                "test_inner.py",
+            ],
+            cwd=tmp_path,
+            env=full_env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
         out = proc.stdout + proc.stderr
         sessions.extend(re.findall(r"tmux attach -t ([\w-]+)", out))
         servers.extend(re.findall(r"tmux -S (\S+) attach", out))

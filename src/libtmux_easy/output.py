@@ -27,14 +27,14 @@ from .wrap import plain_line, plain_text
 
 logger = logging.getLogger(__name__)
 
-QUIET = 0.15       # a partial line (a prompt, no LF yet) is matched once quiet this long
-MAX_LINE = 65536   # a longer line is matched and flushed in pieces
-ECHO_TTL = 10.0    # a typed command's echo is expected within this
-POLL = 0.1         # a watched file is read at most this often (and polled this often without inotify)
-REFRESH = 1.0      # pane -> file re-read from tmux this often while watched: a safety net
+QUIET = 0.15  # a partial line (a prompt, no LF yet) is matched once quiet this long
+MAX_LINE = 65536  # a longer line is matched and flushed in pieces
+ECHO_TTL = 10.0  # a typed command's echo is expected within this
+POLL = 0.1  # a watched file is read at most this often (and polled this often without inotify)
+REFRESH = 1.0  # pane -> file re-read from tmux this often while watched: a safety net
 READ_MAX = 1 << 20  # bytes read per file per poll: one flood doesn't starve the rest
-KEEP = 1000        # matches an OutputWatch keeps (.matches) and holds unread for wait()
-BATCH = 4          # from this many lines, a read is matched as one text (see _match_batch)
+KEEP = 1000  # matches an OutputWatch keeps (.matches) and holds unread for wait()
+BATCH = 4  # from this many lines, a read is matched as one text (see _match_batch)
 # Could match less on lines joined by newlines than one by one: matched per line.
 _CROSS_LINE = re.compile(r"\\[AZ]|\(\?<?[=!]|\(\?>|[*+?}]\+")
 
@@ -53,9 +53,9 @@ class OutputMatch:
     name: Optional[str]
     pattern: str
     match: "re.Match" = field(repr=False)
-    line: str            # plain text, no newline
-    time: float          # time.time() when the line was read
-    offset: int = -1     # where the line starts in the pane's file (-1: not from a file)
+    line: str  # plain text, no newline
+    time: float  # time.time() when the line was read
+    offset: int = -1  # where the line starts in the pane's file (-1: not from a file)
 
 
 def file_size(path) -> int:
@@ -93,15 +93,18 @@ class OutputWatch:
         self.regex = pattern
         self.callback, self.once, self.skip_echo = callback, once, skip_echo
         self.matches = collections.deque(maxlen=KEEP)  # the latest
-        self.count = 0   # matches in all
+        self.count = 0  # matches in all
         self.done = False
         self._cond = threading.Condition()
         self._unread = collections.deque(maxlen=KEEP)  # for wait()
         self._reader = None
         self._from = {}  # pane_id -> file offset: earlier lines aren't for this watch
         # For a batch of lines joined by newlines: line anchors, per line.
-        self._joined = None if _CROSS_LINE.search(pattern.pattern) else \
-            re.compile(pattern.pattern, pattern.flags | re.MULTILINE)
+        self._joined = (
+            None
+            if _CROSS_LINE.search(pattern.pattern)
+            else re.compile(pattern.pattern, pattern.flags | re.MULTILINE)
+        )
 
     @property
     def pane_id(self):
@@ -196,8 +199,21 @@ class _Inotify:
 class _Source:
     """One pane's file, as far as it has been read."""
 
-    __slots__ = ("pane_id", "window_id", "name", "path", "start", "pipe", "offset", "buf",
-                 "last", "fired", "fd", "more", "truncated")
+    __slots__ = (
+        "pane_id",
+        "window_id",
+        "name",
+        "path",
+        "start",
+        "pipe",
+        "offset",
+        "buf",
+        "last",
+        "fired",
+        "fd",
+        "more",
+        "truncated",
+    )
 
     def __init__(self, pane_id, window_id, name, path, start, pipe, offset):
         self.pane_id, self.window_id, self.name = pane_id, window_id, name
@@ -205,8 +221,8 @@ class _Source:
         self.buf = b""
         self.last = 0.0
         self.fired = set()  # watches that matched the partial line already
-        self.fd = None      # kept open while watched
-        self.more = True    # may have unread bytes: read without waiting for an event
+        self.fd = None  # kept open while watched
+        self.more = True  # may have unread bytes: read without waiting for an event
         self.truncated = -1e9  # when a shrink was seen (a rerun overwriting the file)
 
     def close(self):
@@ -235,24 +251,24 @@ class OutputReader(threading.Thread):
     def __init__(self, panes, names, typed, ignore=None):
         super().__init__(daemon=True, name="lte-output")
         self._panes, self._names, self._typed = panes, names, typed
-        self.ignore = ignore          # compiled regex: lines that are never output (probes)
+        self.ignore = ignore  # compiled regex: lines that are never output (probes)
         # Reentrant: callbacks run under it and may add or cancel watches.
         self._lock = threading.RLock()
-        self._watches = []            # OutputWatch
-        self._sources = {}            # pane_id -> _Source
-        self._echo = {}               # pane_id -> deque of [text, monotonic time, echoes]
+        self._watches = []  # OutputWatch
+        self._sources = {}  # pane_id -> _Source
+        self._echo = {}  # pane_id -> deque of [text, monotonic time, echoes]
         self._closed = threading.Event()
         self._refreshed = 0.0
         self._synced_once = False
-        self._resync = False          # resync(): pane -> file changed
+        self._resync = False  # resync(): pane -> file changed
         try:
             self._inotify = _Inotify()
         except (OSError, AttributeError) as exc:  # not Linux, no libc symbol, no fds
             logger.debug(f"inotify unavailable ({exc}); polling every {POLL}s")
             self._inotify = None
-        self._wds = {}                # path -> watch descriptor (files and capture dirs)
-        self._by_wd = {}              # wd -> path
-        self._dir_wds = set()         # a new file there: a new pane, maybe
+        self._wds = {}  # path -> watch descriptor (files and capture dirs)
+        self._by_wd = {}  # wd -> path
+        self._dir_wds = set()  # a new file there: a new pane, maybe
         self._wake_lock = threading.Lock()
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)
@@ -292,8 +308,11 @@ class OutputReader(threading.Thread):
             for pane_id, src in self._sources.items():
                 if not watch.covers(pane_id, src.window_id):
                     continue
-                begin = (src.start if since == "start" else
-                         since.get(pane_id, 0) if isinstance(since, dict) else file_size(src.path))
+                begin = (
+                    src.start
+                    if since == "start"
+                    else since.get(pane_id, 0) if isinstance(since, dict) else file_size(src.path)
+                )
                 watch._from[pane_id] = begin  # a pane made later: from its first byte
                 if begin < src.offset:
                     self._replay(src, begin, src.offset, watch)
@@ -319,7 +338,8 @@ class OutputReader(threading.Thread):
         (the bare line), then echoes at the prompt."""
         with self._lock:
             self._echo.setdefault(pane_id, collections.deque(maxlen=16)).append(
-                [text.strip(), time.monotonic(), echoes])
+                [text.strip(), time.monotonic(), echoes]
+            )
 
     def new_run(self, pane_id):
         """The pane's command was restarted (or lte-run retargeted its file):
@@ -341,14 +361,19 @@ class OutputReader(threading.Thread):
     def run(self):
         try:
             while not self._closed.is_set():
-                ready = select.select([self._wake_r] + ([self._inotify.fd] if self._inotify else []),
-                                      [], [], self._timeout())[0]
+                ready = select.select(
+                    [self._wake_r] + ([self._inotify.fd] if self._inotify else []),
+                    [],
+                    [],
+                    self._timeout(),
+                )[0]
                 if self._closed.is_set():
                     break
                 if self._wake_r in ready:
                     _drain(self._wake_r)
-                written = self._inotify.read() if self._inotify and self._inotify.fd in ready \
-                    else set()
+                written = (
+                    self._inotify.read() if self._inotify and self._inotify.fd in ready else set()
+                )
                 with self._lock:
                     watching = bool(self._watches)
                     created = bool(written & self._dir_wds)
@@ -362,8 +387,9 @@ class OutputReader(threading.Thread):
                 read_any = False
                 with self._lock:
                     for src in list(self._sources.values()):
-                        if src.fd is not None and (src.more or self._inotify is None or
-                                                   self._wds.get(src.path) in written):
+                        if src.fd is not None and (
+                            src.more or self._inotify is None or self._wds.get(src.path) in written
+                        ):
                             read_any |= self._read(src)
                     self._flush_partials()
                 if read_any:
@@ -448,8 +474,9 @@ class OutputReader(threading.Thread):
                 # Known before any watch: only what comes next. Else (a pane
                 # made or captured since): all of its capture.
                 offset = start if self._watches or self._synced_once else file_size(path)
-                src = self._sources[pane_id] = _Source(pane_id, window_id, None, path, start,
-                                                       pipe, offset)
+                src = self._sources[pane_id] = _Source(
+                    pane_id, window_id, None, path, start, pipe, offset
+                )
             elif (src.path, src.start, src.pipe) != (path, start, pipe):
                 # A new pipe: another file, or a rerun overwriting this one
                 # (start 0). A run appending to it may have been read already.
@@ -526,8 +553,11 @@ class OutputReader(threading.Thread):
         for w in watches:
             if w.done:
                 continue
-            hits = (i for i, line in enumerate(lines) if w.regex.search(line)) \
-                if w._joined is None else _joined_hits(w._joined, text, starts)
+            hits = (
+                (i for i, line in enumerate(lines) if w.regex.search(line))
+                if w._joined is None
+                else _joined_hits(w._joined, text, starts)
+            )
             for i in hits:
                 ws = candidates.setdefault(i, [])
                 if not ws or ws[-1] is not w:
@@ -560,8 +590,9 @@ class OutputReader(threading.Thread):
         now = time.monotonic()
         for src in self._sources.values():
             if src.buf and now - src.last >= QUIET and not src.fired:
-                src.fired = self._match(src, src.buf, src.offset - len(src.buf),
-                                        self._covering(src), time.time()) or {None}
+                src.fired = self._match(
+                    src, src.buf, src.offset - len(src.buf), self._covering(src), time.time()
+                ) or {None}
 
     def _skip(self, line):
         return not line.strip() or (self.ignore is not None and self.ignore.search(line))
@@ -595,8 +626,10 @@ class OutputReader(threading.Thread):
         for i, entry in enumerate(pending):
             text = entry[0]
             # The end of a long command readline redrew after a wrap counts too.
-            if text and (tail.endswith(text) or
-                         (len(tail.lstrip()) >= min(len(text), 8) and text.endswith(tail.lstrip()))):
+            if text and (
+                tail.endswith(text)
+                or (len(tail.lstrip()) >= min(len(text), 8) and text.endswith(tail.lstrip()))
+            ):
                 # Only the bare echo (the tty's, as typed: no prompt, no redraw)
                 # leaves the prompt's to come. A shell that was up already
                 # echoes once, and a spare would hide output.
@@ -683,17 +716,18 @@ class OutputExpect:
         self.watch = None
 
     def __enter__(self):
-        self.watch = self.session.watch_output(self.target, self.pattern, once=True,
-                                               regex=self.regex, flags=self.flags,
-                                               since="now")
+        self.watch = self.session.watch_output(
+            self.target, self.pattern, once=True, regex=self.regex, flags=self.flags, since="now"
+        )
         return self
 
     def __exit__(self, exc_type, exc, tb):
         try:
             if exc_type is None:
                 kind, obj = self.session._resolve_scope(self.target)
-                self.match = self.session._await(self.watch, obj if kind == "pane" else None,
-                                                 self.timeout)
+                self.match = self.session._await(
+                    self.watch, obj if kind == "pane" else None, self.timeout
+                )
         finally:
             self.watch.cancel()
         return False

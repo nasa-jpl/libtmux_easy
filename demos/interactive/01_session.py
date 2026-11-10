@@ -28,8 +28,9 @@ def say(text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--auto", action="store_true", help="no prompts, don't attach (smoke test)")
     args = parser.parse_args()
     console = Console(echo)
@@ -43,9 +44,9 @@ def main():
 
     pause("create the session and a 'work' window")
     session = TmuxSession.create(NAME)
-    session.new_window("work")                                       # panes go in the current window
-    session.new_pane("shell", "echo 'a plain shell: type away'")     # reuses the window's first pane
-    session.new_pane("counter", runs_forever("tick"))                # later panes split it
+    session.new_window("work")  # panes go in the current window
+    session.new_pane("shell", "echo 'a plain shell: type away'")  # reuses the window's first pane
+    session.new_pane("counter", runs_forever("tick"))  # later panes split it
     session.new_pane("short", exits_after(10, code=3), mode="wrap")  # exits 3 in 10 s
 
     pause("add a 'monitor' window with another layout")
@@ -65,12 +66,14 @@ def main():
         session.kill_session()
         return
 
-    say("""
+    say(
+        """
 
         Panes are named window:pane ("work:counter"); each border shows its status.
         Inside tmux: prefix n / p switch windows, prefix o moves between panes,
         prefix d detaches (prefix is Ctrl-b unless you changed it).
-        Watch "short" turn [exited 3] about 10 s in.""")
+        Watch "short" turn [exited 3] about 10 s in."""
+    )
     pause("attach")
     if os.environ.get("TMUX"):  # already in tmux: switch rather than nest
         subprocess.run(["tmux", "switch-client", "-t", NAME])
@@ -81,10 +84,12 @@ def main():
     print("\n  After you left:")
     session.print_status()
     if not session_exists(NAME):
-        say("""
+        say(
+            """
 
             The session is gone (closed from inside: lte-close, prefix C-x, or the
-            last pane exited). Above: how each pane ended, as last seen.""")
+            last pane exited). Above: how each pane ended, as last seen."""
+        )
         return
     try:
         pause("stop everything and kill the session (Ctrl-C keeps it)")

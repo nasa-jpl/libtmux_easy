@@ -1,5 +1,6 @@
 """The pytest plugin (libtmux_easy.testing), run in an inner pytest, with
 subprocesses and in a detached tmux session."""
+
 import os
 import re
 import subprocess
@@ -94,9 +95,19 @@ def test_keep_open_leaves_processes_running(run):
     assert proc.returncode == 0, out
     session = re.search(r"processes still running: tmux attach -t ([\w-]+)", out)
     assert session, out
-    panes = subprocess.run(["tmux", "list-panes", "-s", "-t", session[1], "-F",
-                            "#{pane_dead} #{pane_current_command}"],
-                           capture_output=True, text=True).stdout
+    panes = subprocess.run(
+        [
+            "tmux",
+            "list-panes",
+            "-s",
+            "-t",
+            session[1],
+            "-F",
+            "#{pane_dead} #{pane_current_command}",
+        ],
+        capture_output=True,
+        text=True,
+    ).stdout
     assert panes.count("0 ") >= 2 and "python" in panes, panes
 
 
@@ -260,10 +271,26 @@ def test_concurrent_tmux_runs_dont_clash(tmp_path):
         (d / "test_inner.py").write_text(TESTS % ("", 3))
         env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
         env["PYTHONPATH"] = SRC
-        runs.append(subprocess.Popen(
-            [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:libtmux",
-             "--tmux", "test_inner.py"], cwd=d, env=env, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True))
+        runs.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-p",
+                    "no:cacheprovider",
+                    "-p",
+                    "no:libtmux",
+                    "--tmux",
+                    "test_inner.py",
+                ],
+                cwd=d,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        )
     for proc in runs:
         out = proc.communicate(timeout=60)[0]
         assert proc.returncode == 0, out
@@ -276,6 +303,7 @@ class _FakeSession:
 
 def test_unique_prefix():
     from libtmux_easy.testing import _unique_prefix
+
     assert _unique_prefix(_FakeSession("dash", "other/w"), "mod") == "mod"
     assert _unique_prefix(_FakeSession("mod/w", "mod#2/w"), "mod") == "mod#3"
     assert _unique_prefix(_FakeSession("module/w"), "mod") == "mod"
@@ -470,13 +498,24 @@ def test_after_abort():
 @pytest.mark.parametrize("mode", MODES)
 def test_features(run, mode):
     proc, out = run(FEATURE_TESTS, "--arg", "rate=7", "--arg", "unused=1", mode=mode)
-    for test in ("test_arg", "test_owner_is_a_class", "test_exits", "test_stop_codes",
-                 "test_close_without_checks", "TestParams[n=1]::test_n",
-                 "TestParams[n=2]::test_n", "TestParamFails[n=2]::test_after",
-                 "test_after_abort"):
+    for test in (
+        "test_arg",
+        "test_owner_is_a_class",
+        "test_exits",
+        "test_stop_codes",
+        "test_close_without_checks",
+        "TestParams[n=1]::test_n",
+        "TestParams[n=2]::test_n",
+        "TestParamFails[n=2]::test_after",
+        "test_after_abort",
+    ):
         assert f"PASSED test_inner.py::{test}" in out, out
-    for test in ("test_wrong_exit", "test_out_of_order", "TestAbort::test_fails",
-                 "TestParamFails[n=1]::test_fails_at_1"):
+    for test in (
+        "test_wrong_exit",
+        "test_out_of_order",
+        "TestAbort::test_fails",
+        "TestParamFails[n=1]::test_fails_at_1",
+    ):
         assert f"FAILED test_inner.py::{test}" in out, out
     assert "processes stopped: test_fails failed" in out, out
     assert "processes stopped: test_fails_at_1 failed" in out, out

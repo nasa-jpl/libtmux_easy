@@ -11,9 +11,11 @@ import sys
 from libtmux_easy import TmuxSession
 
 PY = sys.executable
-TICKER = (f"{PY} -u -c 'import time\n"
-          "try:\n    [print(\"tick\", i) or time.sleep(0.5) for i in range(10**6)]\n"
-          "except KeyboardInterrupt: pass'")
+TICKER = (
+    f"{PY} -u -c 'import time\n"
+    'try:\n    [print("tick", i) or time.sleep(0.5) for i in range(10**6)]\n'
+    "except KeyboardInterrupt: pass'"
+)
 
 
 def build(session, port=8000):

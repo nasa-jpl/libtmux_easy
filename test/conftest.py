@@ -1,4 +1,5 @@
 """Shared fixtures. The tests drive a real tmux, on a server of their own."""
+
 import os
 import shutil
 import subprocess

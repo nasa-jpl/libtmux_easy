@@ -1,8 +1,15 @@
 """The viewport: swapping panes in and out of the dashboard window."""
 
 from .._tmux import option, tmux as _tmux
-from .options import (AUTO, FROM_OPTION, HOME_CMD_OPTION, HOME_OPTION, SIDEBAR_OPTION,
-                      VIEW_OPTION, WIDTH_OPTION)
+from .options import (
+    AUTO,
+    FROM_OPTION,
+    HOME_CMD_OPTION,
+    HOME_OPTION,
+    SIDEBAR_OPTION,
+    VIEW_OPTION,
+    WIDTH_OPTION,
+)
 
 
 class Viewport:
@@ -116,8 +123,17 @@ class Viewport:
 
     def _new_home(self):
         cmd = self.option(HOME_CMD_OPTION) or "cat"
-        out = self.run("split-window", "-d", "-h", "-t", self.sidebar or self.window,
-                       "-P", "-F", "#{pane_id}", cmd)
+        out = self.run(
+            "split-window",
+            "-d",
+            "-h",
+            "-t",
+            self.sidebar or self.window,
+            "-P",
+            "-F",
+            "#{pane_id}",
+            cmd,
+        )
         if not out:
             return
         home = out[0].strip()

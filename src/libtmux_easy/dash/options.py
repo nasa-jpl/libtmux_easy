@@ -3,9 +3,9 @@ the borrowed key, the install hint."""
 
 # Window options on the dashboard window. They hold the viewport's state in
 # tmux itself, so a restarted sidebar and the library agree on it.
-HOME_OPTION = "@lte_dash_home"   # pane id of the home/placeholder pane
-VIEW_OPTION = "@lte_dash_view"   # pane id currently in the viewport
-FROM_OPTION = "@lte_dash_from"   # window the viewed pane was swapped out of
+HOME_OPTION = "@lte_dash_home"  # pane id of the home/placeholder pane
+VIEW_OPTION = "@lte_dash_view"  # pane id currently in the viewport
+FROM_OPTION = "@lte_dash_from"  # window the viewed pane was swapped out of
 HOME_CMD_OPTION = "@lte_dash_home_cmd"
 WIDTH_OPTION = "@lte_dash_width"  # the sidebar's width: columns, "N%", or AUTO until sized
 
@@ -20,7 +20,7 @@ INITIAL_OPTION = "@lte_dash_initial"  # pane id to show first, instead of home
 HOME_KIND_OPTION = "@lte_dash_home_kind"
 
 # Session options, for key bindings outside the dashboard (docs/dashboard.md).
-WINDOW_OPTION = "@lte_dash_window"    # the dashboard window's id
+WINDOW_OPTION = "@lte_dash_window"  # the dashboard window's id
 SIDEBAR_OPTION = "@lte_dash_sidebar"  # the sidebar pane's id
 
 # Session option: the current status file. A sidebar started without
@@ -42,8 +42,10 @@ HOME_LOG = "home.log"  # in the session's control dir; see TmuxSession.log_home(
 # unbound; ~/.tmux.conf's @lte_key_dash picks another (keys.chosen()).
 KEY = "g"
 KEY_ROLE = "dash"
-KEY_COMMAND = (f"run-shell \"tmux -S '#{{socket_path}}' select-window -t '#{{{WINDOW_OPTION}}}'"
-               f" && tmux -S '#{{socket_path}}' select-pane -t '#{{{SIDEBAR_OPTION}}}'\"")
+KEY_COMMAND = (
+    f"run-shell \"tmux -S '#{{socket_path}}' select-window -t '#{{{WINDOW_OPTION}}}'"
+    f" && tmux -S '#{{socket_path}}' select-pane -t '#{{{SIDEBAR_OPTION}}}'\""
+)
 
 INSTALL_HINT = (
     "lte-dash needs Textual (>= 1.0). Install one of:\n"

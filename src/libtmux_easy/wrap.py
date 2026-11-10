@@ -44,25 +44,29 @@ import time
 from .proc import descendants, proc_table
 
 PROTOCOL_VERSION = 1
-DIR_OPTION = "@lte_dir"   # tmux session option set by TmuxSession
-DIR_ENV = "LTE_DIR"       # overrides DIR_OPTION; for tests and non-tmux use
+DIR_OPTION = "@lte_dir"  # tmux session option set by TmuxSession
+DIR_ENV = "LTE_DIR"  # overrides DIR_OPTION; for tests and non-tmux use
 SOCKET_NAME = "ctl.sock"
-TEE_ENV = "LTE_RUN_TEE"   # a default for --tee
+TEE_ENV = "LTE_RUN_TEE"  # a default for --tee
 SETUP_ENV = "LTE_RUN_SETUP"  # the setup's '$?': not 0, the command isn't run
 PIPE_FILE_OPTION = "@lte_pipe_file"  # pane option: the file the pane's output goes to
 PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capture began
-PIPE_TEE_OPTION = "@lte_pipe_tee"    # pane option: lte-run --tee has the pipe
-PIPE_ID_OPTION = "@lte_pipe_id"      # pane option: new for each pipe (a rerun's same file)
-PIPE_WHOLE_OPTION = "@lte_pipe_whole"  # pane option: "1" if the library's pipe began at the pane's first byte
-_PIPE_REQ = "@lte_pipe_req"          # pane options: a pipe request, see guarded_pipe()
-PANE_NAME_OPTION = "@lte_name"      # pane option: its new_pane() name
-PANE_MODE_OPTION = "@lte_mode"      # pane option: its new_pane() mode
+PIPE_TEE_OPTION = "@lte_pipe_tee"  # pane option: lte-run --tee has the pipe
+PIPE_ID_OPTION = "@lte_pipe_id"  # pane option: new for each pipe (a rerun's same file)
+PIPE_WHOLE_OPTION = (
+    "@lte_pipe_whole"  # pane option: "1" if the library's pipe began at the pane's first byte
+)
+_PIPE_REQ = "@lte_pipe_req"  # pane options: a pipe request, see guarded_pipe()
+PANE_NAME_OPTION = "@lte_name"  # pane option: its new_pane() name
+PANE_MODE_OPTION = "@lte_mode"  # pane option: its new_pane() mode
 STATUS_DIR_ENV = "LTE_RUN_STATUS_DIR"  # if set: each run's pid and exit, in <dir>/<pane>.json
 
 # When a pane may be piped: not piped, or piped by a capture (it has a file).
 # A capture of the library's, unless lte-run --tee has it; with_tee, either.
-_FREE = (f"#{{||:#{{==:#{{pane_pipe}},0}},"
-         f"#{{&&:#{{{PIPE_FILE_OPTION}}},#{{!=:#{{{PIPE_TEE_OPTION}}},1}}}}}}")
+_FREE = (
+    f"#{{||:#{{==:#{{pane_pipe}},0}},"
+    f"#{{&&:#{{{PIPE_FILE_OPTION}}},#{{!=:#{{{PIPE_TEE_OPTION}}},1}}}}}}"
+)
 _FREE_WITH_TEE = f"#{{||:#{{==:#{{pane_pipe}},0}},#{{{PIPE_FILE_OPTION}}}}}"
 
 
@@ -115,17 +119,35 @@ def guarded_pipe(pane, command, options=None, with_tee=False):
     and lte-run can't both see a free pane and pipe it. The call prints
     "<pane> 1" if it piped the pane, "<pane> " if not."""
     options = options or {}
-    req = [(f"{_PIPE_REQ}_cmd", command)] + \
-        [(f"{_PIPE_REQ}_{i}", value) for i, value in enumerate(options.values())]
+    req = [(f"{_PIPE_REQ}_cmd", command)] + [
+        (f"{_PIPE_REQ}_{i}", value) for i, value in enumerate(options.values())
+    ]
     ok = f"{_PIPE_REQ}_ok"
-    branch = f'pipe-pane -O -t {pane} "#{{E:{_PIPE_REQ}_cmd}}"' + "".join(
-        f' ; set -pF -t {pane} {name} "#{{{_PIPE_REQ}_{i}}}"' for i, name in enumerate(options)) + \
-        f" ; set -p -t {pane} {ok} 1"
+    branch = (
+        f'pipe-pane -O -t {pane} "#{{E:{_PIPE_REQ}_cmd}}"'
+        + "".join(
+            f' ; set -pF -t {pane} {name} "#{{{_PIPE_REQ}_{i}}}"' for i, name in enumerate(options)
+        )
+        + f" ; set -p -t {pane} {ok} 1"
+    )
     args = ["set", "-p", "-u", "-t", pane, ok, ";"]
     for name, value in req:
         args += ["set", "-p", "-t", pane, name, value, ";"]
-    args += ["if", "-F", "-t", pane, _FREE_WITH_TEE if with_tee else _FREE, branch, ";",
-             "display", "-p", "-t", pane, f"{pane} #{{{ok}}}", ";"]
+    args += [
+        "if",
+        "-F",
+        "-t",
+        pane,
+        _FREE_WITH_TEE if with_tee else _FREE,
+        branch,
+        ";",
+        "display",
+        "-p",
+        "-t",
+        pane,
+        f"{pane} #{{{ok}}}",
+        ";",
+    ]
     for name, _ in req + [(ok, None)]:
         args += ["set", "-p", "-u", "-t", pane, name, ";"]
     return args[:-1]
@@ -151,7 +173,9 @@ def find_dir():
     try:
         out = subprocess.run(
             ["tmux", "display-message", "-p", "-t", pane, "#{%s}" % DIR_OPTION],
-            capture_output=True, text=True, timeout=2,
+            capture_output=True,
+            text=True,
+            timeout=2,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
@@ -231,8 +255,9 @@ def signal_target(sig, target):
 
 # Terminal escapes (CSI, OSC, two-byte ESC sequences): what a pane's output
 # carries besides text.
-_ESCAPES = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
-                      rb"|\x1b[@-Z\\-_]")
+_ESCAPES = re.compile(
+    rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)" rb"|\x1b[@-Z\\-_]"
+)
 
 
 def plain_line(line):
@@ -257,7 +282,7 @@ def plain_text(data):
 
 
 QUIET = 0.15  # after the command ends, its last output is taken to have arrived
-              # once the copy has been this quiet (at most DRAIN seconds)
+# once the copy has been this quiet (at most DRAIN seconds)
 DRAIN = 2.0
 
 
@@ -284,11 +309,11 @@ class Tee:
     def __init__(self, fd, raw, path=None):
         self.fd, self.raw, self.path = fd, raw, path
         self.partial = b""
-        self.pane = None       # pipe-pane: the pane, and the FIFO dir
+        self.pane = None  # pipe-pane: the pane, and the FIFO dir
         self.scratch = None
-        self.source = None     # the fd we read
-        self.hold = None       # pipe-pane: our own write end, so no early EOF
-        self.echo = False      # pipe: pass output on to our stdout
+        self.source = None  # the fd we read
+        self.hold = None  # pipe-pane: our own write end, so no early EOF
+        self.echo = False  # pipe: pass output on to our stdout
         self.child_out = None  # pipe: the command's end
         self.done = threading.Event()
         self.thread = None
@@ -316,8 +341,12 @@ class Tee:
             start = os.fstat(self.fd).st_size
         except OSError:
             return {}
-        return {PIPE_FILE_OPTION: os.path.abspath(self.path), PIPE_FROM_OPTION: str(start),
-                PIPE_ID_OPTION: f"lte-run-{os.getpid()}", PIPE_TEE_OPTION: "1"}
+        return {
+            PIPE_FILE_OPTION: os.path.abspath(self.path),
+            PIPE_FROM_OPTION: str(start),
+            PIPE_ID_OPTION: f"lte-run-{os.getpid()}",
+            PIPE_TEE_OPTION: "1",
+        }
 
     def start(self):
         """After fork(): a thread before it would be copied half-way."""
@@ -335,8 +364,11 @@ class Tee:
         self.source = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
         self.hold = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
         cat = tmux_literal(f"exec cat > {shlex.quote(fifo)}")
-        out = subprocess.run(["tmux", *guarded_pipe(pane, cat, publish, with_tee=True)],
-                             capture_output=True, text=True)
+        out = subprocess.run(
+            ["tmux", *guarded_pipe(pane, cat, publish, with_tee=True)],
+            capture_output=True,
+            text=True,
+        )
         if out.returncode or "1" not in out.stdout.split():
             for fd in (self.source, self.hold):  # not self.fd: the fallback writes it
                 os.close(fd)
@@ -404,8 +436,9 @@ class Tee:
         if pane and shutil.which("tmux"):
             commands.append(f"set -p -u -t {pane} {PIPE_TEE_OPTION}")
         if commands:
-            subprocess.run(["tmux", *_on_own_server(pane or self.pane, commands)],
-                           capture_output=True)
+            subprocess.run(
+                ["tmux", *_on_own_server(pane or self.pane, commands)], capture_output=True
+            )
         self._close()
 
     def _close(self):
@@ -503,9 +536,15 @@ def main(argv=None, channel=None):
 
     if tee is not None:
         tee.start()
-    channel.send(event="started", version=PROTOCOL_VERSION,
-                 pane=os.environ.get("TMUX_PANE"), wrapper_pid=os.getpid(),
-                 target_pid=pid, argv=argv, time=time.time())
+    channel.send(
+        event="started",
+        version=PROTOCOL_VERSION,
+        pane=os.environ.get("TMUX_PANE"),
+        wrapper_pid=os.getpid(),
+        target_pid=pid,
+        argv=argv,
+        time=time.time(),
+    )
     record_run(pid=pid)
 
     for s in _FORWARDED_SIGNALS:

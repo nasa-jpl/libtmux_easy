@@ -15,7 +15,7 @@ import re
 from .._tmux import tmux as _tmux
 
 HOOK = "session-window-changed"
-BASE = 100           # first index used: low ones are left to the user
+BASE = 100  # first index used: low ones are left to the user
 MARK = "lte-dash-hook"
 
 _ENTRY = re.compile(rf"^{HOOK}\[(\d+)\]\s+(.*)$")
@@ -52,8 +52,10 @@ def install(session_id, pid, run=_tmux):
             remove(index, run)
     index = max(BASE, max(entries, default=0) + 1)
     # Single quotes: tmux must not expand the '$' of a session id.
-    command = (f"if-shell -F '#{{==:#{{session_id}},{session_id}}}' "
-               f"{{ run-shell -b 'kill -USR1 {pid} 2>/dev/null || : {MARK}' }}")
+    command = (
+        f"if-shell -F '#{{==:#{{session_id}},{session_id}}}' "
+        f"{{ run-shell -b 'kill -USR1 {pid} 2>/dev/null || : {MARK}' }}"
+    )
     run("set-hook", "-g", f"{HOOK}[{index}]", command)
     return index if index in _entries(run) else None
 

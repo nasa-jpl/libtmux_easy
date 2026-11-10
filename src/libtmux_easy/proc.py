@@ -21,6 +21,7 @@ SHELLS = frozenset(("bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh"))
 
 # ---------- stdlib: /proc ----------
 
+
 def proc_stat(pid):
     """(state, ppid, pgrp) of 'pid', from /proc; None if it is gone."""
     try:
@@ -119,10 +120,12 @@ def pane_pids(pane_pid):
 
 # ---------- psutil ----------
 
+
 def proc_alive(proc: "psutil.Process") -> bool:
     """True if 'proc' is still alive and not a zombie (psutil's is_running()
     is True for a zombie)."""
     import psutil
+
     try:
         return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
     except psutil.NoSuchProcess:
@@ -132,6 +135,7 @@ def proc_alive(proc: "psutil.Process") -> bool:
 def pane_process(pane: "Pane") -> Optional["psutil.Process"]:
     """The pane's own process (an exec pane's command), or None."""
     import psutil
+
     try:
         return psutil.Process(int(pane.pane_pid))
     except (psutil.NoSuchProcess, ValueError, TypeError):
@@ -142,6 +146,7 @@ def get_child_pids(parent_pid: int, recursive: bool = False) -> list:
     """The pids of 'parent_pid''s children (and theirs, if 'recursive');
     [] if it doesn't exist."""
     import psutil
+
     try:
         parent = psutil.Process(parent_pid)
     except psutil.NoSuchProcess:
