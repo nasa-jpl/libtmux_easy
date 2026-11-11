@@ -141,7 +141,7 @@ def test_bind_close_key(session):
         assert session.bind_close_key("C-x") == "C-x"  # asked for: wraps theirs
         assert "libtmux_easy.close" in binding() and "kill-session" in binding()
 
-        session.kill_session()
+        session.kill()
         assert "libtmux_easy.close" not in binding() and "kill-session" in binding()
     finally:
         tmux("unbind-key", "-T", "prefix", "C-x")
@@ -154,7 +154,7 @@ def _q():
 def test_create_borrows_q_if_free(make_session):
     sess = make_session("lte-test-q")
     assert "libtmux_easy.close" in _q()
-    sess.kill_session()
+    sess.kill()
     assert _q() == ""
 
 

@@ -249,7 +249,7 @@ class TestControl:
 
         assert _wait_until(lambda: not sess.server.has_session("lte-test-shutdown"), timeout=10.0)
         assert statuses and statuses[0].exit_status.signal == 2  # SIGINT, not SIGHUP
-        sess.kill_session()  # already killed: a no-op, not an error
+        sess.kill()  # already killed: a no-op, not an error
 
     def test_offline(self, tmp_path):
         assert dash.Control(str(tmp_path / "nope.sock")).online() is False

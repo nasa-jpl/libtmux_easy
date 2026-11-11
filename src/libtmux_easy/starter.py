@@ -42,16 +42,24 @@ set -g mouse on
 """
 
 
-def has_config(run=_tmux):
-    """True if the server loaded a config file (/dev/null counts as none)."""
+def has_config(run=_tmux) -> bool:
+    """Whether the server loaded a config file. /dev/null counts as none.
+
+    @param run: runs tmux (a stub, in tests)
+    @return: True if it loaded one
+    """
     out = run("display-message", "-p", "#{config_files}")
     files = [f for f in (out[0].split(",") if out else []) if f.strip()]
     return any(f.strip() != "/dev/null" for f in files)
 
 
-def apply(run=_tmux):
+def apply(run=_tmux) -> bool:
     """Source CONF into the server once, if it loaded no config and
-    $LTE_TMUX_DEFAULTS isn't 0. True if sourced by this call."""
+    $LTE_TMUX_DEFAULTS isn't 0.
+
+    @param run: runs tmux (a stub, in tests)
+    @return: True if sourced by this call
+    """
     if os.environ.get(ENV, "").strip() == "0" or _option(None, DONE_OPTION, "-gq", run=run):
         return False
     if has_config(run):
@@ -70,6 +78,7 @@ def apply(run=_tmux):
 
 
 def main(argv=None):
+    """lte-defaults: print the starter settings, as ~/.tmux.conf lines."""
     argparse.ArgumentParser(prog="lte-defaults", description=__doc__.splitlines()[0]).parse_args(
         argv
     )

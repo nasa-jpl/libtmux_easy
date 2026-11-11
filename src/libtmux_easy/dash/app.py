@@ -7,6 +7,7 @@ import signal
 import subprocess
 import textwrap
 import time
+from typing import TYPE_CHECKING, Callable, Union
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -27,6 +28,10 @@ from .options import (
     MIN_WIDTH,
     WIDTH_OPTION,
 )
+
+if TYPE_CHECKING:
+    from .control import Control
+    from .viewport import Viewport
 
 HOME = "home"  # tree node data for the home entry
 
@@ -93,10 +98,14 @@ STATUS_COLORS = {
 }  # hex: the theme maps "yellow" to orange
 
 
-def clip(text, width, lines=2):
+def clip(text: str, width: int, lines: int = 2) -> str:
     """'text' wrapped to at most 'lines' lines of 'width' columns, '...'
-    marking a cut. No cut while the width is unknown (0, before the first
-    layout)."""
+    marking a cut.
+
+    @param width: columns; 3 or less (0: unknown, before the first layout):
+        no wrap and no cut
+    @return: the wrapped text
+    """
     text = " ".join(text.split())
     if width <= 3:
         return text
@@ -125,10 +134,12 @@ class HelpScreen(ModalScreen):
     ]
 
     def compose(self) -> ComposeResult:
+        """The key reference, as Markdown."""
         with Vertical():
             yield Markdown(HELP_TEXT)
 
     def action_close(self):
+        """Close the help (q, Esc or ?)."""
         self.dismiss()  # not pop_screen(): that skips the callback that unzooms
 
 
@@ -141,6 +152,16 @@ class PaneTree(Tree):
 
 
 class DashApp(App):
+    """The dashboard sidebar: a tree of the session's panes by window, with
+    each one's status, details and process tree. Selecting a pane shows it
+    in the viewport; keys stop, rerun, copy and close (see HELP_TEXT).
+
+    @param viewport: the dashboard window's Viewport
+    @param status_path: the status file, or a callable returning its path
+        (it may change: a new TmuxSession took over)
+    @param control: sends actions to the session's script
+    """
+
     ENABLE_COMMAND_PALETTE = False
 
     CSS = """
@@ -173,7 +194,12 @@ class DashApp(App):
     CONFIRM_WINDOW = 3.0  # seconds to press X / Q a second time
     SHOW_DELAY = 0.15  # debounce: holding Down should not swap every pane in passing
 
-    def __init__(self, viewport, status_path, control):
+    def __init__(
+        self,
+        viewport: "Viewport",
+        status_path: Union[str, Callable[[], str]],
+        control: "Control",
+    ):
         super().__init__()
         self.viewport = viewport
         self.status_path = status_path
@@ -191,6 +217,8 @@ class DashApp(App):
         self._procs = None  # the process tree shown last: (title, text)
 
     def compose(self) -> ComposeResult:
+        """The layout: a summary line, the pane tree, the details, and the
+        collapsible process tree."""
         tree = PaneTree("session", id="panes")
         tree.show_root = False
         tree.auto_expand = False
@@ -203,6 +231,8 @@ class DashApp(App):
         yield Footer()
 
     def on_mount(self):
+        """Start following window changes, add the home node, and do the first
+        poll."""
         self._watch_window()
         self.home_kind = self.viewport.option(HOME_KIND_OPTION)
         self.home_status = ""
@@ -244,6 +274,9 @@ class DashApp(App):
     # ---------- status ----------
 
     def poll(self):
+        """Re-read the status file (merging entries: earlier tests' panes stay
+        listed), add tree nodes for new panes, move panes whose window was
+        renamed, and relabel."""
         self.viewport.repair()
         self._follow_window()
         self.alive = set(self.viewport.panes())
@@ -296,6 +329,7 @@ class DashApp(App):
         )
 
     def on_unmount(self):
+        """Remove the window-change hook; ignore its SIGUSR1 from now on."""
         if self._hook is not None:
             winhook.remove(self._hook, run=self.viewport.run)
             self._hook = None
@@ -316,6 +350,8 @@ class DashApp(App):
             self.viewport.restore()
 
     def check_online(self):
+        """Relabel the home node if the script went online or offline, or the
+        command's status changed."""
         online = self.control.online()
         home_status = (
             option(self.viewport.window, HOME_STATUS_OPTION) if self.home_kind == "command" else ""
@@ -325,6 +361,8 @@ class DashApp(App):
             self.home_node.set_label(self._home_label())
 
     def _home_label(self):
+        """The home node's label: 'home', with the command's status
+        (lte-session) or 'script exited'."""
         label = Text("home", style="bold")
         if self.home_kind == "command":
             # lte-session: the command's own state. Between tests no script
@@ -337,6 +375,8 @@ class DashApp(App):
         return label
 
     def _relabel(self):
+        """Relabel every pane node with its status (a pane tmux no longer has:
+        'gone'), each window node with its counts, and the summary line."""
         total = {}
         for window, wnode in self.window_nodes.items():
             pane_ids = [n.data for n in wnode.children]
@@ -391,10 +431,14 @@ class DashApp(App):
         self.query_one("#summary", Static).update(text)
 
     def _selected(self):
+        """The selected node's data: a pane id, HOME, or None for a window
+        node."""
         node = self.query_one(PaneTree).cursor_node
         return node.data if node is not None else None
 
     def _show_details(self):
+        """Fill the details box: the selected pane's name, mode, status, pids
+        and command; a window's name; or what home is."""
         pane_id = self._selected()
         details = self.query_one("#details", Static)
         entry = self.entries.get(pane_id)
@@ -457,17 +501,22 @@ class DashApp(App):
     # ---------- viewport ----------
 
     def on_tree_node_highlighted(self, event):
+        """The selection moved: update details and the process tree now; show
+        the pane in the viewport after SHOW_DELAY (no swapping while
+        scrolling)."""
         self._show_details()
         self._show_procs()
         self._cancel_show()
         self._show_timer = self.set_timer(self.SHOW_DELAY, self._show_selected)
 
     def _cancel_show(self):
+        """Cancel a pending delayed show."""
         if self._show_timer is not None:
             self._show_timer.stop()
             self._show_timer = None
 
     def _session_id(self):
+        """The id of the session the dashboard is in, or None."""
         out = self.viewport.run(
             "display-message", "-p", "-t", self.viewport.window, "#{session_id}"
         )
@@ -485,18 +534,22 @@ class DashApp(App):
         return None
 
     def _show_selected(self):
+        """Show the selected pane in the viewport (the delayed part of a
+        selection)."""
         self._show_timer = None
         target = self._target()
         if target and self._active:
             self.viewport.show(target)
 
     def action_focus_view(self):
+        """Enter: show the selected pane and move the keyboard to it."""
         self._show_selected()
         view = self.viewport.view
         if view:
             self.viewport.run("select-pane", "-t", view)
 
     def action_go_to(self):
+        """Go to the selected pane in its own window."""
         target = self._target()
         if self._selected() == HOME or not target:
             return
@@ -504,9 +557,12 @@ class DashApp(App):
         self.viewport.go_to(target)
 
     def action_home(self):
+        """Select the home node."""
         self.query_one(PaneTree).move_cursor(self.home_node)
 
     def action_copy_command(self):
+        """Copy the selected pane's command to tmux's buffer (and the
+        clipboard, where allowed)."""
         entry = self.entries.get(self._selected())
         if not entry or not entry.get("command"):
             return
@@ -515,16 +571,19 @@ class DashApp(App):
         self.notify("Copied the command. prefix ] pastes it.")
 
     def action_toggle_procs(self):
+        """Show or hide the process tree."""
         widget = self.query_one("#procs", Collapsible)
         if widget.display:
             widget.collapsed = not widget.collapsed
 
     def action_resize(self, delta):
+        """Widen (delta > 0) or narrow the sidebar by 'delta' columns."""
         self.viewport.run(
             "resize-pane", "-t", self.viewport.sidebar, "-R" if delta > 0 else "-L", str(abs(delta))
         )
 
     def _zoomed(self):
+        """Whether the dashboard window is zoomed."""
         out = self.viewport.run(
             "display-message", "-p", "-t", self.viewport.sidebar, "#{window_zoomed_flag}"
         )
@@ -532,10 +591,13 @@ class DashApp(App):
 
     def _unzoom(self, _result=None):
         # resize-pane -Z toggles: only when zoomed, or it would zoom instead.
+        """Unzoom the window if zoomed (also the help screen's dismiss
+        callback)."""
         if self._zoomed():
             self.viewport.run("resize-pane", "-Z", "-t", self.viewport.sidebar)
 
     def action_help(self):
+        """Show the help, zoomed to the full window."""
         self._unzoom()  # a zoomed viewport: -Z on the sidebar would only unzoom it
         self.viewport.run("resize-pane", "-Z", "-t", self.viewport.sidebar)
         self.push_screen(HelpScreen(), self._unzoom)
@@ -543,21 +605,26 @@ class DashApp(App):
     # ---------- actions ----------
 
     def _send(self, cmd, pane_id, done):
+        """Send command 'cmd' for 'pane_id' to the session's script; notify
+        'done', or that no script is listening."""
         if self.control.send(cmd, pane_id):
             self.notify(done)
         else:
             self.notify("The session's script is not running.", severity="warning")
 
     def _action(self, cmd, verb):
+        """Send 'cmd' for the selected pane; notify '<verb> <name>'."""
         pane_id = self._selected()
         entry = self.entries.get(pane_id)
         if entry is not None:
             self._send(cmd, pane_id, f"{verb} {entry['name']}")
 
     def action_stop(self):
+        """Stop the selected pane (SIGINT, then SIGTERM, SIGKILL)."""
         self._action("stop", "stopping")
 
     def action_rerun(self):
+        """Rerun the selected pane's command."""
         self._action("respawn", "rerunning")
 
     def _confirmed(self, action, prompt):
@@ -571,11 +638,14 @@ class DashApp(App):
         return False
 
     def action_stop_all(self):
+        """Stop every pane, on a second press."""
         running = sum(1 for e in self.entries.values() if e.get("running"))
         if self._confirmed("stop_all", f"Press X again to stop all {running} running panes."):
             self._send("stop_all", None, "Stopping all panes: SIGINT, then SIGTERM, SIGKILL.")
 
     def action_shutdown(self):
+        """On a second press: close the session. tlaunch's own shutdown if it
+        runs it, else lte-close (close actions, a progress window)."""
         if not self._confirmed("shutdown", "Press Q again to stop all panes and kill the session."):
             return
         if any(e.get("mode") == "tlaunch" for e in self.entries.values()):

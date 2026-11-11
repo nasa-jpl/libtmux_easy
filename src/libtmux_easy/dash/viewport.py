@@ -1,5 +1,7 @@
 """The viewport: swapping panes in and out of the dashboard window."""
 
+from typing import Dict, Optional
+
 from .._tmux import option, tmux as _tmux
 from .options import (
     AUTO,
@@ -20,43 +22,58 @@ class Viewport:
     slot (in window FROM). show() always swaps the occupant home first, so at
     most one pane is ever away from its window.
 
-    'run' executes a tmux command and returns its stdout lines. The default
-    uses the tmux binary (right for a process inside the session); the
-    library passes its own server's cmd()."""
+    @param window: the dashboard window
+    @param run: executes a tmux command and returns its stdout lines. The
+        default uses the tmux binary (right for a process inside the
+        session); the library passes its own server's cmd()
+    @param sidebar: the sidebar pane's id; None: from the window's options
+    """
 
-    def __init__(self, window, run=_tmux, sidebar=None):
+    def __init__(self, window, run=_tmux, sidebar: Optional[str] = None):
         self.window = window
         self.run = run
         self.sidebar = sidebar or option(window, SIDEBAR_OPTION, run=run) or None
         self._layout = None  # (pane count, window_layout, view's pane_index), last seen intact
 
     def option(self, name):
-        """A window option of the dashboard window, or ''."""
+        """A window option of the dashboard window.
+
+        @return: the value, or ''
+        """
         return option(self.window, name, "-wq", run=self.run)
 
     def _set(self, name, value):
+        """Set window option 'name' of the dashboard window."""
         self.run("set-option", "-wq", "-t", self.window, name, value)
 
     @property
-    def home(self):
+    def home(self) -> str:
+        """The placeholder pane's id."""
         return self.option(HOME_OPTION)
 
     @property
-    def view(self):
+    def view(self) -> str:
+        """The id of the pane in the viewport (HOME when nothing is shown)."""
         return self.option(VIEW_OPTION)
 
-    def panes(self):
-        """pane id -> window id, for every pane in the session."""
+    def panes(self) -> Dict[str, str]:
+        """Every pane in the session.
+
+        @return: pane id -> window id
+        """
         out = self.run("list-panes", "-s", "-t", self.window, "-F", "#{pane_id} #{window_id}")
         return dict(line.split() for line in out if len(line.split()) == 2)
 
-    def active(self):
-        """False when another window is the session's current one. True if
-        unknown, so a failed query never moves panes."""
+    def active(self) -> bool:
+        """Whether the dashboard window is the session's current one.
+
+        @return: False when another window is; True if unknown, so a failed
+            query never moves panes
+        """
         out = self.run("display-message", "-p", "-t", self.window, "#{window_active}")
         return not out or out[0].strip() != "0"
 
-    def show(self, pane_id):
+    def show(self, pane_id: str):
         """Put 'pane_id' in the viewport. The home pane id shows home."""
         self.repair()
         home, view = self.home, self.view
@@ -71,7 +88,7 @@ class Viewport:
             self._set(FROM_OPTION, from_window)
         self._set(VIEW_OPTION, pane_id)
 
-    def go_to(self, pane_id):
+    def go_to(self, pane_id: str):
         """Put 'pane_id' back in its own window and switch to it there."""
         self.restore()
         self.run("select-window", "-t", pane_id)
@@ -86,6 +103,8 @@ class Viewport:
             self._set(VIEW_OPTION, home)
 
     def _put_back(self, home, view):
+        """Return pane 'view' to its own window: swap it with 'home'. Home
+        gone: rejoin it to its window and make a new home."""
         panes = self.panes()
         if home in panes:
             self.run("swap-pane", "-d", "-s", home, "-t", view)
@@ -122,6 +141,7 @@ class Viewport:
         self._set(VIEW_OPTION, home)
 
     def _new_home(self):
+        """Make a new placeholder pane in the viewport slot; it becomes HOME and VIEW."""
         cmd = self.option(HOME_CMD_OPTION) or "cat"
         out = self.run(
             "split-window",

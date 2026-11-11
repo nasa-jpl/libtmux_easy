@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
 
 from . import wrap
 from .proc import alive, comm, pane_pids
@@ -63,15 +64,26 @@ PAUSE = 1.5  # the summary stays up this long before the kill
 # ---------- actions (session option) ----------
 
 
-def actions(session, run=_tmux):
+def actions(session, run=_tmux) -> List[Dict[str, str]]:
+    """The session's close actions.
+
+    @param run: runs tmux (a stub, in tests)
+    @return: [{'cmd', 'cwd', 'when'}], [] if none
+    """
     try:
         return json.loads(option(session, ACTIONS_OPTION, run=run) or "[]")
     except ValueError:
         return []
 
 
-def add_action(session, command, when="after", cwd=None, run=_tmux):
-    """Store shell 'command' to run on close, in 'cwd' (default: here)."""
+def add_action(session, command: str, when: str = "after", cwd: Optional[str] = None, run=_tmux):
+    """Store shell 'command' to run on close.
+
+    @param when: "before" the panes are stopped, or "after"
+    @param cwd: the directory to run it in; None: this one
+    @param run: runs tmux (a stub, in tests)
+    @raise ValueError: 'when' is neither
+    """
     if when not in WHEN:
         raise ValueError(f"when must be one of {WHEN}, not {when!r}")
     entries = actions(session, run) + [{"cmd": command, "cwd": cwd or os.getcwd(), "when": when}]
@@ -79,11 +91,20 @@ def add_action(session, command, when="after", cwd=None, run=_tmux):
 
 
 def clear_actions(session, run=_tmux):
+    """Remove all of the session's close actions.
+
+    @param run: runs tmux (a stub, in tests)
+    """
     run("set-option", "-uq", "-t", session, ACTIONS_OPTION)
 
 
-def run_actions(entries, when, out=print):
-    """Run the shell actions for one phase, in order; output goes to ours."""
+def run_actions(entries: List[Dict[str, str]], when: str, out: Callable[[str], None] = print):
+    """Run the shell actions for one phase, in order; output goes to ours.
+
+    @param entries: actions(), of every phase
+    @param when: the phase, "before" or "after"
+    @param out: prints a progress line
+    """
     for entry in (e for e in entries if e.get("when", "after") == when):
         out(f"$ {entry['cmd']}")
         try:
@@ -99,7 +120,22 @@ def run_actions(entries, when, out=print):
 
 
 class Closer:
-    def __init__(self, session, timeouts=TIMEOUTS, out=print, run=_tmux):
+    """Closes a session, printing its progress: before actions, stop the
+    script and the panes, after actions, kill the session. Call it to run.
+
+    @param session: the session's id or name
+    @param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
+    @param out: prints a progress line
+    @param run: runs tmux (a stub, in tests)
+    """
+
+    def __init__(
+        self,
+        session: str,
+        timeouts: Tuple[float, float, float] = TIMEOUTS,
+        out: Callable[[str], None] = print,
+        run=_tmux,
+    ):
         self.session = session
         self.timeouts = timeouts
         self.out = out
@@ -107,6 +143,11 @@ class Closer:
         self.name = (run("display-message", "-p", "-t", session, "#{session_name}") or [session])[0]
 
     def opt(self, name, target=None):
+        """Option 'name' of 'target'.
+
+        @param target: None: the session
+        @return: the value, or ''
+        """
         return option(target or self.session, name, run=self.run)
 
     def __call__(self):
@@ -184,6 +225,9 @@ class Closer:
         return panes
 
     def stop_panes(self):
+        """Stop what still runs in the session's panes: Ctrl-C each (as a
+        person would), then SIGTERM, then SIGKILL its processes, each step
+        after its timeout. Prints what stopped at which step."""
         running = {}
         for pane_id, (pid, label) in self._panes().items():
             pids = pane_pids(pid)
@@ -221,26 +265,39 @@ class Closer:
 # ---------- the window ----------
 
 
-def self_command():
-    """Shell text that runs lte-close from this install, PATH or not."""
+def self_command() -> str:
+    """Shell text that runs lte-close from this install, PATH or not.
+
+    @return: the command line
+    """
     src = Path(__file__).resolve().parents[1]
     return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m libtmux_easy.close"
 
 
-def key_command():
-    """tmux command text for a key binding: close the session it's pressed in."""
+def key_command() -> str:
+    """tmux command text for a key binding: close the session it's pressed in.
+
+    @return: the command
+    """
     return f"run-shell -b \"{self_command()} -t '#{{session_id}}'\""
 
 
 def _session_of_caller():
+    """The id of the tmux session this process runs in, or None."""
     pane = os.environ.get("TMUX_PANE")
     out = _tmux("display-message", "-p", "-t", pane, "#{session_id}") if pane else []
     return out[0].strip() if out else None
 
 
-def open_close_window(session, timeouts=TIMEOUTS):
+def open_close_window(
+    session: str, timeouts: Tuple[float, float, float] = TIMEOUTS
+) -> Optional[str]:
     """Run the close sequence in a new window of 'session' (or the one it
-    already has), and show it."""
+    already has), and show it.
+
+    @param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
+    @return: the window's id; None if tmux made none
+    """
     window = option(session, WINDOW_OPTION_CLOSE)
     if window and _tmux("list-panes", "-t", window, "-F", "#{pane_id}"):
         _tmux("select-window", "-t", window)
@@ -261,6 +318,7 @@ def open_close_window(session, timeouts=TIMEOUTS):
 
 
 def _timeouts(text):
+    """--timeouts 'INT,TERM,KILL' as three floats; else an argparse error."""
     values = tuple(float(v) for v in text.split(","))
     if len(values) != 3:
         raise argparse.ArgumentTypeError("three values: SIGINT,SIGTERM,SIGKILL seconds")
@@ -268,6 +326,8 @@ def _timeouts(text):
 
 
 def main(argv=None):
+    """lte-close: close a session (default), or add, list or clear its close
+    actions."""
     parser = argparse.ArgumentParser(
         prog="lte-close",
         description=__doc__.split("\n\n")[0],

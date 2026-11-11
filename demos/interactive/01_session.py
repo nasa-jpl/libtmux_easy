@@ -63,7 +63,7 @@ def main():
 
     if args.auto:
         session.stop_all(sigint_timeout=2)
-        session.kill_session()
+        session.kill()
         return
 
     say(
@@ -97,7 +97,7 @@ def main():
         print(f"\n  kept: tmux attach -t {NAME}")
         return
     session.stop_all(sigint_timeout=2)
-    session.kill_session()
+    session.kill()
 
 
 if __name__ == "__main__":

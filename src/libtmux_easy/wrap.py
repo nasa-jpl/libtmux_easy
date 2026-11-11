@@ -40,6 +40,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from .proc import descendants, proc_table
 
@@ -82,10 +83,12 @@ def _on_own_server(pane, commands):
 
 def record_run(**fields):
     """With $LTE_RUN_STATUS_DIR (a test adopting the session, see
-    testing.py): write this pane's run -- target pid, then how it ended --
-    to <dir>/<pane id>.json, for a process that didn't start it. A file,
-    not a pane option: a tmux call from here loses the command's first
-    output. Best effort."""
+    testing.py): write this pane's run to <dir>/<pane id>.json, for a
+    process that didn't start it. A file, not a pane option: a tmux call
+    from here loses the command's first output. Best effort.
+
+    @param fields: the JSON: target pid, then how it ended
+    """
     directory, pane = os.environ.get(STATUS_DIR_ENV), os.environ.get("TMUX_PANE")
     if not directory or not pane:
         return
@@ -98,26 +101,40 @@ def record_run(**fields):
         pass
 
 
-def tmux_literal(text):
+def tmux_literal(text: str) -> str:
     """'text' as itself in a pipe-pane command, which tmux expands as a
-    format and with strftime: 'main.%4.log' would become 'main.'."""
+    format and with strftime: 'main.%4.log' would become 'main.'.
+
+    @return: the escaped text
+    """
     return text.replace("#", "##").replace("%", "%%")
 
 
-def guarded_unpipe(pane, *then):
-    """tmux args that close 'pane''s pipe, then run the tmux command
-    strings 'then', unless lte-run --tee has the pipe: checked in the same
-    tmux call, so a run starting meanwhile keeps it."""
+def guarded_unpipe(pane: str, *then: str) -> List[str]:
+    """tmux args that close 'pane''s pipe, then run more commands, unless
+    lte-run --tee has the pipe: checked in the same tmux call, so a run
+    starting meanwhile keeps it.
+
+    @param then: tmux command strings
+    @return: the args
+    """
     commands = " ; ".join((f"pipe-pane -t {pane}", *then))
     return ["if", "-F", "-t", pane, f"#{{!=:#{{{PIPE_TEE_OPTION}}},1}}", commands]
 
 
-def guarded_pipe(pane, command, options=None, with_tee=False):
-    """tmux args that pipe 'pane' to 'command' (formats escaped, as for
-    pipe-pane) and set its pane 'options' ({name: value}), but only if the
-    pane is free. The check and the pipe are one tmux call, so the library
-    and lte-run can't both see a free pane and pipe it. The call prints
-    "<pane> 1" if it piped the pane, "<pane> " if not."""
+def guarded_pipe(
+    pane: str, command: str, options: Optional[Mapping[str, str]] = None, with_tee: bool = False
+) -> List[str]:
+    """tmux args that pipe 'pane' and set pane options, but only if the pane
+    is free. The check and the pipe are one tmux call, so the library and
+    lte-run can't both see a free pane and pipe it. The call prints
+    "<pane> 1" if it piped the pane, "<pane> " if not.
+
+    @param command: the pipe's shell command, formats escaped, as for pipe-pane
+    @param options: pane options to set with it, {name: value}
+    @param with_tee: also take a pipe lte-run --tee has
+    @return: the args
+    """
     options = options or {}
     req = [(f"{_PIPE_REQ}_cmd", command)] + [
         (f"{_PIPE_REQ}_{i}", value) for i, value in enumerate(options.values())
@@ -163,8 +180,11 @@ _TERMINAL_SIGNALS = (signal.SIGINT, signal.SIGQUIT)
 _FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
-def find_dir():
-    """The session's control directory, or None when unsupervised."""
+def find_dir() -> Optional[str]:
+    """The session's control directory.
+
+    @return: its path; None when unsupervised
+    """
     if os.environ.get(DIR_ENV):
         return os.environ[DIR_ENV]
     pane = os.environ.get("TMUX_PANE")
@@ -185,9 +205,13 @@ def find_dir():
 class Channel:
     """Newline-delimited JSON over a unix stream socket. Every method is a
     no-op when unconnected, so supervised and unsupervised runs share one
-    code path."""
+    code path.
 
-    def __init__(self, directory):
+    @param directory: the control directory (find_dir()); None, or no one
+        listening there: unconnected
+    """
+
+    def __init__(self, directory: Optional[str]):
         self._sock = None
         self._send_lock = threading.Lock()
         if directory is None:
@@ -203,6 +227,11 @@ class Channel:
         self._sock = sock
 
     def send(self, **msg):
+        """Send one JSON message to the library; if it is gone, carry on
+        unsupervised.
+
+        @param msg: the message's fields
+        """
         sock = self._sock
         if sock is None:
             return
@@ -212,8 +241,11 @@ class Channel:
             except OSError:
                 self._sock = None  # listener went away; carry on unsupervised
 
-    def messages(self):
-        """Yield control messages until the connection closes."""
+    def messages(self) -> Iterator[dict]:
+        """Yield control messages until the connection closes.
+
+        @return: an iterator of dicts; empty when unconnected
+        """
         sock = self._sock
         if sock is None:
             return
@@ -234,12 +266,15 @@ class Channel:
                     pass
 
 
-def signal_target(sig, target):
+def signal_target(sig: int, target: int):
     """Deliver 'sig' to the target and every descendant of ours in our process
     group -- what a Ctrl-C at the terminal reaches, minus the wrapper itself.
 
     The descendant filter matters without job control (e.g. 'sh -c "lte-run
-    ..."'), where our process group also contains whatever started us."""
+    ..."'), where our process group also contains whatever started us.
+
+    @param target: the command's pid
+    """
     table = proc_table()
     if not table:  # no /proc: best effort
         pids = [target]
@@ -260,9 +295,13 @@ _ESCAPES = re.compile(
 )
 
 
-def plain_line(line):
-    """One line of pane output (bytes, no LF) as plain text: escapes dropped,
-    a trailing CR dropped, and a line redrawn with CR kept as its last state."""
+def plain_line(line: bytes) -> bytes:
+    """One line of pane output as plain text: escapes dropped, a trailing CR
+    dropped, and a line redrawn with CR kept as its last state.
+
+    @param line: the line, without its LF
+    @return: the plain line
+    """
     if b"\x1b" not in line and b"\r" not in line:
         return line  # the usual case: nothing to do
     return _ESCAPES.sub(b"", line).rstrip(b"\r").rsplit(b"\r", 1)[-1]
@@ -272,8 +311,11 @@ _CR_LF = re.compile(rb"\r+\n")
 _TO_LAST_CR = re.compile(rb"[^\n]*\r")
 
 
-def plain_text(data):
-    """plain_line() for every line of 'data' at once."""
+def plain_text(data: bytes) -> bytes:
+    """plain_line() for every line of 'data' at once.
+
+    @return: the plain text
+    """
     if b"\x1b" in data:
         data = _ESCAPES.sub(b"", data)
     if b"\r" in data:
@@ -286,9 +328,14 @@ QUIET = 0.15  # after the command ends, its last output is taken to have arrived
 DRAIN = 2.0
 
 
-def open_tee(path, append):
-    """FILE opened for writing. A FIFO must already have a reader: refusing
-    beats blocking forever."""
+def open_tee(path: str, append: bool) -> int:
+    """'path' opened for writing. A FIFO must already have a reader: refusing
+    beats blocking forever.
+
+    @param append: append to a file, rather than truncate it
+    @return: the fd
+    @raise OSError: it can't be opened; ENXIO for a FIFO with no reader
+    """
     flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
     try:
         if stat.S_ISFIFO(os.stat(path).st_mode):
@@ -303,10 +350,16 @@ def open_tee(path, append):
 class Tee:
     """Copies the command's output to a file: from tmux's pipe-pane in a pane
     (the command keeps its terminal), else from a pipe the command writes to,
-    passed on to our own stdout too. Plain text unless 'raw': escapes
-    dropped, CRLF made LF, and a line redrawn with CR kept as its last state."""
+    passed on to our own stdout too.
 
-    def __init__(self, fd, raw, path=None):
+    @param fd: the file, open_tee()'d; closed by finish()
+    @param raw: keep it as is. Otherwise plain text: escapes dropped, CRLF
+        made LF, and a line redrawn with CR kept as its last state
+    @param path: the file's path, published as the pane's output file for
+        watches and searches; None: not published
+    """
+
+    def __init__(self, fd: int, raw: bool, path: Optional[str] = None):
         self.fd, self.raw, self.path = fd, raw, path
         self.partial = b""
         self.pane = None  # pipe-pane: the pane, and the FIFO dir
@@ -380,6 +433,9 @@ class Tee:
         return True
 
     def _copy(self):
+        """The copy thread: read the command's output and _write() it until the
+        pipe closes, or (pipe-pane) the command is done and the pipe stayed
+        quiet for QUIET s."""
         quiet_since = None
         while True:
             ready = select.select([self.source], [], [], QUIET / 3)[0]
@@ -403,6 +459,9 @@ class Tee:
         self._write(b"", final=True)
 
     def _write(self, chunk, final=False):
+        """Pass 'chunk' on to stdout (pipe mode) and append it to the file:
+        raw, or as complete plain-text lines ('final': the partial last line
+        too)."""
         if self.echo and chunk:
             try:
                 os.write(sys.stdout.fileno(), chunk)
@@ -442,6 +501,7 @@ class Tee:
         self._close()
 
     def _close(self):
+        """Close our fds and delete the FIFO's scratch dir."""
         for fd in (self.source, self.hold, self.fd):
             if fd is not None:
                 try:
@@ -453,8 +513,13 @@ class Tee:
             shutil.rmtree(self.scratch, ignore_errors=True)
 
 
-def parse(argv):
-    """(options, command). Options come before the command; '--' ends them."""
+def parse(argv: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """Split lte-run's arguments. Options come before the command; '--' ends
+    them.
+
+    @return: (options, command); (None, []) for -h/--help
+    @raise ValueError: an unknown option
+    """
     opts = {"tee": None, "append": False, "raw": False}
     i = 0
     while i < len(argv):
@@ -481,9 +546,14 @@ def parse(argv):
     return opts, argv[i:]
 
 
-def main(argv=None, channel=None):
-    """lte-run. 'channel' replaces the session socket: any object with
-    send(**msg) and messages(), like Channel (lte-session uses this)."""
+def main(argv: Optional[Sequence[str]] = None, channel=None):
+    """lte-run.
+
+    @param channel: replaces the session socket: any object with send(**msg)
+        and messages(), like Channel (lte-session uses this)
+    @return: the command's exit status, 128+N for signal N if that signal
+        didn't kill us too; 2 for a usage error
+    """
     argv = sys.argv[1:] if argv is None else list(argv)
     try:
         opts, argv = parse(argv)

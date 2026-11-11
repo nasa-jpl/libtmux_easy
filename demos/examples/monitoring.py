@@ -27,4 +27,4 @@ for _ in range(5):
     time.sleep(1)
 
 session.stop_all()
-session.kill_session()
+session.kill()

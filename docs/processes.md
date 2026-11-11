@@ -1,14 +1,14 @@
-# Processes outside pytest
+# ProcessGroup: processes outside pytest
 
-`libtmux_easy.processes.Processes` is the engine under the pytest plugin, usable by any
+`libtmux_easy.processes.ProcessGroup` is the engine under the pytest plugin, usable by any
 program (a launcher, a script). `libtmux_easy.testing.Processes` is a subclass that adds a
 test owner, the command-line mode and pytest failures.
 
 ```python
-from libtmux_easy.processes import Processes, ProcessFailure
+from libtmux_easy.processes import ProcessFailure, ProcessGroup
 
-procs = Processes("bringup", fail_on={"*": r"Traceback"},
-                  on_exit=lambda name, status, died: ...)
+procs = ProcessGroup("bringup", fail_on={"*": r"Traceback"},
+                     on_exit=lambda name, status, died: ...)
 procs.start("sim:server", "./server", ready=r"listening", env={"RATE": "10"})
 procs.wait_until(server_answers)     # raises ProcessFailure on any death
 procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
@@ -28,7 +28,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until`, `stop`,
 `check`, ...). Differences:
 
-| | `processes.Processes` | `testing.Processes` |
+| | `processes.ProcessGroup` | `testing.Processes` |
 |---|---|---|
 | A failure | `ProcessFailure` (an `AssertionError`) | `pytest.fail` / `AssertionError` |
 | Mode | `tmux=` argument | `--tmux` / subprocess from the command line |

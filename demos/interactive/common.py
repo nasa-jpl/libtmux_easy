@@ -332,7 +332,7 @@ class Tour:
             self.say("Explore as long as you like: the panes stay until the tour ends.")
             self.pause("to end the tour (stops its panes and closes the session)")
         self.session.stop_all(sigint_timeout=2, sigterm_timeout=2)
-        self.session.kill_session()
+        self.session.kill()
         if not self.auto:
             # lte-session finishes once nobody is attached.
             subprocess.run(["tmux", "detach-client", "-s", self.name], capture_output=True)

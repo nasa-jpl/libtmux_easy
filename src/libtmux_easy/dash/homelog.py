@@ -12,6 +12,7 @@ class _Tee:
         self._log = log
 
     def write(self, text):
+        """Write to the stream and copy to the log; a closed log is skipped."""
         n = self._stream.write(text)
         try:
             self._log.write(text)
@@ -20,6 +21,7 @@ class _Tee:
         return n
 
     def flush(self):
+        """Flush the stream and the log."""
         self._stream.flush()
         try:
             self._log.flush()
@@ -35,6 +37,7 @@ class _SkipIfTeed(logging.Filter):
     log_home() (e.g. a late logging.basicConfig()) writes to the tee itself."""
 
     def filter(self, record):
+        """Drop the record if a root handler writes to the tee: copied already."""
         return not any(
             isinstance(getattr(h, "stream", None), _Tee) for h in logging.getLogger().handlers
         )

@@ -7,7 +7,6 @@ _EXPORTS = (
     "session_exists",
     "set_server",
     "tmux_command",
-    "DeprecatedError",
     "libtmux_version",
     "ExitStatus",
     "PaneStatus",
@@ -25,6 +24,7 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name):
+    """A public name, imported from tmux_lib on first use (see above)."""
     if name in _EXPORTS:
         from . import tmux_lib
 
@@ -33,4 +33,5 @@ def __getattr__(name):
 
 
 def __dir__():
+    """The module's names, the lazily loaded ones included."""
     return sorted(set(globals()) | set(_EXPORTS))

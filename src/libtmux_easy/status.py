@@ -8,14 +8,14 @@ from typing import Optional
 class ExitStatus:
     """How a pane's command finished.
 
-    When known, exactly one of these is set:
-      code    -- the process exited normally with this status
-      signal  -- the process was killed by this signal number
+    When known, exactly one of 'code' and 'signal' is set.
 
-    'inferred' is True when 'signal' was derived from a shell's 128+N
-    convention (shell-mode panes) rather than reported directly by tmux or
-    lte-run. In that case a genuine 'exit 130' cannot be distinguished from
-    'killed by SIGINT'. Exec- and wrap-mode panes never have this ambiguity.
+    @param code: the process exited normally with this status
+    @param signal: the process was killed by this signal number
+    @param inferred: True when 'signal' was derived from a shell's 128+N
+        convention (shell-mode panes) rather than reported directly by tmux or
+        lte-run. In that case a genuine 'exit 130' cannot be distinguished from
+        'killed by SIGINT'. Exec- and wrap-mode panes never have this ambiguity.
     """
 
     code: Optional[int] = None

@@ -1,4 +1,4 @@
-"""Processes without pytest's plugin: a program's own group of processes."""
+"""ProcessGroup without pytest's plugin: a program's own group of processes."""
 
 import os
 import sys
@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from libtmux_easy.processes import ProcessFailure, Processes
+from libtmux_easy.processes import ProcessFailure, ProcessGroup
 
 # Ignores the first SIGINT for a while, then exits 0 on the next.
 SLOW_STOP = (
@@ -19,7 +19,7 @@ SLOW_STOP = (
 
 def test_subprocess_group(tmp_path):
     exits = []
-    procs = Processes(
+    procs = ProcessGroup(
         "prog",
         log_dir=str(tmp_path),
         stop_codes={"*": (0, 130)},
@@ -40,7 +40,7 @@ def test_subprocess_group(tmp_path):
 
 def test_close_stops_all_at_once(tmp_path):
     """Three that take 1.5 s each to stop: about 1.5 s in all, not 4.5."""
-    procs = Processes("par", log_dir=str(tmp_path))
+    procs = ProcessGroup("par", log_dir=str(tmp_path))
     for n in "abc":
         procs.start(f"w:{n}", SLOW_STOP, ready="up")
     t = time.monotonic()
@@ -50,7 +50,7 @@ def test_close_stops_all_at_once(tmp_path):
 
 def test_kill_all(tmp_path):
     """kill_all() while close() waits: no grace, and no death."""
-    procs = Processes("kill", log_dir=str(tmp_path), sigint_timeout=30)
+    procs = ProcessGroup("kill", log_dir=str(tmp_path), sigint_timeout=30)
     procs.start(
         "w:a",
         f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
@@ -66,7 +66,7 @@ def test_kill_all(tmp_path):
 
 def test_tmux_group(session, tmp_path):
     """Panes in a session of the program's, bare window names."""
-    procs = Processes(
+    procs = ProcessGroup(
         "prog", tmux=session, prefix="", log_dir=str(tmp_path), stop_codes={"*": (0, 130)}
     )
     procs.start("sim:a", "echo ready; sleep 60", ready="ready")
@@ -78,7 +78,7 @@ def test_tmux_group(session, tmp_path):
 
 
 def test_build_needs_tmux(tmp_path):
-    procs = Processes("b", log_dir=str(tmp_path))
+    procs = ProcessGroup("b", log_dir=str(tmp_path))
     with pytest.raises(ValueError, match="needs a tmux session"):
         procs.build(lambda session: None)
     procs.close()
@@ -90,7 +90,7 @@ def test_per_process_sigint_timeout(tmp_path):
         f"{sys.executable} -c \"import signal, time; print('up', flush=True); "
         'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)"'
     )
-    procs = Processes("own", log_dir=str(tmp_path), sigint_timeout=30)
+    procs = ProcessGroup("own", log_dir=str(tmp_path), sigint_timeout=30)
     procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
     procs.start("w:slow", SLOW_STOP, ready="up")
     t = time.monotonic()
@@ -99,7 +99,7 @@ def test_per_process_sigint_timeout(tmp_path):
     assert procs.status("w:quick").stopped == "SIGTERM"
     assert procs.status("w:slow").stopped == "SIGINT"
     # stop() honours it too, and a restart keeps it
-    procs = Processes("own2", log_dir=str(tmp_path / "2"), sigint_timeout=30)
+    procs = ProcessGroup("own2", log_dir=str(tmp_path / "2"), sigint_timeout=30)
     p = procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
     p.stop(check=False)
     p.start().wait_for("up")
@@ -130,11 +130,13 @@ def _sigterm_timeouts(procs):
 
 def test_sigterm_timeout(tmp_path):
     """SIGTERM -> SIGKILL grace: 5 s by default, as before; settable."""
-    assert Processes("d", log_dir=str(tmp_path / "d")).sigterm_timeout == 5.0
+    assert ProcessGroup("d", log_dir=str(tmp_path / "d")).sigterm_timeout == 5.0
     _sigterm_timeouts(
-        Processes("term", log_dir=str(tmp_path), sigint_timeout=0.2, sigterm_timeout=0.5)
+        ProcessGroup("term", log_dir=str(tmp_path), sigint_timeout=0.2, sigterm_timeout=0.5)
     )
-    procs = Processes("term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2, sigterm_timeout=30)
+    procs = ProcessGroup(
+        "term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2, sigterm_timeout=30
+    )
     p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
     p.stop(check=False)
     p.start().wait_for("up")  # a restart keeps it
@@ -150,7 +152,7 @@ def test_sigterm_timeout(tmp_path):
 
 def test_sigterm_timeout_tmux(session, tmp_path):
     _sigterm_timeouts(
-        Processes(
+        ProcessGroup(
             "term",
             tmux=session,
             prefix="",
@@ -170,7 +172,7 @@ def test_sigterm_timeout_adopted(tmp_path):
         "s.new_window('w')\n"
         f"s.new_pane('x', {DEAF!r})\n"
     )
-    procs = Processes(
+    procs = ProcessGroup(
         "adopt", log_dir=str(tmp_path / "logs"), sigint_timeout=0.2, sigterm_timeout=0.3
     )
     procs.adopt(f"{sys.executable} {script}")
@@ -181,20 +183,20 @@ def test_sigterm_timeout_adopted(tmp_path):
     assert procs.status("w:x").stopped == "SIGKILL"
 
 
-# ---------- Processes(env=) ----------
+# ---------- ProcessGroup(env=) ----------
 
 SHOW_ENV = 'echo "A=${LTE_T_A-unset} B=${LTE_T_B-unset} I=${LTE_T_INH-unset}"; sleep 60'
 
 
 @pytest.fixture(params=["subprocess", "tmux"])
 def group(request, tmp_path, monkeypatch):
-    """group(name, **kwargs): a Processes in that mode; closed after."""
+    """group(name, **kwargs): a ProcessGroup in that mode; closed after."""
     monkeypatch.setenv("LTE_T_INH", "inherited")
     tmux = request.getfixturevalue("session") if request.param == "tmux" else None  # outlives it
     made = []
 
     def make(name="env", **kwargs):
-        procs = Processes(
+        procs = ProcessGroup(
             name, tmux=tmux, log_dir=str(tmp_path / name), stop_codes={"*": (0, 130)}, **kwargs
         )
         made.append(procs)
@@ -235,7 +237,7 @@ def test_build_panes_get_group_env(session, tmp_path):
         s.new_pane("x", SHOW_ENV)
         s.new_pane("y", SHOW_ENV, env={"LTE_T_A": "pane"})
 
-    procs = Processes(
+    procs = ProcessGroup(
         "b",
         tmux=session,
         log_dir=str(tmp_path),

@@ -21,9 +21,13 @@ import struct
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from .wrap import plain_line, plain_text
+
+if TYPE_CHECKING:
+    from .status import PaneStatus
+    from .tmux_lib import TmuxSession
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +44,29 @@ _CROSS_LINE = re.compile(r"\\[AZ]|\(\?<?[=!]|\(\?>|[*+?}]\+")
 
 
 class PaneExited(RuntimeError):
-    """wait_for_output(): the command ended before printing a match."""
+    """wait_for_output(): the command ended before printing a match.
 
-    def __init__(self, status):
+    @param status: the pane's PaneStatus, kept as '.status'
+    """
+
+    def __init__(self, status: "PaneStatus"):
         super().__init__(f"{status.name} ended before a match ({status.exit_status})")
         self.status = status
 
 
 @dataclass(frozen=True)
 class OutputMatch:
+    """One line that matched a watch.
+
+    @param pane_id: the pane's id
+    @param name: its 'window:pane' name, or None
+    @param pattern: the watch's pattern
+    @param match: its re.Match on the line
+    @param line: the line as plain text, no newline
+    @param time: time.time() when the line was read
+    @param offset: where the line starts in the pane's file; -1: not from a file
+    """
+
     pane_id: str
     name: Optional[str]
     pattern: str
@@ -58,23 +76,34 @@ class OutputMatch:
     offset: int = -1  # where the line starts in the pane's file (-1: not from a file)
 
 
-def file_size(path) -> int:
+def file_size(path: str) -> int:
+    """The size of 'path'.
+
+    @return: bytes; 0 if it doesn't exist
+    """
     try:
         return os.stat(path).st_size
     except OSError:
         return 0
 
 
-def typed_echo(line, typed):
-    """'line' is the shell echoing one of the commands 'typed' (stripped,
-    non-empty) into its pane: prompt + command."""
+def typed_echo(line: str, typed: Iterable[str]) -> bool:
+    """Whether 'line' is the shell echoing a typed command into its pane:
+    prompt + command.
+
+    @param typed: the commands typed, stripped, non-empty
+    @return: True if it is
+    """
     tail = line.rstrip()
     return any(tail.endswith(t) for t in typed)
 
 
-def plain_lines(data):
-    """(offset, text) for each line of raw pane output: escapes dropped, a
-    CR-redrawn line as its last state. A trailing partial line counts."""
+def plain_lines(data: bytes) -> Iterator[Tuple[int, str]]:
+    """The lines of raw pane output as plain text: escapes dropped, a
+    CR-redrawn line as its last state. A trailing partial line counts.
+
+    @return: (offset, text) per non-empty line
+    """
     pos = 0
     for raw in data.split(b"\n"):
         start, pos = pos, pos + len(raw) + 1
@@ -83,12 +112,26 @@ def plain_lines(data):
 
 
 class OutputWatch:
-    """One pattern on a pane, a window or the whole session ('target': a
-    pane id, a window id, or None). 'callback(OutputMatch)' runs on the
-    reader's thread: keep it short. With 'once', the watch is done after a
-    match."""
+    """One pattern on a pane, a window or the whole session.
 
-    def __init__(self, target, name, pattern, callback=None, once=False, skip_echo=True):
+    @param target: a pane id, a window id, or None: the session
+    @param name: the target's name, for messages
+    @param pattern: the compiled regex, searched in plain text
+    @param callback: callback(OutputMatch), run on the reader's thread: keep
+        it short
+    @param once: the watch is done after a match
+    @param skip_echo: a typed command's echo isn't output
+    """
+
+    def __init__(
+        self,
+        target: Optional[str],
+        name: Optional[str],
+        pattern: "re.Pattern",
+        callback: Optional[Callable[[OutputMatch], None]] = None,
+        once: bool = False,
+        skip_echo: bool = True,
+    ):
         self.target, self.name = target, name
         self.regex = pattern
         self.callback, self.once, self.skip_echo = callback, once, skip_echo
@@ -97,7 +140,7 @@ class OutputWatch:
         self.done = False
         self._cond = threading.Condition()
         self._unread = collections.deque(maxlen=KEEP)  # for wait()
-        self._reader = None
+        self._reader: Optional["OutputReader"] = None
         self._from = {}  # pane_id -> file offset: earlier lines aren't for this watch
         # For a batch of lines joined by newlines: line anchors, per line.
         self._joined = (
@@ -107,13 +150,19 @@ class OutputWatch:
         )
 
     @property
-    def pane_id(self):
+    def pane_id(self) -> Optional[str]:
+        """The pane id this watch is on; None for a window or session watch."""
         return self.target if self.target and self.target.startswith("%") else None
 
     def __repr__(self):
         return f"<OutputWatch {self.name or self.target or 'session'} {self.regex.pattern!r}>"
 
-    def covers(self, pane_id, window_id):
+    def covers(self, pane_id: str, window_id: str) -> bool:
+        """Whether this watch is on that pane: its pane, its window, or the
+        whole session.
+
+        @return: True if it is
+        """
         return self.target is None or self.target in (pane_id, window_id)
 
     def _offer(self, line, now, pane_id, name, offset=-1):
@@ -140,14 +189,19 @@ class OutputWatch:
             self._reader.remove(self)
         return True
 
-    def wait(self, timeout=None):
-        """The next match not yet returned by wait(), or None on timeout."""
+    def wait(self, timeout: Optional[float] = None) -> Optional[OutputMatch]:
+        """The next match not yet returned by wait().
+
+        @param timeout: seconds; None: forever
+        @return: the OutputMatch; None on timeout, or once the watch is done
+        """
         with self._cond:
             if not self._cond.wait_for(lambda: self._unread or self.done, timeout):
                 return None
             return self._unread.popleft() if self._unread else None
 
     def cancel(self):
+        """Stop the watch: no more matches; a wait() returns."""
         with self._cond:
             self.done = True
             self._cond.notify_all()
@@ -176,6 +230,7 @@ class _Inotify:
         return wd if wd >= 0 else None
 
     def remove(self, wd):
+        """Stop watching watch descriptor 'wd'."""
         self._rm(self.fd, wd)
 
     def read(self):
@@ -193,6 +248,7 @@ class _Inotify:
                 pos += self._EVENT.size + length
 
     def close(self):
+        """Close the inotify fd."""
         os.close(self.fd)
 
 
@@ -215,7 +271,7 @@ class _Source:
         "truncated",
     )
 
-    def __init__(self, pane_id, window_id, name, path, start, pipe, offset):
+    def __init__(self, pane_id, window_id, name: Optional[str], path, start, pipe, offset):
         self.pane_id, self.window_id, self.name = pane_id, window_id, name
         self.path, self.start, self.pipe, self.offset = path, start, pipe, offset
         self.buf = b""
@@ -226,6 +282,7 @@ class _Source:
         self.truncated = -1e9  # when a shrink was seen (a rerun overwriting the file)
 
     def close(self):
+        """Close the file, if open."""
         if self.fd is not None:
             try:
                 os.close(self.fd)
@@ -243,12 +300,23 @@ class OutputReader(threading.Thread):
     watches exist, it re-reads pane -> file from tmux: a safety net for
     lte-run retargets and panes it wasn't told about.
 
-    'panes()' -> {pane_id: (window_id, piped, path, start, pipe id)} for
-    the session's panes with a file; 'names(pane_id)' -> its name or None;
-    'typed(pane_id)' -> texts typed into it (for typed_echo()), for echoes
-    in a replay."""
+    Starts itself.
 
-    def __init__(self, panes, names, typed, ignore=None):
+    @param panes: panes() -> {pane_id: (window_id, piped, path, start, pipe
+        id)} for the session's panes with a file
+    @param names: names(pane_id) -> its name or None
+    @param typed: typed(pane_id) -> texts typed into it (for typed_echo()),
+        for echoes in a replay
+    @param ignore: a compiled regex: lines that are never output (probes)
+    """
+
+    def __init__(
+        self,
+        panes: Callable[[], Dict[str, Tuple[str, bool, str, int, str]]],
+        names: Callable[[str], Optional[str]],
+        typed: Callable[[str], List[str]],
+        ignore: Optional["re.Pattern"] = None,
+    ):
         super().__init__(daemon=True, name="lte-output")
         self._panes, self._names, self._typed = panes, names, typed
         self.ignore = ignore  # compiled regex: lines that are never output (probes)
@@ -275,10 +343,12 @@ class OutputReader(threading.Thread):
         self.start()
 
     @property
-    def alive(self):
+    def alive(self) -> bool:
+        """Whether the reader thread is running and not closed."""
         return not self._closed.is_set() and self.is_alive()
 
     def close(self):
+        """Stop the thread and end every watch (their wait()s return)."""
         self._closed.set()
         self._wake()
         with self._lock:
@@ -289,6 +359,7 @@ class OutputReader(threading.Thread):
                 w._cond.notify_all()
 
     def _wake(self):
+        """Wake the thread from select(): a watch was added, or close()."""
         with self._wake_lock:
             if self._wake_w is not None:
                 try:
@@ -298,9 +369,12 @@ class OutputReader(threading.Thread):
 
     # ----- registration (any thread) -----
 
-    def add(self, watch, since=None):
-        """Start matching 'watch'. 'since': None, from now on; "start", from
-        where each pane's capture began; or {pane_id: offset}."""
+    def add(self, watch: OutputWatch, since=None):
+        """Start matching 'watch'.
+
+        @param since: None, from now on; "start", from where each pane's capture
+            began; or {pane_id: offset}
+        """
         watch._reader = self
         panes = self._panes()
         with self._lock:
@@ -320,13 +394,18 @@ class OutputReader(threading.Thread):
             self._update_watched()
         self._wake()
 
-    def remove(self, watch):
+    def remove(self, watch: OutputWatch):
+        """Stop matching 'watch'."""
         with self._lock:
             if watch in self._watches:
                 self._watches.remove(watch)
                 self._update_watched()
 
-    def remove_target(self, target):
+    def remove_target(self, target: Optional[str]):
+        """Cancel every watch on a target.
+
+        @param target: a pane id, window id, or None: the session-wide ones
+        """
         with self._lock:
             gone = [w for w in self._watches if w.target == target]
         for w in gone:
@@ -334,8 +413,10 @@ class OutputReader(threading.Thread):
 
     def expect_echo(self, pane_id, text, echoes=1):
         """'text' is about to be typed into the pane: its echo isn't output.
-        'echoes=2': typed before the shell reads it, it may echo as typed
-        (the bare line), then echoes at the prompt."""
+
+        @param echoes: how many echoes to expect. 2: typed before the shell reads
+            it, it may echo as typed (the bare line), then echoes at the prompt
+        """
         with self._lock:
             self._echo.setdefault(pane_id, collections.deque(maxlen=16)).append(
                 [text.strip(), time.monotonic(), echoes]
@@ -359,6 +440,9 @@ class OutputReader(threading.Thread):
     # ----- the reader thread -----
 
     def run(self):
+        """The reader thread: on each inotify event (or POLL), re-read pane ->
+        file from tmux when due, read what the watched files gained, and
+        offer the lines to the watches; until close()."""
         try:
             while not self._closed.is_set():
                 ready = select.select(
@@ -426,6 +510,7 @@ class OutputReader(threading.Thread):
             return min(waits)
 
     def _covering(self, src):
+        """The watches on pane 'src'."""
         return [w for w in self._watches if w.covers(src.pane_id, src.window_id)]
 
     def _update_watched(self):
@@ -587,6 +672,8 @@ class OutputReader(threading.Thread):
                 watch._offer(line, now, src.pane_id, src.name, begin + off)
 
     def _flush_partials(self):
+        """Match a partial last line (a prompt, a progress bar) once it has
+        been quiet for QUIET s."""
         now = time.monotonic()
         for src in self._sources.values():
             if src.buf and now - src.last >= QUIET and not src.fired:
@@ -595,6 +682,8 @@ class OutputReader(threading.Thread):
                 ) or {None}
 
     def _skip(self, line):
+        """Whether a line is never output: blank, or one of the library's
+        probes."""
         return not line.strip() or (self.ignore is not None and self.ignore.search(line))
 
     def _match(self, src, raw, offset, watches, now, skip=()):
@@ -658,6 +747,7 @@ def _joined_hits(regex, text, starts):
 
 
 def _drain(fd):
+    """Read a non-blocking fd until it is empty."""
     try:
         while os.read(fd, 4096):
             pass
@@ -668,11 +758,13 @@ def _drain(fd):
 class Capture:
     """Output capture over a pane, a window or the session: TmuxSession.capture().
 
-    'target': a pane id, a window id, or None (the session). 'path': the
-    file (a pane) or the directory (a window or the session). Files are
-    kept after the session unless 'keep' is False."""
+    @param session: the TmuxSession
+    @param target: a pane id, a window id, or None: the session
+    @param path: the file (a pane) or the directory (a window or the session)
+    @param keep: keep the files after the session
+    """
 
-    def __init__(self, session, target, path, keep):
+    def __init__(self, session: "TmuxSession", target, path: str, keep: bool):
         self.session, self.target, self.path_, self.keep = session, target, path, keep
         self.stopped = False
 
@@ -680,19 +772,31 @@ class Capture:
         return f"<Capture {self.target or 'session'} -> {self.path_}>"
 
     @property
-    def directory(self):
+    def directory(self) -> str:
+        """The directory of the capture's files."""
         return os.path.dirname(self.path_) if self._is_pane else self.path_
 
     @property
     def _is_pane(self):
+        """Whether this is one pane's capture (else a window's or the
+        session's)."""
         return bool(self.target and self.target.startswith("%"))
 
-    def panes(self):
-        """{pane id: file} for the panes in scope that have a file."""
+    def panes(self) -> Dict[str, str]:
+        """The panes in scope that have a file.
+
+        @return: {pane id: file}
+        """
         return self.session._output_files(self.target)
 
     def path(self, pane=None) -> Optional[str]:
-        """The file a pane's output goes to (this capture's pane by default)."""
+        """The file a pane's output goes to.
+
+        @param pane: a pane id or name; None: this capture's pane
+        @return: the path; None if the pane has no file
+        @raise ValueError: no 'pane', and the capture covers several panes; or
+            no such pane
+        """
         if pane is None:
             if not self._is_pane:
                 raise ValueError("this capture covers several panes: name one")
@@ -707,7 +811,15 @@ class Capture:
 
 
 class OutputExpect:
-    """TmuxSession.expect(): '.match' (an OutputMatch) after the block."""
+    """TmuxSession.expect(): '.match' (an OutputMatch) after the block.
+
+    Made by expect(), with its arguments. The wait happens as the block
+    ends, unless it raised.
+
+    @raise TimeoutError: no match in time
+    @raise PaneExited: the pane's command ended first
+    @raise RuntimeError: the watch closed (the session is gone)
+    """
 
     def __init__(self, session, target, pattern, timeout, regex, flags):
         self.session, self.target, self.pattern = session, target, pattern

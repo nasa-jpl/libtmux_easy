@@ -36,7 +36,7 @@
 | Shell mode: keys typed without Enter into a running command it doesn't read land on the prompt's line when it ends; the probe submits them | type at the prompt, or wrap mode |
 | `lte-run a && b` typed by hand supervises only `a` | `new_pane()` wraps in `bash -c` |
 | A fast command can record no target pid (`target_pids == ()`) | handled |
-| `kill_session()` only sends SIGHUP | `stop_all()` first |
+| `kill()` only sends SIGHUP | `stop_all()` first |
 | A Ctrl-C typed by hand counts as failed | none: intent is unknowable |
 | A command typed by hand without `lte-run` (shell pane, wrap pane), or a `respawn-pane` run in tmux (exec pane), is not a run: the status and `command` stay the last tracked run's | type `lte-run <cmd>` (a new run, its `command`), or `respawn_pane(pane, cmd)` |
 | Linux only (pidfds, `/proc`) | |

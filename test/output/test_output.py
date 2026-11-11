@@ -609,5 +609,5 @@ def test_kill_closes_reader(session):
     pane = session.new_pane("p", "sleep 30", mode=PANE_MODE_EXEC)
     w = session.watch_output(pane, "x")
     reader = session._reader
-    session.kill_session()
+    session.kill()
     assert wait_until(lambda: not reader.alive) and w.done

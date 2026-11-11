@@ -27,4 +27,4 @@ print("short, rerun:", session.wait_for_exit("procs:short", timeout=5))
 # Stop whatever still runs, in parallel.
 print("stop_all:", session.stop_all())
 session.print_status()
-session.kill_session()
+session.kill()

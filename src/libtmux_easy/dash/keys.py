@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Optional
 
 from .._tmux import option as _option, tmux as _tmux
 
@@ -39,10 +40,13 @@ _LISTED = re.compile(
 
 
 def _slug(key):
+    """'key' usable in an option name: non-alphanumerics as _<hex>."""
     return "".join(c if c.isalnum() else f"_{ord(c):x}" for c in key)
 
 
 def _options(key):
+    """The server options for 'key': the sessions borrowing it, and its saved
+    binding."""
     slug = _slug(key)
     return f"@lte_key_{slug}_users", f"@lte_key_{slug}_saved"
 
@@ -64,8 +68,12 @@ def _source(run, text):
         os.unlink(handle.name)
 
 
-def current(key, run=_tmux):
-    """The 'bind-key ...' line for 'key' in the prefix table, or ''."""
+def current(key: str, run=_tmux) -> str:
+    """The binding of 'key' in the prefix table.
+
+    @param run: runs tmux (a stub, in tests)
+    @return: its 'bind-key ...' line, or ''
+    """
     for line in run("list-keys", "-T", TABLE, key):
         match = _LISTED.match(line)
         if match and match["table"] == TABLE:
@@ -74,22 +82,45 @@ def current(key, run=_tmux):
 
 
 def _escape(text):
+    """'text' quoted for a tmux double-quoted string."""
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def chosen(role, default, run=_tmux):
-    """The key for one of the library's roles ("dash", "close"): the global
-    option @lte_key_<role> if set ("" for none), else 'default'."""
+def chosen(role: str, default: str, run=_tmux) -> str:
+    """The key for one of the library's roles.
+
+    @param role: "dash" or "close"
+    @param default: the key when ~/.tmux.conf picks none
+    @param run: runs tmux (a stub, in tests)
+    @return: the global option @lte_key_<role> if set ("" for none), else
+        'default'
+    """
     name = f"@lte_key_{role}"
     if not run("show-options", "-gq", name):
         return default
     return _option(None, name, "-gq", run=run)
 
 
-def borrow(key, option, command, message=None, run=_tmux, if_free=False):
-    """Bind 'key' to run 'command' (tmux command text) in sessions where
-    'option' is set, and its previous binding everywhere else. 'if_free':
-    only if 'key' is unbound (or already borrowed). True if borrowed."""
+def borrow(
+    key: str,
+    option: str,
+    command: str,
+    message: Optional[str] = None,
+    run=_tmux,
+    if_free: bool = False,
+) -> bool:
+    """Bind 'key' to run 'command' in sessions where 'option' is set, and its
+    previous binding everywhere else.
+
+    @param option: a session option, e.g. @lte_dash_window
+    @param command: tmux command text
+    @param message: shown elsewhere if 'key' was unbound before; None: "KEY
+        is not bound here"
+    @param run: runs tmux (a stub, in tests)
+    @param if_free: only if 'key' is unbound (or already borrowed)
+    @return: True if borrowed
+    @raise ValueError: tmux can't parse the binding made of 'command'
+    """
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)
     if users == 0:
@@ -111,8 +142,12 @@ def borrow(key, option, command, message=None, run=_tmux, if_free=False):
     return True
 
 
-def give_back(key, run=_tmux):
-    """Return a key borrowed with borrow(). The last borrower restores it."""
+def give_back(key: str, run=_tmux):
+    """Return a key borrowed with borrow(). The last borrower restores it.
+
+    @param run: runs tmux (a stub, in tests)
+    @raise ValueError: tmux can't parse the saved binding
+    """
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)
     if users > 1:
@@ -128,6 +163,8 @@ def give_back(key, run=_tmux):
 
 
 def main(argv=None):
+    """lte-key borrow|return: bind a key where an option is set, or give it
+    back."""
     parser = argparse.ArgumentParser(prog="lte-key", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="action", required=True)
     b = sub.add_parser("borrow", help="bind KEY to COMMAND where OPTION is set")

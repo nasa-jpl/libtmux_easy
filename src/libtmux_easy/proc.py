@@ -8,7 +8,7 @@ the module level: test_wrapper_import_stays_light checks it.
 """
 
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     import psutil
@@ -22,8 +22,11 @@ SHELLS = frozenset(("bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh"))
 # ---------- stdlib: /proc ----------
 
 
-def proc_stat(pid):
-    """(state, ppid, pgrp) of 'pid', from /proc; None if it is gone."""
+def proc_stat(pid: Union[int, str]) -> Optional[Tuple[str, int, int]]:
+    """A process's state, parent and process group, from /proc.
+
+    @return: (state, ppid, pgrp); None if it is gone
+    """
     try:
         with open(f"/proc/{pid}/stat") as f:
             # Field 2 (comm) may contain spaces and parens; split after it.
@@ -33,8 +36,11 @@ def proc_stat(pid):
         return None
 
 
-def proc_table():
-    """pid -> proc_stat(pid), for every process; {} without /proc."""
+def proc_table() -> Dict[int, Tuple[str, int, int]]:
+    """proc_stat() of every process.
+
+    @return: pid -> proc_stat(pid); {} without /proc
+    """
     try:
         names = os.listdir("/proc")
     except OSError:
@@ -58,8 +64,12 @@ def _children(table):
     return children
 
 
-def descendants(pid, table=None):
-    """The pids below 'pid' in a proc_table() (a fresh one by default)."""
+def descendants(pid: int, table: Optional[Dict[int, Tuple[str, int, int]]] = None) -> List[int]:
+    """The pids below 'pid'.
+
+    @param table: a proc_table(); None: a fresh one
+    @return: the pids
+    """
     children = _children(proc_table() if table is None else table)
     found, todo = [], list(children.get(pid, ()))
     while todo:
@@ -69,9 +79,15 @@ def descendants(pid, table=None):
     return found
 
 
-def descendant_tree(pid, table=None):
-    """[(depth, pid), ...] below 'pid', depth 1 for its children, in the
-    order 'ps axf' draws them: depth first, siblings by pid."""
+def descendant_tree(
+    pid: int, table: Optional[Dict[int, Tuple[str, int, int]]] = None
+) -> List[Tuple[int, int]]:
+    """The processes below 'pid', in the order 'ps axf' draws them: depth
+    first, siblings by pid.
+
+    @param table: a proc_table(); None: a fresh one
+    @return: [(depth, pid), ...], depth 1 for its children
+    """
     children = _children(proc_table() if table is None else table)
     found, todo = [], [(1, child) for child in reversed(children.get(pid, ()))]
     while todo:
@@ -81,9 +97,12 @@ def descendant_tree(pid, table=None):
     return found
 
 
-def cmdline(pid):
-    """The process's command line ('sleep 5'); its '[name]' when it has
-    none (a kernel thread, a zombie); '' if it is gone."""
+def cmdline(pid: Union[int, str]) -> str:
+    """The process's command line.
+
+    @return: e.g. 'sleep 5'; its '[name]' when it has none (a kernel thread,
+        a zombie); '' if it is gone
+    """
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             args = f.read().rstrip(b"\0").split(b"\0")
@@ -96,14 +115,20 @@ def cmdline(pid):
     return f"[{name}]" if name else ""
 
 
-def alive(pid):
-    """'pid' exists and is not a zombie."""
+def alive(pid: int) -> bool:
+    """Whether 'pid' is alive.
+
+    @return: True if it exists and is not a zombie
+    """
     stat = proc_stat(pid)
     return stat is not None and stat[0] != "Z"
 
 
-def comm(pid):
-    """The process's name ('bash'), or ''."""
+def comm(pid: Union[int, str]) -> str:
+    """The process's name.
+
+    @return: e.g. 'bash'; '' if it is gone
+    """
     try:
         with open(f"/proc/{pid}/comm") as f:
             return f.read().strip()
@@ -111,9 +136,13 @@ def comm(pid):
         return ""
 
 
-def pane_pids(pane_pid):
-    """What a pane runs: a shell's descendants (the shell itself stays), or
-    the pane's own process and its descendants."""
+def pane_pids(pane_pid: int) -> List[int]:
+    """What a pane runs.
+
+    @param pane_pid: the pane's own process
+    @return: a shell's descendants (the shell itself stays), or the pane's
+        own process and its descendants
+    """
     found = descendants(pane_pid)
     return found if comm(pane_pid) in SHELLS else [pane_pid] + found
 
@@ -122,8 +151,10 @@ def pane_pids(pane_pid):
 
 
 def proc_alive(proc: "psutil.Process") -> bool:
-    """True if 'proc' is still alive and not a zombie (psutil's is_running()
-    is True for a zombie)."""
+    """Whether 'proc' is alive. psutil's is_running() is True for a zombie.
+
+    @return: True if it is still running and not a zombie
+    """
     import psutil
 
     try:
@@ -133,7 +164,10 @@ def proc_alive(proc: "psutil.Process") -> bool:
 
 
 def pane_process(pane: "Pane") -> Optional["psutil.Process"]:
-    """The pane's own process (an exec pane's command), or None."""
+    """The pane's own process (an exec pane's command).
+
+    @return: the psutil.Process, or None if it is gone
+    """
     import psutil
 
     try:
@@ -143,8 +177,11 @@ def pane_process(pane: "Pane") -> Optional["psutil.Process"]:
 
 
 def get_child_pids(parent_pid: int, recursive: bool = False) -> list:
-    """The pids of 'parent_pid''s children (and theirs, if 'recursive');
-    [] if it doesn't exist."""
+    """The pids of 'parent_pid''s children.
+
+    @param recursive: theirs too
+    @return: the pids; [] if 'parent_pid' doesn't exist
+    """
     import psutil
 
     try:
@@ -156,7 +193,10 @@ def get_child_pids(parent_pid: int, recursive: bool = False) -> list:
 
 def pane_child_processes(pane: "Pane") -> list:
     """Running descendants of a pane's process (whatever its shell runs),
-    excluding that process itself."""
+    excluding that process itself.
+
+    @return: psutil.Process objects; [] if the pane's process is gone
+    """
     root = pane_process(pane)
     if root is None:
         return []
@@ -164,8 +204,12 @@ def pane_child_processes(pane: "Pane") -> list:
 
 
 def get_session_pids(session: "Session") -> dict:
-    """{window name: {pane id: [pid, ...]}} of what runs in each pane of
-    'session'. Idle panes, and windows with only idle panes, are left out."""
+    """What runs in each pane of 'session'.
+
+    Idle panes, and windows with only idle panes, are left out.
+
+    @return: {window name: {pane id: [pid, ...]}}
+    """
     result = {}
     for window in session.windows:
         panes = {pane.id: [p.pid for p in pane_child_processes(pane)] for pane in window.panes}

@@ -33,4 +33,4 @@ for hit in session.search_output("app", r'"GET / HTTP'):
     print(f"  {hit.name}: {hit.line}")
 
 session.stop_all()
-session.kill_session()
+session.kill()

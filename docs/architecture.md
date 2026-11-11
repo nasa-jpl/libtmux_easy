@@ -17,7 +17,7 @@
 | `close.py` | stdlib | `lte-close`: graceful close, close actions |
 | `starter.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
 | `output.py` | stdlib | output capture (`pipe-pane` files), `OutputReader` (tails them), `Capture`, watches |
-| `processes.py` | the library | `Processes`: a process group, its backends (subprocess, tmux, adopted), health; no pytest |
+| `processes.py` | the library | `ProcessGroup`: a process group, its backends (subprocess, tmux, adopted), health; no pytest |
 | `testing.py` | pytest | pytest plugin: `Processes` with a test owner, on top of `processes.py` |
 | `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
 
@@ -72,7 +72,7 @@ One copy each. The commands import them, so their modules stay light:
 - A window starts with a placeholder pane (`sleep`, silent). The first
   `new_pane()` splits off it, then kills it: every pane is named and made
   the same way.
-- `kill_session()` only sends SIGHUP. Call `stop_all()` first for a clean
+- `kill()` only sends SIGHUP. Call `stop_all()` first for a clean
   shutdown.
 
 ## Talking to tmux
@@ -87,8 +87,8 @@ One copy each. The commands import them, so their modules stay light:
   `_pane_cmd()` / `_type()`.
 - **Pass title text as a list argument**, never through `shlex.split`.
 - `#{...}` expands in `run-shell` / `if-shell -F` strings, not in `-t` targets.
-- `Session.kill` (libtmux >= 0.30) is preferred over `kill_session`; `kill()`
-  picks whichever exists.
+- `TmuxSession.kill()` ends a session; libtmux's old `kill_session()` raises
+  (it would skip the cleanup). Needs libtmux 0.30 or later.
 
 ## Environment
 

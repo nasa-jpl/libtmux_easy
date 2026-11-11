@@ -1,10 +1,10 @@
-"""Processes: start a group of processes, watch them, stop them -- no pytest.
+"""ProcessGroup: start a group of processes, watch them, stop them -- no pytest.
 
 The engine under the pytest plugin (testing.py), usable by any program:
 
-    from libtmux_easy.processes import Processes
+    from libtmux_easy.processes import ProcessGroup
 
-    procs = Processes("bringup", fail_on={"*": r"Traceback"})
+    procs = ProcessGroup("bringup", fail_on={"*": r"Traceback"})
     procs.start("sim:server", "./server", ready=r"listening")
     procs.start("sim:client", "./client")
     procs.wait_until(server_answers)
@@ -33,6 +33,19 @@ import tempfile
 import threading
 import time
 import types
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    TextIO,
+    TypeVar,
+    Union,
+)
 
 from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
@@ -49,6 +62,15 @@ from .wrap import (
     plain_line,
     plain_text,
 )
+
+if TYPE_CHECKING:
+    from .tmux_lib import TmuxSession
+
+_T = TypeVar("_T")
+# A fail_on check: a regex searched in each line, or line -> problem or None.
+_Check = Union[str, Callable[[str], Optional[str]]]
+# An exit code, or several.
+_Codes = Union[int, Iterable[int]]
 
 
 class ProcessFailure(AssertionError):
@@ -101,6 +123,9 @@ class _TmuxBackend:
         return w
 
     def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None):
+        """Start 'name' in a new wrap-mode pane in its group window (made on
+        first use); a restart gets a new pane, '<pane>~N'. 'log': lte-run
+        --tee's file, the command's output only."""
         window, _, pane_name = name.partition(":")
         self.window(window, setup)
         self.runs[name] = self.runs.get(name, 0) + 1
@@ -139,6 +164,7 @@ class _TmuxBackend:
         return self.session.wait_for_output(self.panes[name], regex, timeout).match
 
     def output(self, name):
+        """What the latest start printed, as one string."""
         return "\n".join(self.lines(name))
 
     def lines(self, name):
@@ -150,18 +176,25 @@ class _TmuxBackend:
         return _read_plain(self.logs[name])
 
     def kill(self, name):
+        """SIGKILL the process the pane runs, once lte-run has reported its
+        pid."""
         self.session.wait_started(self.panes[name], timeout=5.0)  # its pid, once known
         _kill(self.status(name).target_pids)
 
     def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
+        """SIGINT, then SIGTERM, then SIGKILL (stop_pane()), each after its
+        timeout."""
         self.session.stop_pane(
             self.panes[name], sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout
         )
 
     def stop_all(self, names, timeouts):
+        """stop() every running one of 'names' at once; timeouts[name] is
+        (sigint, sigterm)."""
         _parallel(self.stop, [n for n in names if self.session.is_running(self.panes[n])], timeouts)
 
     def status(self, name):
+        """The pane's PaneStatus: running, exit status, how it was stopped."""
         return self.session.pane_status(self.panes[name])
 
 
@@ -178,6 +211,7 @@ def _read_plain(path):
 
 
 def _kill(pids):
+    """SIGKILL each pid; one already gone is skipped."""
     for pid in pids:
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
@@ -194,6 +228,10 @@ def _parallel(fn, names, timeouts):
 
 
 class _Subprocess:
+    """One process run as 'bash -c command' in a process group of its own,
+    stdin a pty. A thread reads its output (kept, logged, echoed, passed to
+    on_line); another waits for its exit and calls on_exit."""
+
     def __init__(self, name, command, on_exit, tty, lock, on_line=None, log=None, env=None):
         self.name = name
         self.command = command
@@ -257,6 +295,7 @@ class _Subprocess:
         self.waiter.start()
 
     def status(self):
+        """Its PaneStatus (pane_id empty, mode 'subprocess')."""
         rc = self.proc.poll()
         exit_status = (
             ExitStatus()
@@ -313,6 +352,7 @@ class _Subprocess:
         self.waiter.join(1)  # on_exit has fired
 
     def kill(self):
+        """SIGKILL its whole process group."""
         with contextlib.suppress(OSError):
             os.killpg(self.proc.pid, signal.SIGKILL)
 
@@ -328,30 +368,42 @@ class _SubprocessBackend:
         self.procs = {}
 
     def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None):
+        """Start 'name' as a _Subprocess ('setup' first, in the same shell); a
+        restart replaces the old one."""
         if setup:
             command = f"{setup} && {command}"
         tty = self.tty if any(fnmatch.fnmatchcase(name, p) for p in self.echo) else None
         self.procs[name] = _Subprocess(name, command, on_exit, tty, self.lock, on_line, log, env)
 
     def wait_for(self, name, regex, timeout):
+        """The first re.Match of 'regex' in its output; TimeoutError, or
+        PaneExited."""
         return self.procs[name].wait_for(regex, timeout)
 
     def output(self, name):
+        """What it printed, raw, as one string."""
         return "".join(self.procs[name].lines)
 
     def lines(self, name):
+        """What it printed, as plain-text lines."""
         return list(self.procs[name].plain)
 
     def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
+        """SIGINT its group, then SIGTERM, then SIGKILL, each after its
+        timeout."""
         self.procs[name].stop(sigint_timeout, sigterm_timeout)
 
     def stop_all(self, names, timeouts):
+        """stop() every one of 'names' at once; timeouts[name] is (sigint,
+        sigterm)."""
         _parallel(self.stop, names, timeouts)
 
     def status(self, name):
+        """Its PaneStatus."""
         return self.procs[name].status()
 
     def kill(self, name):
+        """SIGKILL its process group."""
         self.procs[name].kill()
 
 
@@ -387,6 +439,7 @@ class _AdoptedBackend:
         }
 
     def _tmux(self, *args):
+        """Run a tmux command on this server; its stdout lines."""
         return subprocess.run(
             ["tmux", "-S", self.socket, *args], capture_output=True, text=True, errors="replace"
         ).stdout.splitlines()
@@ -438,6 +491,9 @@ class _AdoptedBackend:
         return found
 
     def watch(self, name, pane_id, mode, on_exit, on_line, log):
+        """Adopt pane 'pane_id' as process 'name': read its output from its
+        first line (the script's capture, or the scrollback and a pipe
+        started together) and poll it for its exit."""
         piped = self._tmux(
             "display-message",
             "-p",
@@ -516,6 +572,7 @@ class _AdoptedBackend:
             self.thread.start()
 
     def _poll(self):
+        """The poll thread: poll() every POLL s until close()."""
         while not self.done.wait(self.POLL):
             self.poll()
 
@@ -550,9 +607,12 @@ class _AdoptedBackend:
             return None
 
     def _get(self, name):
+        """The script's _Subprocess or the _AdoptedPane named 'name'."""
         return self.script.get(name) or self.panes[name]
 
     def wait_for(self, name, regex, timeout):
+        """The first re.Match of 'regex' in its output; TimeoutError, or
+        PaneExited."""
         if name in self.script:
             return self.script[name].wait_for(regex, timeout)
         pane = self.panes[name]
@@ -570,17 +630,23 @@ class _AdoptedBackend:
                 self.cond.wait(left)
 
     def output(self, name):
+        """What it printed, as one string."""
         return "\n".join(self.lines(name))
 
     def lines(self, name):
+        """What it printed, as plain-text lines."""
         if name in self.script:
             return list(self.script[name].plain)
         return list(self.panes[name].lines)
 
     def status(self, name):
+        """Its PaneStatus."""
         return self._get(name).status()
 
     def stop(self, name, sigint_timeout, sigterm_timeout=5.0):
+        """Ctrl-C the pane (as a person would), then SIGTERM, then SIGKILL its
+        processes, each after its timeout. The script itself: as a
+        subprocess."""
         if name in self.script:
             return self.script[name].stop(sigint_timeout, sigterm_timeout)
         pane = self.panes[name]
@@ -603,14 +669,18 @@ class _AdoptedBackend:
                 return
 
     def stop_all(self, names, timeouts):
+        """stop() every running one of 'names' at once; timeouts[name] is
+        (sigint, sigterm)."""
         _parallel(self.stop, [n for n in names if self.status(n).running], timeouts)
 
     def kill(self, name):
+        """SIGKILL the script, or the processes a pane runs."""
         if name in self.script:
             return self.script[name].kill()
         _kill(self.panes[name].targets())
 
     def start(self, *args):
+        """Always ValueError: an adopted pane was started by the script."""
         raise ValueError("start(): these are the script's panes; it can't be started again")
 
     def close(self, keep):
@@ -622,6 +692,7 @@ class _AdoptedBackend:
 
 
 def _strip_blank_tail(lines):
+    """'lines' without its trailing blank lines (a pane's empty rows)."""
     while lines and not lines[-1].strip():
         lines = lines[:-1]
     return lines
@@ -654,6 +725,8 @@ class _AdoptedPane:
         self._take([plain_line(line.encode()).decode(errors="replace") for line in history])
 
     def read(self):
+        """Read what the source file gained since the last read; take its
+        complete lines."""
         try:
             with open(self.source, "rb") as f:
                 f.seek(self.offset)
@@ -667,6 +740,8 @@ class _AdoptedPane:
             self.read_after_exit = True
 
     def _take(self, lines):
+        """New output lines: copy them to the group's log, keep them, pass each
+        to on_line."""
         if self.copy is not None and lines:
             with open(self.copy, "a") as f:
                 f.write("".join(line + "\n" for line in lines))
@@ -676,6 +751,9 @@ class _AdoptedPane:
                 self.on_line(line)
 
     def update(self, row, run, table):
+        """One poll: from lte-run's record 'run', else tmux's pane 'row' and
+        the process 'table', decide whether it still runs; on its exit, read
+        the last output and call on_exit."""
         if self.exited:
             return
         if run is not None:  # lte-run's record: exact
@@ -713,9 +791,11 @@ class _AdoptedPane:
             self.on_exit(self.name, self.status())
 
     def targets(self):
+        """The pids its command runs as (what stop() and kill() signal)."""
         return self.pids
 
     def status(self):
+        """Its PaneStatus."""
         return PaneStatus(
             name=self.name,
             pane_id=self.pane_id,
@@ -759,17 +839,26 @@ def _exit_code(status):
 class Process:
     """One process of a group, as start() returns it: the group's methods
     for its name, and start() to start it again. It follows the name: still
-    valid after a stop() and a start()."""
+    valid after a stop() and a start().
 
-    def __init__(self, group, name):
+    @param group: its ProcessGroup
+    @param name: its 'window:pane' name
+    """
+
+    def __init__(self, group: "ProcessGroup", name: str):
         self.group = group
         self.name = name
 
     def __repr__(self):
         return f"<Process {self.name}>"
 
-    def start(self):
-        """Start it again: the same command and start() options."""
+    def start(self) -> "Process":
+        """Start it again: the same command and start() options.
+
+        @return: its Process
+        @raise ValueError: an adopted pane, or it is still running
+        @raise ProcessFailure: no 'ready' line in time
+        """
         if self.group._adopted:
             raise ValueError(
                 f"start(): {self.name} is the script's pane; it can't be started again"
@@ -777,29 +866,82 @@ class Process:
         command, options = self.group._commands[self.name]
         return self.group.start(self.name, command, **options)
 
-    def stop(self, sigint_timeout=None, check=True, sigterm_timeout=None) -> PaneStatus:
+    def stop(
+        self,
+        sigint_timeout: Optional[float] = None,
+        check: bool = True,
+        sigterm_timeout: Optional[float] = None,
+    ) -> PaneStatus:
+        """Stop it (SIGINT, then SIGTERM, SIGKILL): ProcessGroup.stop().
+
+        @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
+            start()'s, else the group's
+        @param check: fail unless SIGINT stopped it, with one of its stop_codes
+        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
+            start()'s, else the group's
+        @return: its PaneStatus
+        @raise ProcessFailure: with 'check', it did not stop cleanly
+        """
         return self.group.stop(self.name, sigint_timeout, check, sigterm_timeout)
 
     def kill(self):
         """SIGKILL it: a death, unless in an expect_exit() block."""
         self.group.kill(self.name)
 
-    def wait_for(self, pattern, timeout=10.0) -> "re.Match":
+    def wait_for(self, pattern: Union[str, "re.Pattern"], timeout: float = 10.0) -> "re.Match":
+        """Wait for a line matching 'pattern': ProcessGroup.wait_for().
+
+        What it printed already counts.
+
+        @param pattern: a regex, searched in plain text
+        @param timeout: seconds to wait
+        @return: the re.Match
+        @raise ProcessFailure: no match in time, or it exited
+        """
         return self.group.wait_for(self.name, pattern, timeout)
 
-    def wait_for_in_order(self, patterns, timeout=10.0) -> list:
+    def wait_for_in_order(
+        self, patterns: Sequence[Union[str, "re.Pattern"]], timeout: float = 10.0
+    ) -> List["re.Match"]:
+        """Wait for lines matching 'patterns', in order:
+        ProcessGroup.wait_for_in_order().
+
+        @param patterns: regexes, searched in plain text
+        @param timeout: seconds to wait; 0: check now
+        @return: the re.Matches
+        @raise ProcessFailure: a pattern unmatched in time, or a death
+        """
         return self.group.wait_for_in_order(self.name, patterns, timeout)
 
-    def wait_for_exit(self, timeout=10.0) -> PaneStatus:
+    def wait_for_exit(self, timeout: float = 10.0) -> PaneStatus:
+        """Wait for it to finish: ProcessGroup.wait_for_exit().
+
+        @param timeout: seconds to wait
+        @return: its PaneStatus
+        @raise ValueError: it was not started with exits=
+        @raise ProcessFailure: still running in time, or a death
+        """
         return self.group.wait_for_exit(self.name, timeout)
 
     def status(self) -> PaneStatus:
+        """Its status: ProcessGroup.status().
+
+        @return: its PaneStatus
+        """
         return self.group.status(self.name)
 
-    def log(self):
+    def log(self) -> str:
+        """Its log file: ProcessGroup.log().
+
+        @return: the path
+        """
         return self.group.log(self.name)
 
     def output(self) -> str:
+        """What it printed: ProcessGroup.output().
+
+        @return: the text
+        """
         return self.group.output(self.name)
 
 
@@ -854,6 +996,9 @@ class _BuildSession:
         self._windows = []  # the windows build() made, short names
 
     def _full(self, target):
+        """A window or pane name of the script's, as the tmux name
+        ('<prefix>/<window>'); ids and other values unchanged. Lists and
+        tuples element-wise."""
         if isinstance(target, str) and target and target[0] not in "%@":
             return self._backend.full(target)
         if isinstance(target, (list, tuple)):
@@ -876,16 +1021,22 @@ class _BuildSession:
         return call
 
     def _setup(self):
+        """The group's setup and the script's send_command_before(), joined
+        with &&; None if neither."""
         setup = self._group.setup
         return " && ".join(c for c in (setup, self._before) if c) or None
 
     def new_window(self, name, **kwargs):
+        """Make the window '<prefix>/<name>' (or go to it); new panes go in it."""
         window = self._backend.window(name, self._setup(), **kwargs)
         if name not in self._windows:
             self._windows.append(name)
         return window
 
     def new_pane(self, name, cmd, **kwargs):
+        """TmuxSession.new_pane(), and the pane becomes process 'window:name'
+        of the group, with a log, fail_on and exit tracking. Default mode:
+        wrap."""
         group = self._group
         window = self._backend.short(self._session.current_window.name)
         full = f"{window}:{name}"
@@ -920,6 +1071,8 @@ class _BuildSession:
         return pane
 
     def send_command_before(self, command, window=None):
+        """A setup command for the script's panes: in 'window', else in all its
+        windows (and those made later). The group's setup runs first."""
         if window is not None:
             command = " && ".join(c for c in (self._group.setup, command) if c)
             return self._session.send_command_before(command, window=self._full(window))
@@ -928,68 +1081,83 @@ class _BuildSession:
             self._session.send_command_before(self._setup(), window=self._full(name))
 
     def copy_environment(self, env=None):
+        """Variables for the script's later panes: 'env', or os.environ if
+        None."""
         self._env.update(os.environ if env is None else env)
 
     def set_default_mode(self, mode):
+        """The pane mode for the script's later new_pane() calls."""
         self._mode = mode
         return mode
 
     def _nothing(self, *args, **kwargs):
+        """attach(), dashboard(), kill() and the like: nothing, in a test."""
         return None
 
-    attach = dashboard = close_dashboard = kill = kill_session = close = release = _nothing
+    attach = dashboard = close_dashboard = kill = close = release = _nothing
 
 
-class Processes:
-    """A group of processes and their health, in any mode.
+class ProcessGroup:
+    """A group of processes and their health, in any mode. For programs
+    (a launcher, a script); tests use libtmux_easy.testing.Processes, a
+    subclass that adds a test owner and takes the mode from pytest's
+    command line.
 
-        procs = Processes("bringup", fail_on={"*": r"Traceback"})
+        procs = ProcessGroup("bringup", fail_on={"*": r"Traceback"})
         procs.start("sim:server", "./server", ready=r"listening")
         ...
         procs.close()
 
-    'name': the group's; its log dir and tmux window prefix by default.
-    'tmux': a TmuxSession: each process in a wrap-mode pane, in windows
-    '<prefix>/<window>' ('prefix' default 'name'; "" for bare window
-    names). None: subprocesses, their output in their logs, and on 'tty'
-    (default stdout) for names matching an 'echo' pattern ('*': all).
-    'fail_on': {name or "*": a regex, a function line -> problem or None,
-    or a list of them}; a match is a death.
-    'stop_codes': {name or "*": codes} allowed when stopped (default 0; a
-    signal N is 128+N, so 130 allows dying of SIGINT).
-    'sigint_timeout': seconds SIGINT gets before SIGTERM; 'sigterm_timeout':
-    seconds SIGTERM then gets before SIGKILL (start() can set either per
-    process).
-    'log_dir': where the logs go; default a new temp dir.
-    'setup': a shell command run before each process.
-    'on_exit': called as on_exit(name, PaneStatus, died) on each exit, from
-    a watcher thread; died is True for an exit nobody asked for.
-    'keep_open': close() stops nothing.
-    'scope': groups with the same scope share names (default: this one).
-    'env': variables for every process of the group (None: unset), over
-    this process's environment; start(env=) wins. Never put in os.environ,
-    so other groups don't see it. Fixed at creation: procs.env is read-only.
+    @param name: the group's name: its log dir and tmux window prefix by
+        default
+    @param tmux: a TmuxSession: each process in a wrap-mode pane, in windows
+        '<prefix>/<window>'. None: subprocesses, their output in their logs
+    @param prefix: tmux window prefix; None: 'name'; "": bare window names
+    @param log_dir: where the logs go; None: a new temp dir
+    @param echo: subprocesses: also print the output of names matching one
+        of these patterns ("*": all) to 'tty'
+    @param tty: where 'echo' prints; None: stdout
+    @param setup: a shell command run before each process
+    @param fail_on: output that means a process failed, though still running:
+        {name or "*": check}. A check is a regex (searched in each line), a
+        function line -> problem message or None, or a list of them. A match
+        is a death.
+    @param stop_codes: exit codes allowed when stopped: {name or "*": code or
+        codes}, default 0. A signal N is 128+N: 130 allows dying of SIGINT.
+    @param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
+        it per process.
+    @param on_abort: called with no arguments before a failed test stops the
+        group (the pytest subclass)
+    @param on_exit: on_exit(name, PaneStatus, died) on each exit, from a
+        watcher thread; 'died': an exit nobody asked for
+    @param keep_open: close() stops nothing
+    @param scope: groups with the same scope share names; None: this one
+    @param sigterm_timeout: seconds SIGTERM then gets before SIGKILL. start()
+        can set it per process.
+    @param env: variables for every process (None unsets), over this
+        process's environment; start(env=) wins. Never put in os.environ, so
+        other groups don't see it. Fixed at creation: procs.env is read-only.
     """
 
     def __init__(
         self,
-        name="processes",
+        name: str = "processes",
         *,
-        tmux=None,
-        prefix=None,
-        log_dir=None,
-        echo=(),
-        tty=None,
-        setup=None,
-        fail_on=None,
-        stop_codes=None,
-        sigint_timeout=10.0,
-        on_abort=None,
-        on_exit=None,
-        keep_open=False,
+        tmux: Union["TmuxSession", "_TmuxBackend", None] = None,
+        prefix: Optional[str] = None,
+        log_dir: Union[str, os.PathLike, None] = None,
+        echo: Iterable[str] = (),
+        tty: Optional[TextIO] = None,
+        setup: Optional[str] = None,
+        fail_on: Optional[Mapping[str, Union[_Check, Sequence[_Check]]]] = None,
+        stop_codes: Optional[Mapping[str, _Codes]] = None,
+        sigint_timeout: float = 10.0,
+        on_abort: Optional[Callable[[], None]] = None,
+        on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
+        keep_open: bool = False,
         scope=None,
-        sigterm_timeout=5.0,
-        env=None,
+        sigterm_timeout: float = 5.0,
+        env: Optional[Mapping[str, Optional[str]]] = None,
     ):
         prefix = name if prefix is None else prefix
         if log_dir is None:
@@ -1032,11 +1200,13 @@ class Processes:
         _open.append(self)
 
     def _fail(self, message):
+        """Raise ProcessFailure('message'); the pytest subclass fails the test
+        instead."""
         raise ProcessFailure(message)
 
     def _tmux_for_build(self):
         """The _TmuxBackend build() uses when the group has none."""
-        raise ValueError("build(): needs a tmux session: Processes(..., tmux=TmuxSession)")
+        raise ValueError("build(): needs a tmux session: ProcessGroup(..., tmux=TmuxSession)")
 
     def _kept_server(self, socket):
         """adopt()'s tmux server, kept to look at."""
@@ -1050,31 +1220,43 @@ class Processes:
 
     def start(
         self,
-        name,
-        command,
-        ready=None,
-        timeout=30.0,
-        fail_on=(),
-        exits=None,
-        stop_codes=None,
-        env=None,
-        sigint_timeout=None,
-        sigterm_timeout=None,
+        name: str,
+        command: str,
+        ready: Union[str, "re.Pattern", None] = None,
+        timeout: float = 30.0,
+        fail_on: Union[_Check, Sequence[_Check]] = (),
+        exits: Optional[_Codes] = None,
+        stop_codes: Optional[_Codes] = None,
+        env: Optional[Mapping[str, Optional[str]]] = None,
+        sigint_timeout: Optional[float] = None,
+        sigterm_timeout: Optional[float] = None,
     ) -> Process:
-        """Start 'command' as 'window:name' (a name without ':' goes in a
-        window of its own). With 'ready' (a regex), wait up to 'timeout' s
-        for a line matching it, as wait_for() does. 'fail_on': more fail_on
-        patterns for it. 'exits': a code (or several) it finishes with on
-        its own, so that exit is no death; wait_for_exit() waits for it.
-        'stop_codes': the codes it may exit with when stopped (default: the
-        group's). 'env': variables to set (None: unset), over the group's
-        env=, over this process's environment. 'sigint_timeout': seconds
-        SIGINT gets before SIGTERM when it is stopped, 'sigterm_timeout'
-        seconds SIGTERM gets before SIGKILL (defaults: the group's). A
-        stopped name can be started again. Returns its Process."""
+        """Start 'command' as a process of the group. A stopped name can be
+        started again.
+
+        @param name: 'window:name'; a name without ':' goes in a window of its own
+        @param command: a shell command
+        @param ready: a regex: wait for a line matching it, as wait_for() does
+        @param timeout: seconds to wait for 'ready'
+        @param fail_on: more fail_on patterns for it
+        @param exits: a code (or several) it finishes with on its own, so that
+            exit is no death; wait_for_exit() waits for it
+        @param stop_codes: the codes it may exit with when stopped; None: the
+            group's
+        @param env: variables to set (None: unset), over the group's env=, over
+            this process's environment
+        @param sigint_timeout: seconds SIGINT gets before SIGTERM when it is
+            stopped; None: the group's
+        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None: the
+            group's
+        @return: its Process
+        @raise ValueError: it is already running, another open group of the same
+            scope has the name, or the group adopted a script
+        @raise ProcessFailure: no 'ready' line in time, or it exited first
+        """
         if self._adopted:
             raise ValueError(
-                "start(): this group adopted a script's session; " "start more in another Processes"
+                "start(): this group adopted a script's session; " "start more in another group"
             )
         name = self._name(name)
         on_exit, on_line = self._begin(name, command, fail_on, exits, stop_codes)
@@ -1110,7 +1292,7 @@ class Processes:
         if name in self._runs and self.status(name).running:
             raise ValueError(f"{name} is already running")
         if any(name in p._runs for p in _open if p is not self and p.scope is self.scope):
-            raise ValueError(f"{name} is taken: another open Processes of {self.prefix} has it")
+            raise ValueError(f"{name} is taken: another open group of {self.prefix} has it")
         patterns = self.fail_on.get("*", []) + self.fail_on.get(name, [])
         patterns += [fail_on] if isinstance(fail_on, str) or callable(fail_on) else list(fail_on)
         if stop_codes is None:
@@ -1123,16 +1305,30 @@ class Processes:
             self._on_line(name, [p if callable(p) else re.compile(p) for p in patterns]),
         )
 
-    def build(self, build, *args, exits=None, **kwargs):
+    def build(
+        self,
+        build: Callable[..., _T],
+        *args,
+        exits: Optional[Mapping[str, _Codes]] = None,
+        **kwargs,
+    ) -> _T:
         """Run 'build(session, *args, **kwargs)': a session script's function
         that makes its windows and panes. Each pane it makes is a process
         of this group, named 'window:pane' as in the script; its windows
         are '<Class>/<window>' in the run's tmux session (always tmux, even
         without --tmux). Panes default to wrap mode; attach() and
-        dashboard() do nothing. 'exits': {pane name: code(s)} for panes
-        that finish on their own, as start()'s exits=. Returns what build() returns. Then
-        procs["window:pane"] is a pane's Process, and procs.session the
-        session build() got, for the script's other functions."""
+        dashboard() do nothing. Then procs["window:pane"] is a pane's
+        Process, and procs.session the session build() got, for the script's
+        other functions.
+
+        @param build: the script's function
+        @param args: passed on to it, as are 'kwargs'
+        @param exits: {pane name: code(s)} for panes that finish on their own,
+            as start()'s exits=
+        @return: what build() returns
+        @raise ValueError: start() was called first, or the group has no tmux
+            session
+        """
         if self._runs:
             raise ValueError("build(): call it first, before start()")
         if not isinstance(self.backend, _TmuxBackend):
@@ -1140,7 +1336,14 @@ class Processes:
         self.session = _BuildSession(self, exits or {})
         return build(self.session, *args, **kwargs)
 
-    def adopt(self, command, name="script", ready=None, timeout=60.0, exits=None) -> list:
+    def adopt(
+        self,
+        command: str,
+        name: str = "script",
+        ready: Union[str, "re.Pattern", None] = None,
+        timeout: float = 60.0,
+        exits: Optional[Mapping[str, _Codes]] = None,
+    ) -> List[Process]:
         """Test a session script as it is: run 'command' (as process 'name'),
         then make every pane it made a process of this group, named
         'window:pane' (new_pane()'s name; else the pane's index). Its tmux
@@ -1148,15 +1351,24 @@ class Processes:
         yours, and none of it shows in the run's dashboard. attach() and
         dashboard() do nothing (LTE_HEADLESS).
 
-        The script must exit 0 within 'timeout' s; or, with 'ready' (a
-        regex), print a matching line, and is then a process of the group
-        too. 'exits': {pane name: code(s)} for panes that finish on their
-        own, as start()'s exits=. Returns the panes' Processes. Exit statuses are exact for wrap
-        and exec panes; for shell panes, only that they ended. A plain tmux
-        script works too: a pane's command is an exec pane, an idle shell is
-        left out. The panes can't be started again. The group's env= goes to
-        the script; its panes get what the script gives them. Kept on failure:
-        tmux -S <socket> attach. See docs/testing-scripts.md."""
+        Exit statuses are exact for wrap and exec panes; for shell panes, only
+        that they ended. A plain tmux script works too: a pane's command is an
+        exec pane, an idle shell is left out. The panes can't be started
+        again. The group's env= goes to the script; its panes get what the
+        script gives them. Kept on failure: tmux -S <socket> attach. See
+        docs/testing-scripts.md.
+
+        @param command: the script, a shell command
+        @param name: the script's process name
+        @param ready: a regex: the script prints a matching line, and is then a
+            process of the group too. None: it must exit 0 within 'timeout'
+        @param timeout: seconds, for 'ready' or the exit
+        @param exits: {pane name: code(s)} for panes that finish on their own,
+            as start()'s exits=
+        @return: the panes' Process objects
+        @raise ValueError: start() or build() was called first
+        @raise ProcessFailure: the script failed, timed out, or made no panes
+        """
         if self._runs:
             raise ValueError("adopt(): call it first, before start() or build()")
         self.backend = backend = _AdoptedBackend()
@@ -1179,13 +1391,13 @@ class Processes:
             )
         return adopted
 
-    def __getitem__(self, name) -> Process:
+    def __getitem__(self, name: str) -> Process:
         name = self._name(name)
         if name not in self._runs:
             raise KeyError(f"{name}: no such process; there are {', '.join(self.names) or 'none'}")
         return Process(self, name)
 
-    def kill(self, name):
+    def kill(self, name: str):
         """SIGKILL it: a death, unless in an expect_exit() block."""
         self.backend.kill(self._name(name))
 
@@ -1200,13 +1412,17 @@ class Processes:
                     self.backend.kill(name)
 
     @contextlib.contextmanager
-    def expect_exit(self, name, timeout=10.0):
+    def expect_exit(self, name: str, timeout: float = 10.0) -> Iterator[None]:
         """For an exit the test causes on purpose (kill(), a bad input): an
-        exit of 'name' in the block, or up to 'timeout' s after it, is no
-        death. Fails if it is still running then.
+        exit of 'name' in the block, or up to 'timeout' after it, is no
+        death.
 
             with procs.expect_exit("nav:planner"):
-                procs["nav:planner"].kill()"""
+                procs["nav:planner"].kill()
+
+        @param timeout: seconds it may take to exit after the block
+        @raise ProcessFailure: it is still running then
+        """
         name = self._name(name)
         run = self._runs[name]
         run.stopping = True  # as for stop(): its exit is no death
@@ -1214,11 +1430,23 @@ class Processes:
         if not run.exited.wait(timeout):
             raise ProcessFailure(f"{name} still running {timeout}s after expect_exit()")
 
-    def stop(self, name, sigint_timeout=None, check=True, sigterm_timeout=None):
+    def stop(
+        self,
+        name: str,
+        sigint_timeout: Optional[float] = None,
+        check: bool = True,
+        sigterm_timeout: Optional[float] = None,
+    ) -> PaneStatus:
         """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
-        The timeouts default to start()'s, else the group's. With 'check',
-        fail unless SIGINT stopped it, with one of its stop_codes. Returns
-        its PaneStatus."""
+
+        @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
+            start()'s, else the group's
+        @param check: fail unless SIGINT stopped it, with one of its stop_codes
+        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
+            start()'s, else the group's
+        @return: its PaneStatus
+        @raise ProcessFailure: with 'check', it did not stop cleanly
+        """
         name = self._name(name)
         run = self._runs[name]
         run.stopping = True
@@ -1234,11 +1462,15 @@ class Processes:
             raise ProcessFailure(f"{name} did not stop cleanly: {status}\n    " + self._tail(name))
         return status
 
-    def close(self, check=True):
+    def close(self, check: bool = True):
         """Stop everything still running (SIGINT, then SIGTERM, SIGKILL).
-        With 'check', fail unless each stopped cleanly: SIGINT was enough,
-        with one of its stop_codes, and no fail_on line while stopping.
-        A second close() does nothing; nor does --keep-open."""
+        A second close() does nothing; nor does --keep-open.
+
+        @param check: fail unless each stopped cleanly: SIGINT was enough, with
+            one of its stop_codes, and no fail_on line while stopping
+        @raise ProcessFailure: with 'check', one did not (the pytest subclass
+            fails the test instead)
+        """
         if self not in _open:
             return
         _open.remove(self)
@@ -1288,10 +1520,14 @@ class Processes:
         self.close(check=False)
 
     def _name(self, name):
+        """'name' as 'window:pane'; a bare name is its own window: 'x' ->
+        'x:x'."""
         return name if ":" in name else f"{name}:{name}"
 
     @staticmethod
     def _clean(status, run):
+        """Whether a stopped process stopped cleanly: SIGINT (or nothing) was
+        enough, and its exit code is one of the run's stop_codes."""
         if status.stopped not in (None, "SIGINT"):
             return False
         code = _exit_code(status)
@@ -1299,6 +1535,8 @@ class Processes:
         return code in run.stop_codes or (code is None and status.stopped == "SIGINT")
 
     def _on_exit(self, name, status, run):  # a watcher thread
+        """A process exited (a watcher thread): finished, as asked by 'exits',
+        or a death if nobody stopped it; then the on_exit callback."""
         if run.exits is not None and _exit_code(status) in run.exits:
             run.finished = True
         elif not (self.stopping or run.stopping):
@@ -1308,10 +1546,15 @@ class Processes:
         if self.on_exit is not None:
             self.on_exit(name, status, run.died)
 
-    def wait_for_exit(self, name, timeout=10.0) -> PaneStatus:
-        """Wait for a process started with 'exits' to finish; returns its
-        PaneStatus. Fails if it is still running after 'timeout' s, or
-        exited with a code not in 'exits'."""
+    def wait_for_exit(self, name: str, timeout: float = 10.0) -> PaneStatus:
+        """Wait for a process started with 'exits' to finish.
+
+        @param timeout: seconds to wait
+        @return: its PaneStatus
+        @raise ValueError: it was not started with exits=
+        @raise ProcessFailure: it is still running after 'timeout', or exited
+            with a code not in 'exits' (or another process died)
+        """
         name = self._name(name)
         run = self._runs[name]
         if run.exits is None:
@@ -1324,6 +1567,9 @@ class Processes:
         return self.backend.status(name)
 
     def _on_line(self, name, patterns):
+        """The on_line callback checking each output line of 'name' against its
+        fail_on 'patterns' (a hit is recorded for check()); None if there
+        are none."""
         if not patterns:
             return None
 
@@ -1343,11 +1589,20 @@ class Processes:
 
         return on_line
 
-    def wait_for(self, name, pattern, timeout=10.0) -> "re.Match":
-        """Wait for the process to print a line matching 'pattern' (a regex,
-        searched in plain text); what it printed already counts. Fails the
-        test if it doesn't within 'timeout' s, or exits first. Name "*":
-        any process (checking health while it waits)."""
+    def wait_for(
+        self, name: str, pattern: Union[str, "re.Pattern"], timeout: float = 10.0
+    ) -> "re.Match":
+        """Wait for the process to print a line matching 'pattern'.
+
+        What it printed already counts.
+
+        @param name: the process, 'window:pane'; "*": any process (checking
+            health while it waits)
+        @param pattern: a regex, searched in plain text
+        @param timeout: seconds to wait
+        @return: the re.Match
+        @raise ProcessFailure: no match in time, or it exited first
+        """
         if name == "*":
             regex = re.compile(pattern)
             return self.wait_until(
@@ -1375,10 +1630,18 @@ class Processes:
             why = f"{exc.status.exit_status} before printing a line matching {pattern!r}"
         raise ProcessFailure(f"{name} {why}; last output:\n    " + self._tail(name))
 
-    def wait_for_in_order(self, name, patterns, timeout=10.0) -> list:
+    def wait_for_in_order(
+        self, name: str, patterns: Sequence[Union[str, "re.Pattern"]], timeout: float = 10.0
+    ) -> List["re.Match"]:
         """Wait for lines matching each of 'patterns', in that order, each on
-        a later line than the one before; returns the re.Matches. Fails
-        after 'timeout' s (0: check now), naming the first pattern missing."""
+        a later line than the one before.
+
+        @param patterns: regexes, searched in plain text
+        @param timeout: seconds to wait; 0: check now
+        @return: the re.Matches
+        @raise ProcessFailure: one is missing in time (the first missing one is
+            named), or a death
+        """
         name = self._name(name)
         regexes = [re.compile(p) for p in patterns]
         found = []
@@ -1405,10 +1668,23 @@ class Processes:
             time.sleep(0.1)
         return list(found)
 
-    def wait_until(self, predicate, timeout=30.0, poll=0.2, what=None):
-        """Call predicate() until it returns something true, and return
-        that; check() between calls, so a death fails now, not at the
-        timeout. Fails if 'timeout' s pass first."""
+    def wait_until(
+        self,
+        predicate: Callable[[], Optional[_T]],
+        timeout: float = 30.0,
+        poll: float = 0.2,
+        what: Optional[str] = None,
+    ) -> _T:
+        """Call predicate() until it returns something true; check() between
+        calls, so a death fails now, not at the timeout.
+
+        @param timeout: seconds to wait
+        @param poll: seconds between calls
+        @param what: what it waits for, for the failure message; None:
+            predicate's name
+        @return: what predicate() returned
+        @raise ProcessFailure: 'timeout' passed first, or a death
+        """
         deadline = time.monotonic() + timeout
         while True:
             self.check()
@@ -1422,27 +1698,41 @@ class Processes:
                 )
             time.sleep(poll)
 
-    def status(self, name) -> PaneStatus:
+    def status(self, name: str) -> PaneStatus:
+        """The process's status: running, exit status, how it was stopped.
+
+        @return: its PaneStatus
+        """
         return self.backend.status(self._name(name))
 
-    def log(self, name):
-        """The file the process's output goes to, as plain text."""
+    def log(self, name: str) -> str:
+        """The file the process's output goes to, as plain text.
+
+        @return: the path
+        """
         return os.path.join(
             self.log_dir, re.sub(r"[^A-Za-z0-9_.-]", ".", self._name(name)) + ".log"
         )
 
-    def output(self, name) -> str:
-        """Everything the process has printed so far (its latest start)."""
+    def output(self, name: str) -> str:
+        """Everything the process has printed so far (its latest start).
+
+        @return: the text
+        """
         return self.backend.output(self._name(name))
 
     def _tail(self, name, lines=8):
+        """The last 'lines' lines of its output, indented, for failure
+        messages."""
         return "\n    ".join(self.output(name).strip().splitlines()[-lines:])
 
     def check(self):
-        """Raise AssertionError if anything died, or printed a fail_on line,
-        since the last check(). Each problem fails one test: the one it
-        happened in. Runs after every test; call it while waiting to fail
-        fast."""
+        """Fail if anything died, or printed a fail_on line, since the last
+        check(). Each problem fails one test: the one it happened in. Runs
+        after every test; call it while waiting to fail fast.
+
+        @raise ProcessFailure: an AssertionError, naming each problem
+        """
         died = self.died[self._raised_died :]
         failed_on = self.failed_on[self._raised_failed_on :]
         self._raised_died, self._raised_failed_on = len(self.died), len(self.failed_on)
@@ -1458,4 +1748,4 @@ class Processes:
             raise ProcessFailure("launched process died early:\n" + "\n".join(problems))
 
 
-_open = []  # every Processes not closed yet: what check_health() and the hooks check
+_open = []  # every ProcessGroup not closed yet: what check_health() and the hooks check

@@ -11,6 +11,7 @@ Stdlib only.
 
 import os
 import re
+from typing import Optional
 
 from .._tmux import tmux as _tmux
 
@@ -33,6 +34,7 @@ def _entries(run):
 
 
 def _alive(pid):
+    """Whether process 'pid' exists (ours or not)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -42,9 +44,12 @@ def _alive(pid):
     return True
 
 
-def install(session_id, pid, run=_tmux):
-    """Hook 'session_id''s window changes to SIGUSR1 for 'pid'. Returns the
-    hook index for remove(), or None if tmux did not take it."""
+def install(session_id: str, pid: int, run=_tmux) -> Optional[int]:
+    """Hook 'session_id''s window changes to SIGUSR1 for 'pid'.
+
+    @param run: runs tmux (a stub, in tests)
+    @return: the hook index, for remove(); None if tmux did not take it
+    """
     entries = _entries(run)
     for index, command in entries.items():
         m = _PID.search(command)
@@ -60,5 +65,9 @@ def install(session_id, pid, run=_tmux):
     return index if index in _entries(run) else None
 
 
-def remove(index, run=_tmux):
+def remove(index: int, run=_tmux):
+    """Remove our hook entry at 'index'.
+
+    @param run: runs tmux (a stub, in tests)
+    """
     run("set-hook", "-gu", f"{HOOK}[{index}]")

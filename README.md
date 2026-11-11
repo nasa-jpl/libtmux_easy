@@ -67,8 +67,8 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
     - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
     - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
 
-    See [Testing with pytest](#testing-with-pytest). The same `Processes`, without pytest, is
-    `libtmux_easy.processes.Processes`, for a launcher or a script: see
+    See [Testing with pytest](#testing-with-pytest). The same group, without pytest, is
+    `libtmux_easy.processes.ProcessGroup`, for a launcher or a script: see
     [docs/processes.md](docs/processes.md).
 
 
@@ -160,7 +160,7 @@ reruns typed by hand).
 | `watch_output(target, pattern, cb)`, `wait_for_output(target, pattern, timeout)`, `expect(target, pattern)` | output events |
 | `dashboard()`, `dashboard_pane(cmd)`, `close_dashboard()` | the dashboard |
 | `on_close(action)`, `close()`, `bind_close_key(key=None)` | graceful close |
-| `kill_session()`, `release(keep_windows=False)` | end, or let go and leave windows up |
+| `kill()`, `release(keep_windows=False)` | end, or let go and leave windows up |
 | `select_window()`, `select_pane()`, `attach()` | |
 
 A pane's environment is exactly `os.environ` plus `env=` at session,
@@ -169,7 +169,7 @@ server's. Shell panes run `rc` (aliases, prompt), then get their exact
 environment back. No size limit. See `docs/environment.md`. `status_file=` writes `status()` as JSON on
 every change, for other programs.
 
-`kill_session()` only sends SIGHUP: `stop_all()` or `close()` first for a
+`kill()` only sends SIGHUP: `stop_all()` or `close()` first for a
 clean shutdown.
 
 ## Output

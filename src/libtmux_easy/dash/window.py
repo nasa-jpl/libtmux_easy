@@ -8,6 +8,7 @@ import shutil
 import site
 import sys
 from pathlib import Path
+from typing import Optional, Tuple, Union
 
 from packaging.version import InvalidVersion, Version
 
@@ -27,10 +28,14 @@ from .options import (
 )
 
 
-def launcher():
+def launcher() -> str:
     """How the dashboard window runs lte-dash: under this interpreter when it
     has Textual >= 1.0 (e.g. a venv), else an installed lte-dash (pipx, the
-    .deb), which brings its own. Raises RuntimeError when neither exists."""
+    .deb), which brings its own.
+
+    @return: the shell command
+    @raise RuntimeError: neither exists; INSTALL_HINT
+    """
     textual = _textual_dir()
     if textual:
         path = [str(Path(__file__).resolve().parents[2])]
@@ -68,38 +73,46 @@ def _site_dirs():
 
 def open_window(
     session,
-    status_file,
+    status_file: Optional[str],
     home_log,
-    ctl=None,
+    ctl: Optional[str] = None,
     *,
-    name="dash",
-    width=AUTO,
-    mouse=True,
+    name: str = "dash",
+    width: Union[int, str] = AUTO,
+    mouse: bool = True,
     run=_tmux,
-    sidebar_cmd=None,
-    home_cmd=None,
-    key=None,
-    initial=None,
-):
-    """Create a dashboard window in 'session' (an id like '$1', or a name; not
-    '=name', which tmux 3.4's set-option rejects as "no such session").
-    Returns (window id, sidebar pane id).
+    sidebar_cmd: Optional[str] = None,
+    home_cmd: Optional[str] = None,
+    key: Optional[str] = None,
+    initial: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Create a dashboard window in 'session'.
 
     The home pane follows 'home_log'; the sidebar reads 'status_file' and
-    sends actions to 'ctl'. The caller keeps both up to date. 'sidebar_cmd'
-    is how to run lte-dash (default: launcher()). Raises RuntimeError, before
-    touching the session, if lte-dash cannot run.
+    sends actions to 'ctl'. The caller keeps both up to date.
 
-    'status_file' None: the sidebar follows the session's @lte_status and
-    @lte_dir options instead. 'home_cmd' replaces the home pane's tail of
-    'home_log' (which may then be None) with a command of the caller's; the
-    sidebar then never closes the window (see HOME_KIND_OPTION). 'key': the
-    prefix key the sidebar borrows while it runs ("" for none; None: lte-dash
-    --key's default, KEY only if unbound). 'initial'
-    is the pane id the sidebar selects (and shows) first, instead of home.
-
-    'width': columns, a percentage like "25%", or AUTO: the sidebar sizes
-    itself once, at start, to fit its widest row (the panes it lists then)."""
+    @param session: an id like '$1', or a name; not '=name', which tmux 3.4's
+        set-option rejects as "no such session"
+    @param status_file: the status file; None: the sidebar follows the
+        session's @lte_status and @lte_dir options instead
+    @param home_log: the file the home pane follows; may be None with 'home_cmd'
+    @param ctl: the script's control socket
+    @param name: the window's name
+    @param width: columns, a percentage like "25%", or AUTO: the sidebar sizes
+        itself once, at start, to fit its widest row (the panes it lists then)
+    @param mouse: turn the session's mouse option on
+    @param run: runs tmux (a stub, in tests)
+    @param sidebar_cmd: how to run lte-dash; None: launcher()
+    @param home_cmd: replaces the home pane's tail of 'home_log' with a command
+        of the caller's; the sidebar then never closes the window (see
+        HOME_KIND_OPTION)
+    @param key: the prefix key the sidebar borrows while it runs ("" for none;
+        None: lte-dash --key's default, KEY only if unbound)
+    @param initial: the pane id the sidebar selects (and shows) first, instead
+        of home
+    @return: (window id, sidebar pane id)
+    @raise RuntimeError: lte-dash cannot run; raised before touching the session
+    """
     sidebar_cmd = sidebar_cmd or launcher()
     home_kind = "command" if home_cmd else "log"
     if home_cmd is None:

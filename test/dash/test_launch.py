@@ -89,7 +89,7 @@ class TestCurrent:
         assert adopted.is_running(pane)
         assert inside._session_option("@lte_dir") == adopted._wrap_dir
 
-        adopted.kill_session()
+        adopted.kill()
 
         assert _has_session("lte-test-current")
         assert [w.name for w in inside.windows] == ["host"]
@@ -105,7 +105,7 @@ class TestCurrent:
         adopted.new_pane("p", f"echo $LTE_ADOPT > {out}")
         assert wait_until(lambda: out.exists() and len(out.read_text()) == 20001)
         assert inside.server.cmd("show-environment", "-t", inside.id).stdout == before
-        adopted.kill_session()
+        adopted.kill()
 
     def test_reuses_dashboard_and_publishes_status(self, inside):
         window, _ = dash.open_window(inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat")
@@ -119,7 +119,7 @@ class TestCurrent:
         assert [e["name"] for e in dash.read_status(adopted.status_file)] == ["mine:p"]
 
         adopted.close_dashboard()  # not ours: left open
-        adopted.kill_session()
+        adopted.kill()
         assert window in [w.id for w in inside.windows]
         assert inside._session_option(dash.STATUS_OPTION) == ""
 
@@ -135,7 +135,7 @@ class TestCurrent:
         viewport.show(pane.id)
 
         adopted.stop_all()
-        adopted.kill_session()
+        adopted.kill()
 
         assert viewport.panes().get(home) == window  # home survived, back in place
         assert pane.id not in viewport.panes()
@@ -153,7 +153,7 @@ class TestCurrent:
         assert [e["name"] for e in dash.read_status(adopted.status_file)] == ["test_x/nodes:p"]
         nxt = TmuxSession.current()
         nxt.new_window("nodes")  # the name is free again
-        nxt.kill_session()
+        nxt.kill()
 
     def test_release_own_session_keeps_it(self, session):
         session.new_pane("p", "true", mode=PANE_MODE_WRAP)

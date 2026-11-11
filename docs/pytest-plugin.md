@@ -94,6 +94,7 @@ teardown_class(cls)     once, after the last test
 | `setup_class` takes no fixtures | the plugin finds its config and temp dirs itself: `Processes(cls)` needs only the class |
 | `setup_class` raises | every test in the class ERRORs; pytest skips `teardown_class`; the plugin stops what was started when the class ends |
 | a test fails | the class's processes are stopped at once and its remaining tests SKIPPED (see Health and failure) |
+| no `close()` in `teardown_class` | the plugin still stops the group after the last test, but unchecked (`close(check=False)`): an unclean stop goes unnoticed. Deaths during tests fail them either way |
 
 pytest runs the two methods as a class-scoped fixture internally. We use
 them, not a fixture, because they read as plain Python: two named
@@ -103,10 +104,14 @@ methods, no decorators, no `yield`.
 
 `Processes(owner=None, *, fail_on=None, stop_codes=None, sigint_timeout=10, on_abort=None, log_dir=None, sigterm_timeout=5, env=None)`
 
+Tests use this one. `libtmux_easy.processes.ProcessGroup` is the engine it
+subclasses, for programs that aren't tests ([processes.md](processes.md)):
+same methods, no test owner, mode set by `tmux=`.
+
 | argument | meaning |
 |---|---|
 | `owner` | the test class (`cls` in `setup_class`); none in a test: that test. Its failed tests abort the group |
-| `fail_on` | `{name or "*": regex, function line -> problem or None, or a list}`: a match is a death |
+| `fail_on` | output that means a process failed, though still running. `{name or "*": check}`; a check is a regex (searched in each line), a function `line -> problem or None`, or a list of them. A match is a death. E.g. `{"*": r"Traceback", "sim:server": r"ERROR"}` |
 | `stop_codes` | `{name or "*": codes}` allowed when stopped (default 0); a signal N is 128+N, so 130 allows dying of SIGINT |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
@@ -200,7 +205,7 @@ drop the overlay.
   `cmd_capture` log, not a pane capture, which also holds the shell's
   prompt and the typed command. Each start rewrites it, so it holds the
   latest start ([output.md](output.md)).
-- **One registry.** Every open `Processes` is in `_open`; `check_health()`
+- **One registry.** Every open group is in `_open`; `check_health()`
   and the hooks walk it, so helpers deep in test code need no handle.
   `Processes()` works outside fixtures through `_plugin`, filled by a
   session autouse fixture before any `setup_class`.

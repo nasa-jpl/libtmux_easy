@@ -25,6 +25,8 @@ from .window import open_window
 
 
 def main(argv=None):
+    """lte-dash: run the sidebar for a session (normally started by
+    TmuxSession.dashboard())."""
     parser = argparse.ArgumentParser(
         prog="lte-dash", description="a status sidebar for a libtmux_easy session"
     )

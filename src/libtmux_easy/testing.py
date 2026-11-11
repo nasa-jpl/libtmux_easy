@@ -19,6 +19,7 @@ teardown_class:
         @classmethod
         def teardown_class(cls):
             cls.procs.close()      # fails unless each exits 0 on SIGINT
+                                   # (optional: see Processes, "Closing")
 
         def test_x(self):
             with Processes() as procs:   # this test's own, stopped after it
@@ -43,17 +44,22 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 import pytest
 
 from . import dash
 from ._tmux import option
+from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
-from .processes import Processes as _Processes
+from .processes import _Check, _Codes
+from .status import PaneStatus
 from .tmux_lib import TmuxSession
 
 
 def pytest_addoption(parser):
+    """The plugin's command-line options: --tmux, --no-attach, --keep-open,
+    --echo, --arg."""
     group = parser.getgroup("libtmux_easy")
     group.addoption(
         "--tmux",
@@ -90,12 +96,16 @@ def pytest_addoption(parser):
 
 
 def under_lte_session() -> bool:
-    """True inside a session with a dashboard, e.g. lte-session's."""
+    """Whether this runs inside a session with a dashboard, e.g. lte-session's.
+
+    @return: True if it does
+    """
     pane = os.environ.get("TMUX_PANE")
     return bool(pane) and bool(option(pane, dash.WINDOW_OPTION))
 
 
 def _wants_tmux(config):
+    """Any option that needs tmux: --tmux, --no-attach or --keep-open."""
     return any(config.getoption(o) for o in ("tmux", "no_attach", "keep_open"))
 
 
@@ -145,6 +155,8 @@ def _in_foreground():
 
 
 def pytest_configure(config):
+    """Read --arg values; pick the mode (dash under lte-session, tmux, else
+    subprocess); set up the run's state on 'config'."""
     _args.clear()
     for item in config.getoption("arg"):
         name, eq, value = item.partition("=")
@@ -193,6 +205,7 @@ def _free_session_name(base):
 
 
 def pytest_report_header(config):
+    """The mode and where the process logs go, in pytest's header."""
     logs = f"process logs: {config._tmp_path_factory.getbasetemp()}"
     if config.lte_mode == "tmux":
         return [f"lte mode: tmux (watch: tmux attach -t {config.lte_session_name})", logs]
@@ -200,9 +213,11 @@ def pytest_report_header(config):
 
 
 def _run_session(config):
-    # Processes get pytest's environment, as subprocesses do: the tmux
-    # server's may predate an activated venv or a sourced workspace. Panes
-    # don't wait for their shells (wait_start=False): rc files run at once.
+    """The run's TmuxSession, made on first use: lte-session's (dash mode),
+    else a new detached one. Processes get pytest's environment, as
+    subprocesses do: the tmux server's may predate an activated venv or a
+    sourced workspace. Panes don't wait for their shells (wait_start=False):
+    rc files run at once."""
     if config.lte_session is None:
         if config.lte_mode != "dash" and config.lte_session_name is None:  # build() without --tmux
             config.lte_session_name = _free_session_name(f"lte_test_{os.getpid()}")
@@ -217,6 +232,8 @@ def _run_session(config):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    """Close every group still open (unchecked). Kill the run's tmux session,
+    or keep it: in dash mode, with --keep-open, or after a failure."""
     config = session.config
     for procs in list(_open):  # never closed: don't leave them running
         procs.close(check=False)
@@ -228,18 +245,23 @@ def pytest_sessionfinish(session, exitstatus):
         tmux.release(keep_windows=True)
         config.lte_kept = config.lte_mode != "dash"
     else:
-        tmux.kill_session()
+        tmux.kill()
 
 
 _args = {}  # --arg NAME=VALUE, set before collection
 _args_read = set()
 
 
-def arg(name, default=None):
-    """The value of --arg NAME=VALUE, converted to the type of 'default'
-    if one is given (bools take 1/0, true/false, yes/no). Without the
-    option: 'default', or a usage error if there is none. Usable at
-    import time."""
+def arg(name: str, default=None):
+    """The value of --arg NAME=VALUE. Usable at import time.
+
+    @param name: NAME
+    @param default: the value without the option; its type converts VALUE
+        (bools take 1/0, true/false, yes/no). None: the option is required
+    @return: the value, as 'default''s type; a str without one
+    @raise pytest.UsageError: no option and no 'default', or a VALUE that
+        doesn't convert
+    """
     _args_read.add(name)
     if name not in _args:
         if default is None:
@@ -261,6 +283,8 @@ def arg(name, default=None):
 
 
 def pytest_terminal_summary(terminalreporter, config):
+    """At the end: --arg values no test read, where the logs are, and the tmux
+    sessions kept to attach to."""
     unread = sorted(set(_args) - _args_read)
     if unread:
         terminalreporter.write_line(f"warning: no test read --arg {', '.join(unread)}", yellow=True)
@@ -282,40 +306,72 @@ def pytest_terminal_summary(terminalreporter, config):
 # ---------- Processes, owned by a test ----------
 
 
-class Processes(_Processes):
-    """A group of processes under test and their health, in any mode.
+class Processes(processes.ProcessGroup):
+    """A group of processes under test and their health, in any mode. Use
+    this one in tests.
 
-    Make one in setup_class, close() it in teardown_class:
+    It is libtmux_easy.processes.ProcessGroup (the engine, for programs
+    that aren't tests) tied to pytest: a test owns it, the mode (subprocess,
+    tmux, dash) comes from the command line, and a failure is a pytest
+    failure. Same methods: start(), wait_for(), stop(), close(), ...
+
+    Make one in setup_class:
 
         cls.procs = Processes(cls, fail_on={"*": r"Traceback"})
 
-    or in a test, for that test alone; closed at the end of the 'with', or
-    else after the test:
+    or in a test, for that test alone (closed at the end of the 'with', or
+    else after the test):
 
         with Processes() as procs:
 
-    'owner': the test class; None in a test: that test. A failed test of
-    the owner stops the group at once, after on_abort() if given; a class
-    also skips its remaining tests. Names (window:pane) are unique within a
-    class: across its groups, and its tmux windows are '<Class>/<window>'.
-    'log_dir': default a temp dir named after the owner. 'env': variables
-    for each of its processes (start(env=) wins); the group's alone, never
-    os.environ, so other classes and tests don't see it. The rest as for
-    libtmux_easy.processes.Processes; the mode comes from the command line.
+    Closing: close() in teardown_class stops everything and fails unless
+    each process stopped cleanly (SIGINT was enough, with an allowed code).
+    Forget it, and the plugin still stops the group after the class's last
+    test, but with close(check=False): nothing is checked. A death while a
+    test runs fails that test either way.
+
+    @param owner: the test class (cls, in setup_class). None, in a test: that
+        test. A failed test of the owner stops the group at once (on_abort()
+        first); a class also skips its remaining tests. Names ('window:pane')
+        are unique within a class, across its groups; its tmux windows are
+        '<Class>/<window>'.
+    @param fail_on: output that means a process failed, though still running:
+        {name or "*": check}. A check is a regex (searched in each line), a
+        function line -> problem message or None, or a list of them. "*":
+        every process. A match is a death: the running test fails. E.g.
+        fail_on={"*": r"Traceback", "sim:server": r"ERROR"}
+    @param stop_codes: exit codes allowed when a process is stopped: {name or
+        "*": code or codes}, default 0. A signal N is 128+N: 130 allows dying
+        of SIGINT.
+    @param sigint_timeout: seconds a stopped process gets after SIGINT before
+        SIGTERM
+    @param on_abort: called with no arguments when a test of the owner fails,
+        before everything is stopped: bring things down your own way
+    @param log_dir: where the processes' logs go; None: a new temp dir named
+        after the owner
+    @param on_exit: on_exit(name, PaneStatus, died), on every exit, from a
+        watcher thread. 'died': nobody asked for it.
+    @param sigterm_timeout: seconds it then gets after SIGTERM before SIGKILL
+    @param env: variables for every process of the group (None unsets);
+        start(env=) wins. The group's only: never put in os.environ, so
+        other classes and tests don't see it.
+    @raise RuntimeError: the plugin isn't enabled
+    @raise TypeError: no owner outside a test, or an owner that isn't a test
+        class
     """
 
     def __init__(
         self,
-        owner=None,
+        owner: Union[pytest.Item, type, None] = None,
         *,
-        fail_on=None,
-        stop_codes=None,
-        sigint_timeout=10.0,
-        on_abort=None,
-        log_dir=None,
-        on_exit=None,
-        sigterm_timeout=5.0,
-        env=None,
+        fail_on: Optional[Mapping[str, Union[_Check, Sequence[_Check]]]] = None,
+        stop_codes: Optional[Mapping[str, _Codes]] = None,
+        sigint_timeout: float = 10.0,
+        on_abort: Optional[Callable[[], None]] = None,
+        log_dir: Union[str, os.PathLike, None] = None,
+        on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
+        sigterm_timeout: float = 5.0,
+        env: Optional[Mapping[str, Optional[str]]] = None,
     ):
         if not _plugin:
             raise RuntimeError(
@@ -365,12 +421,17 @@ class Processes(_Processes):
         self.owner = owner
 
     def _fail(self, message):
+        """Fail the test: pytest.fail, without a traceback into this module."""
         pytest.fail(message, pytrace=False)
 
     def _tmux_for_build(self):
+        """build() without --tmux: the owner's tmux backend in the run's
+        session."""
         return _class_tmux_backend(self.scope, self.prefix)
 
     def _kept_server(self, socket):
+        """Note adopt()'s tmux server, kept after a failure, for the terminal
+        summary."""
         _plugin["config"].lte_kept_servers.append(socket)
 
 
@@ -378,21 +439,30 @@ _tmux_backends = {}  # test class (or test) -> the _TmuxBackend its groups share
 
 
 def _class_tmux_backend(scope, prefix):
+    """The _TmuxBackend every group of a test class (or test) shares, made on
+    first use."""
     if scope not in _tmux_backends:
         _tmux_backends[scope] = _TmuxBackend(_run_session(_plugin["config"]), prefix)
     return _tmux_backends[scope]
 
 
 def check_health():
-    """Raise AssertionError if any open Processes saw a death. For helpers
-    deep in test code that weren't handed one, e.g. a polling loop."""
+    """Fail if any open Processes saw a death. For helpers deep in test code
+    that weren't handed one, e.g. a polling loop.
+
+    @raise ProcessFailure: an AssertionError, naming each problem
+    """
     for procs in list(_open):
         procs.check()
 
 
 @pytest.fixture(scope="session")
 def lte_pane_setup():
-    """A shell command run before each process. None: nothing."""
+    """A fixture: a shell command run before each process. Override it in
+    conftest.py.
+
+    @return: the command; None: nothing
+    """
     return None
 
 
@@ -468,7 +538,7 @@ def pytest_runtest_teardown(item, nextitem):
             procs.close(check=False)
 
 
-def parametrize(argnames, argvalues):
+def parametrize(argnames: str, argvalues: Sequence[Any]) -> Callable[[type], type]:
     """Class decorator: run the whole class -- setup_class, its tests,
     teardown_class -- once per value, like launch_testing.parametrize.
     Each value is a class attribute, e.g. cls.rate in setup_class:
@@ -476,8 +546,13 @@ def parametrize(argnames, argvalues):
         @parametrize("rate", [5, 10])
         class TestRover: ...           # TestRover[rate=5], TestRover[rate=10]
 
-    'argnames' may name several ("a, b", values as tuples); stacked
-    decorators multiply."""
+    Stacked decorators multiply.
+
+    @param argnames: the attribute's name; several, comma-separated ("a, b"),
+        take values as tuples
+    @param argvalues: one value (or tuple) per run of the class
+    @return: the decorator
+    """
     names = [n.strip() for n in argnames.split(",") if n.strip()]
 
     def decorate(cls):
@@ -491,6 +566,8 @@ def parametrize(argnames, argvalues):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_pycollect_makeitem(collector, name, obj):
+    """Collect a parametrize()d class as one class per value set, named
+    'Class[a=1,b=2]'."""
     params = isinstance(obj, type) and obj.__dict__.get("_lte_params")
     if not params or not collector.istestclass(obj, name):
         return None
@@ -509,4 +586,5 @@ class _ParametrizedClass(pytest.Class):
     """A class made by parametrize(): not an attribute of its module."""
 
     def _getobj(self):
+        """The generated subclass, which has the values as class attributes."""
         return self._lte_cls

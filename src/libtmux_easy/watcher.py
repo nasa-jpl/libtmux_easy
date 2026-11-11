@@ -7,10 +7,13 @@ import os
 import selectors
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Iterable, Optional
 
 from .proc import proc_alive
 from .status import ExitStatus
+
+if TYPE_CHECKING:
+    import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ class _WrapConn:
         self.send_lock = threading.Lock()
 
     def send(self, **msg) -> bool:
+        """Send one JSON message to lte-run; False if the connection is gone."""
         with self.send_lock:
             try:
                 self.sock.sendall((json.dumps(msg) + "\n").encode())
@@ -80,7 +84,12 @@ class _PaneWatcher(threading.Thread):
 
     _POLL_INTERVAL = 0.5
 
-    def __init__(self, on_exit, on_wrap_message=None, on_wrap_closed=None):
+    def __init__(
+        self,
+        on_exit: Callable[[str], None],
+        on_wrap_message: Optional[Callable[["_WrapConn", dict], None]] = None,
+        on_wrap_closed: Optional[Callable[["_WrapConn"], None]] = None,
+    ):
         super().__init__(daemon=True, name="PaneWatcher")
         self._on_exit = on_exit
         self._on_wrap_message = on_wrap_message
@@ -93,12 +102,13 @@ class _PaneWatcher(threading.Thread):
         self._selector.register(self._wake_r, selectors.EVENT_READ, data=None)
 
     def _wake(self):
+        """Wake run() from select(), to pick up a new watch or stop."""
         try:
             os.write(self._wake_w, b"x")
         except OSError:
             pass
 
-    def watch(self, pane_id, procs):
+    def watch(self, pane_id, procs: Iterable["psutil.Process"]):
         """Begin watching 'procs' (an iterable of psutil.Process) for
         'pane_id'. No-op if that pane is already being watched. Fires
         'on_exit(pane_id)' -- from this thread -- the moment every one of
@@ -184,6 +194,9 @@ class _PaneWatcher(threading.Thread):
         os.close(self._wake_w)
 
     def run(self):
+        """The watcher thread: wait for exit events and lte-run messages
+        (polling processes that have no pidfd) and dispatch them, until
+        stop()."""
         while True:
             with self._lock:
                 if self._stopped:

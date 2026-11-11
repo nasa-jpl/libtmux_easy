@@ -344,7 +344,7 @@ class TestWrapMode:
         directory = session._wrap_dir
         assert os.path.exists(os.path.join(directory, wrap.SOCKET_NAME))
 
-        session.kill_session()
+        session.kill()
 
         assert not os.path.exists(directory)
 

@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import List, Optional, Union
 
 from . import close, dash, starter, wrap
 from .dash import keys
@@ -56,6 +57,8 @@ class _ExitFile:
         self.path = path
 
     def send(self, **msg):
+        """Write an 'exited' message to the file (atomically); ignore other
+        messages."""
         if msg.get("event") != "exited":
             return
         tmp = f"{self.path}.tmp"
@@ -64,12 +67,18 @@ class _ExitFile:
         os.replace(tmp, self.path)
 
     def messages(self):
+        """No messages from the library: lte-session runs unsupervised."""
         return iter(())
 
 
-def run(run_dir, argv):
+def run(run_dir: str, argv: List[str]):
     """Run 'argv' as the launching shell would have, under lte-run's
-    supervision (Ctrl-C reaches it; the exact status is recorded)."""
+    supervision (Ctrl-C reaches it; the exact status is recorded).
+
+    @param run_dir: the run dir a Launch made: its saved environment and cwd
+    @param argv: the command
+    @return: lte-run's exit status, the command's
+    """
     with open(os.path.join(run_dir, ENV_FILE)) as f:
         saved = json.load(f)
     env = {k: v for k, v in saved["env"].items() if k not in _PANE_ENV + _DROP_ENV}
@@ -87,7 +96,24 @@ def run(run_dir, argv):
 
 
 class Launch:
-    def __init__(self, argv, name=None, width=dash.AUTO, dash_on=True):
+    """One lte-session run: a new session whose home pane runs the command,
+    with the dashboard. Records the command's exit, transcript, environment
+    and cwd in a run dir.
+
+    @param argv: the command
+    @param name: the session's name; None: lte_<command>_<pid>
+    @param width: the sidebar's columns, 'N%', or dash.AUTO
+    @param dash_on: False: no dashboard, just the home pane
+    @raise RuntimeError: tmux could not make the session or its home pane
+    """
+
+    def __init__(
+        self,
+        argv: List[str],
+        name: Optional[str] = None,
+        width: Union[int, str] = dash.AUTO,
+        dash_on: bool = True,
+    ):
         self.argv = argv
         self.label = Path(argv[0]).name
         self.run_dir = tempfile.mkdtemp(prefix="lte_session_")
@@ -177,7 +203,11 @@ class Launch:
 
     # ----- state -----
 
-    def alive(self):
+    def alive(self) -> bool:
+        """Whether the session still exists.
+
+        @return: True if it does
+        """
         return (
             subprocess.run(
                 ["tmux", "has-session", "-t", self.session], capture_output=True
@@ -185,20 +215,31 @@ class Launch:
             == 0
         )
 
-    def exit_msg(self):
+    def exit_msg(self) -> Optional[dict]:
+        """lte-run's 'exited' message for the command.
+
+        @return: the message; None if it hasn't exited (or the pane was closed)
+        """
         try:
             with open(self.exit_file) as f:
                 return json.load(f)
         except (OSError, ValueError):
             return None
 
-    def finished(self):
-        """The command has exited, or can no longer report that it did."""
+    def finished(self) -> bool:
+        """Whether the command has ended.
+
+        @return: True if it exited, or can no longer report that it did
+        """
         if self.exit_msg() is not None or not self.alive():
             return True
         return not _tmux("list-panes", "-t", self.home, "-F", "#{pane_id}")
 
-    def exit_code(self):
+    def exit_code(self) -> int:
+        """The command's exit code.
+
+        @return: its code, a signal N as 128+N; 1, with a warning, if unknown
+        """
         msg = self.exit_msg()
         if msg is None:
             sys.stderr.write(
@@ -207,7 +248,11 @@ class Launch:
             return 1
         return 128 + msg["signal"] if msg.get("signal") is not None else msg["code"]
 
-    def describe_exit(self):
+    def describe_exit(self) -> str:
+        """How the command ended, in words.
+
+        @return: e.g. 'exited 0', 'killed by SIGINT'
+        """
         msg = self.exit_msg() or {}
         if msg.get("signal") is not None:
             try:
@@ -218,8 +263,11 @@ class Launch:
 
     # ----- output -----
 
-    def capture(self):
-        """The home pane's whole scrollback, colors included, or None."""
+    def capture(self) -> Optional[str]:
+        """The home pane's whole scrollback, colors included.
+
+        @return: the text; None if the pane is gone
+        """
         out = _tmux("capture-pane", "-p", "-e", "-J", "-S", "-", "-t", self.home)
         if not out:
             return None
@@ -227,8 +275,11 @@ class Launch:
             out.pop()
         return "\n".join(out) + "\x1b[0m\n"
 
-    def follow(self, offset=0):
-        """Copy the transcript from 'offset' to stdout until the command ends."""
+    def follow(self, offset: int = 0):
+        """Copy the transcript to stdout until the command ends.
+
+        @param offset: the byte to start from
+        """
         out = sys.stdout.buffer
         with open(self.transcript, "rb") as f:
             f.seek(offset)
@@ -246,10 +297,14 @@ class Launch:
                 else:
                     time.sleep(0.1)
 
-    def watch_exit(self, notify, keep):
+    def watch_exit(self, notify: bool, keep: bool):
         """When the command ends: publish its state for the sidebar's home
-        entry. Then send everyone attached back out, so lte-session finishes;
-        with 'keep', stay, and with 'notify' (someone is attached) say so."""
+        entry. Then send everyone attached back out, so lte-session finishes.
+        Watches in a daemon thread; returns at once.
+
+        @param notify: someone is attached: with 'keep', say that it ended
+        @param keep: stay in the session
+        """
 
         def watch():
             while not self.finished():
@@ -286,15 +341,21 @@ class Launch:
                     pass  # that session is gone
             _tmux("detach-client", "-t", client)
 
-    def attached(self):
+    def attached(self) -> bool:
+        """Whether a client is attached to the session.
+
+        @return: True if one is
+        """
         out = _tmux("display-message", "-p", "-t", self.session, "#{session_attached}")
         return bool(out and out[0].strip() not in ("", "0"))
 
     def kill(self):
+        """Kill the session; give the borrowed close key back."""
         _tmux("kill-session", "-t", self.session)
         self.give_back_key()
 
     def give_back_key(self):
+        """Restore the key binding the session borrowed for closing it, once."""
         if self.close_key:
             keys.give_back(self.close_key)
             self.close_key = ""
@@ -313,6 +374,9 @@ def _interrupt(launch):
 
 
 def main(argv=None):
+    """lte-session: start a session for the command and attach (or wait, with
+    no terminal); exit with the command's status. '--run DIR -- COMMAND':
+    the home pane's side."""
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["--run"]:
         if len(argv) < 4 or argv[2] != "--":

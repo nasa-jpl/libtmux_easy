@@ -21,4 +21,4 @@ for mode, cmd, pane in panes:
     status = session.wait_for_exit(pane, timeout=10)  # an ExitStatus: .code, .signal, .inferred
     print(f"{mode:5}  {cmd:22}  {status}")
 
-session.kill_session()
+session.kill()
