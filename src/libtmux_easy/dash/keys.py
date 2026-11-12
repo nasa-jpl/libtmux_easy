@@ -19,7 +19,7 @@ The library's own keys (the dashboard's g, lte-close's Q) are borrowed only
 when unbound, so a binding of the user's always wins, and ~/.tmux.conf can
 pick others: 'set -g @lte_key_dash G', 'set -g @lte_key_close ""' (none).
 
-Stdlib only, like wrap.py and dash/.
+Stdlib only, like lte_run and dash/.
 """
 
 import argparse
@@ -30,7 +30,7 @@ import sys
 import tempfile
 from typing import Optional
 
-from .._tmux import option as _option, tmux as _tmux
+from ..tmuxcmd import option as _option, tmux as _tmux
 
 TABLE = "prefix"
 

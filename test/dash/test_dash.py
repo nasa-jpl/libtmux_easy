@@ -17,8 +17,8 @@ import pytest
 from helpers import fmt as _fmt, pane_text, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, dash
 from libtmux_easy.dash import window as dash_window
-from libtmux_easy._tmux import option, tmux
-from libtmux_easy.wrap import SOCKET_NAME
+from libtmux_easy.tmuxcmd import option, tmux
+from lte_run.wrap import SOCKET_NAME
 
 needs_textual = pytest.mark.skipif(
     importlib.util.find_spec("textual") is None, reason="needs Textual"
@@ -526,7 +526,7 @@ def test_sidebar_shows_subprocess_tree(tmp_path):
         busy["target_pids"] = [proc.pid]
         idle["target_pids"] = [os.getpid() + 2**22]  # no such process
         status.write_text(json.dumps([busy, idle]))
-        from libtmux_easy.proc import descendant_tree
+        from lte_run.proc import descendant_tree
 
         assert _wait_until(lambda: descendant_tree(proc.pid))  # sh has started sleep
 

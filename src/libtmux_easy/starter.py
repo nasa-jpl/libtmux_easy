@@ -16,7 +16,7 @@ import os
 import sys
 import tempfile
 
-from ._tmux import option as _option, tmux as _tmux
+from .tmuxcmd import option as _option, tmux as _tmux
 
 ENV = "LTE_TMUX_DEFAULTS"  # "0": never source CONF
 DONE_OPTION = "@lte_starter"  # global: "1" sourced, "0" checked and skipped

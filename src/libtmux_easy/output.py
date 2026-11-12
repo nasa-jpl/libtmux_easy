@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
-from .wrap import plain_line, plain_text
+from lte_run.wrap import plain_line, plain_text
 
 if TYPE_CHECKING:
     from .status import PaneStatus

@@ -49,7 +49,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 import pytest
 
 from . import dash
-from ._tmux import option
+from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
 from .processes import _Check, _Codes
@@ -397,7 +397,7 @@ class Processes(processes.ProcessGroup):
             )
         config = _plugin["config"]
         if log_dir is None:
-            log_dir = _plugin["tmp_path_factory"].mktemp(log_name)
+            log_dir = _plugin["tmp_path_factory"].mktemp(f"{log_name}_")  # TestFoo_0, TestFoo_1, ...
         tmux = None if config.lte_mode == "subprocess" else _class_tmux_backend(scope, prefix)
         super().__init__(
             prefix,

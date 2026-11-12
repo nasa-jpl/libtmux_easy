@@ -4,10 +4,16 @@ libtmux-easy (0.6.0) noble; urgency=medium
     isn't confused with the pytest Processes. The old name is gone.
   * Needs libtmux 0.30 or later; the shims for older versions are gone
     (DeprecatedError is no longer exported).
+  * lte-run is its own package, lte_run (with the /proc helpers, formerly
+    libtmux_easy.proc and libtmux_easy.wrap), so libtmux_easy's __init__
+    imports its names directly. libtmux_easy._tmux is now tmuxcmd.
   * Every function has a docstring; Processes' arguments are each
     documented.
   * Processes(env=): variables for every process of a group, under
     start(env=); never os.environ. build() panes and adopt()'s script too.
+  * Shell and wrap panes no longer write ~/.bash_history:
+    create(history=True) to keep it.
+  * The pytest plugin's log directories are TestFoo_0, not TestFoo0.
   * Fix wait_for() and wait_for_output() missing a line printed right after
     a watch began on a pane with scrollback (tmux mode, a fast shell).
 

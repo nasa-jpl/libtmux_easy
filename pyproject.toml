@@ -45,7 +45,7 @@ dash = [
 dev = ["libtmux-easy[dash,test]"]
 
 [project.scripts]
-lte-run = "libtmux_easy.wrap:main"
+lte-run = "lte_run.wrap:main"
 lte-dash = "libtmux_easy.dash.cli:main"
 lte-session = "libtmux_easy.launch:main"
 lte-key = "libtmux_easy.dash.keys:main"

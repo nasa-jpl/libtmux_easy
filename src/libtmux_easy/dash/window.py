@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Union
 
 from packaging.version import InvalidVersion, Version
 
-from .._tmux import tmux as _tmux
+from ..tmuxcmd import tmux as _tmux
 from .options import (
     AUTO,
     HOME_CMD_OPTION,

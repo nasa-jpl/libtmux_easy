@@ -1,11 +1,14 @@
 # libtmux_easy: the rc file of a shell or wrap pane's bash, started as
-#     bash --rcfile lte_rc.bash -i -s -- RCFILE
+#     bash --rcfile lte_rc.bash -i -s -- RCFILE [history]
 # Runs RCFILE (e.g. ~/.bashrc; '' for none) for its aliases, prompt and
 # functions, then puts the exported environment back exactly as tmux started
 # the shell with (/proc/$$/environ): an rc file can't change what the pane's
-# commands get. Afterwards the shell is yours: export away. docs/environment.md
+# commands get. Without 'history', HISTFILE=/dev/null: the commands the library
+# types stay out of ~/.bash_history. Afterwards the shell is yours: export
+# away. docs/environment.md
 
 __lte_rc=${1-}
+__lte_history=${2-}
 __lte_rc=${__lte_rc/#\~/$HOME}
 set --
 if [ -n "$__lte_rc" ] && [ -r "$__lte_rc" ]; then
@@ -20,4 +23,7 @@ if [ -r "/proc/$$/environ" ]; then
         export "$__lte_n" 2>/dev/null
     done < "/proc/$$/environ"
 fi
-unset -v __lte_rc __lte_n
+# After the rc file, which may set HISTFILE. (Unset, 'history -a' would write
+# ~/.history instead.)
+[ "$__lte_history" = history ] || HISTFILE=/dev/null
+unset -v __lte_rc __lte_n __lte_history

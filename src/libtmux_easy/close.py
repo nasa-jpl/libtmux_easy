@@ -34,9 +34,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import wrap
-from .proc import alive, comm, pane_pids
-from ._tmux import option, tmux as _tmux
+from lte_run import wrap
+from lte_run.proc import alive, comm, pane_pids
+from .tmuxcmd import option, tmux as _tmux
 from .dash.control import Control, describe, read_status
 from .dash.options import (
     HOME_KIND_OPTION,

@@ -27,9 +27,11 @@ import time
 from pathlib import Path
 from typing import List, Optional, Union
 
-from . import close, dash, starter, wrap
+from lte_run import wrap
+
+from . import close, dash, starter
 from .dash import keys
-from ._tmux import option, tmux as _tmux
+from .tmuxcmd import option, tmux as _tmux
 
 ENV_FILE = "env.json"  # the launching shell's environment and cwd
 EXIT_FILE = "exit.json"  # the command's 'exited' message, from the runner
@@ -41,7 +43,7 @@ HISTORY_LIMIT = 100000  # scrollback lines kept for the copy printed at the end
 # terminal the command now runs in.
 _PANE_ENV = ("TMUX", "TMUX_PANE", "TERM")
 # BASH_ENV: a 'bash -c' command would source it, and one that sources ROS
-# again (e.g. a container's) drops the workspace overlay (see _tmux.SKIP_ENV).
+# again (e.g. a container's) drops the workspace overlay (see tmux_lib.SKIP_ENV).
 _DROP_ENV = ("COLUMNS", "LINES", "BASH_ENV")
 
 _DEAD_LINE = re.compile(r"^(\x1b\[[0-9;]*m)*Pane is dead \(")

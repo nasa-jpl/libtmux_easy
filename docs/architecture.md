@@ -2,13 +2,16 @@
 
 ## Modules
 
+Two packages: `lte_run` (stdlib only, never imports `libtmux_easy`) and
+`libtmux_easy` (the library), which imports from it.
+
 | module | deps | role |
 |---|---|---|
 | `tmux_lib.py` | libtmux, psutil | `TmuxSession`: windows, panes, modes, status, stopping, dashboard |
 | `status.py` | - | `ExitStatus`, `PaneStatus` |
 | `watcher.py` | psutil | `_PaneWatcher`: one thread per session; pidfds plus the wrap socket |
-| `proc.py` | stdlib; psutil on use | processes: `/proc` readers for the commands, psutil ones for the library |
-| `wrap.py` | stdlib | `lte-run`; pipe guards and plain text, below |
+| `lte_run/proc.py` | stdlib; psutil on use | processes: `/proc` readers for the commands, psutil ones for the library |
+| `lte_run/wrap.py` | stdlib | `lte-run`; pipe guards and plain text, below |
 | `dash/` | stdlib | `options` (state in tmux options), `window` (`open_window`), `viewport` (`Viewport`), `control` (`Control`, `read_status`), `winhook` (window-change hook), `cli` (`lte-dash`) |
 | `dash/app.py` | Textual | the sidebar UI |
 | `dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
@@ -19,13 +22,17 @@
 | `output.py` | stdlib | output capture (`pipe-pane` files), `OutputReader` (tails them), `Capture`, watches |
 | `processes.py` | the library | `ProcessGroup`: a process group, its backends (subprocess, tmux, adopted), health; no pytest |
 | `testing.py` | pytest | pytest plugin: `Processes` with a test owner, on top of `processes.py` |
-| `_tmux.py` | stdlib | `tmux()` / `option()` for the stdlib modules |
+| `tmuxcmd.py` | stdlib | `tmux()` / `option()`: raw tmux commands for the stdlib modules |
 
-- **Stdlib-only commands.** `lte-run` runs once per pane: importing libtmux
-  and psutil cost ~4x the startup and +7 MB per pane. `__init__` loads names
-  lazily for the same reason.
+- **lte-run is its own package.** It runs once per pane, for as long as the
+  command: importing `libtmux_easy` (libtmux, psutil) would cost each about 3x
+  the startup and +8 MB. So `lte_run` holds it and the stdlib helpers it
+  needs, and `libtmux_easy/__init__.py` is plain imports.
+- **Stdlib-only commands.** `lte-session`, `lte-close`, `lte-key`,
+  `lte-defaults` and `lte-dash` send raw tmux commands through `tmuxcmd.py`;
+  they use none of libtmux's objects.
 - **Commands run as modules.** Not installed, a command runs as
-  `env PYTHONPATH=<src> python -m libtmux_easy.<module>` (`_wrap_prefix()`,
+  `env PYTHONPATH=<src> python -m libtmux_easy.<module>` (or `-m lte_run`: `_wrap_prefix()`,
   `close.self_command()`), never as a script, so modules import each other
   normally.
 - **Textual is optional** (`[dash]` extra). apt's is too old, so `lte-dash` is
@@ -34,16 +41,16 @@
 ### Shared helpers
 
 One copy each. The commands import them, so their modules stay light:
-`proc.py` imports psutil inside its psutil functions only
+`lte_run/proc.py` imports psutil inside its psutil functions only
 (`test_wrapper_import_stays_light`).
 
 | helper | in | used by |
 |---|---|---|
-| `tmux()`, `option()`, `pane_env()`, `SKIP_ENV` | `_tmux.py` | dash, keys, launch, close, starter, the library |
-| `proc_stat()`, `descendants()`, `alive()`, `pane_pids()` (`/proc`) | `proc.py` | lte-run (signals), lte-close (what a pane runs) |
-| `proc_alive()`, `pane_process()`, `pane_child_processes()` (psutil) | `proc.py` | the library, the watcher |
-| `guarded_pipe()`, `guarded_unpipe()`, `tmux_literal()` | `wrap.py` | lte-run `--tee`, the library's captures |
-| `plain_line()`, `plain_text()` | `wrap.py` | `--tee`, output matching, the pytest plugin |
+| `tmux()`, `option()`, `pane_env()`, `SKIP_ENV` | `tmuxcmd.py` | dash, keys, launch, close, starter, the library |
+| `proc_stat()`, `descendants()`, `alive()`, `pane_pids()` (`/proc`) | `lte_run/proc.py` | lte-run (signals), lte-close (what a pane runs) |
+| `proc_alive()`, `pane_process()`, `pane_child_processes()` (psutil) | `lte_run/proc.py` | the library, the watcher |
+| `guarded_pipe()`, `guarded_unpipe()`, `tmux_literal()` | `lte_run/wrap.py` | lte-run `--tee`, the library's captures |
+| `plain_line()`, `plain_text()` | `lte_run/wrap.py` | `--tee`, output matching, the pytest plugin |
 | `file_size()`, `typed_echo()`, `plain_lines()` | `output.py` | the reader, searches |
 
 ### `tmux_lib.py` sections
@@ -100,7 +107,7 @@ restore the env (`lte_rc.bash`). See [environment.md](environment.md).
 
 - Created session: `copy_environment()` also sets the session's tmux
   environment, so panes made by hand get it. Adopted: left alone.
-- `_tmux.SKIP_ENV` is never copied: tmux sets `TMUX*`/`TERM` per pane, and a
+- `tmux_lib.SKIP_ENV` is never copied: tmux sets `TMUX*`/`TERM` per pane, and a
   copied `LTE_DIR` would send `lte-run` to another session's socket.
 
 ## State in tmux options

@@ -13,7 +13,7 @@ import os
 import re
 from typing import Optional
 
-from .._tmux import tmux as _tmux
+from ..tmuxcmd import tmux as _tmux
 
 HOOK = "session-window-changed"
 BASE = 100  # first index used: low ones are left to the user

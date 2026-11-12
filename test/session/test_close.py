@@ -9,7 +9,7 @@ import pytest
 from helpers import wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP
 from libtmux_easy import close
-from libtmux_easy._tmux import tmux
+from libtmux_easy.tmuxcmd import tmux
 
 
 def _alive(name):

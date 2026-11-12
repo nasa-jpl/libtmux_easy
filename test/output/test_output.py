@@ -11,7 +11,7 @@ import pytest
 from helpers import fmt, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_SHELL, PANE_MODE_WRAP, PaneExited
 from libtmux_easy import output
-from libtmux_easy._tmux import tmux
+from libtmux_easy.tmuxcmd import tmux
 from libtmux_easy.tmux_lib import _wrap_prefix
 
 MODES = (PANE_MODE_SHELL, PANE_MODE_EXEC, PANE_MODE_WRAP)

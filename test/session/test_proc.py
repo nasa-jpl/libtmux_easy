@@ -5,7 +5,7 @@ import os
 import subprocess
 
 from helpers import wait_until
-from libtmux_easy.proc import (
+from lte_run.proc import (
     cmdline,
     descendant_tree,
     get_child_pids,

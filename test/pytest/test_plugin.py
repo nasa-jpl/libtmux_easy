@@ -80,7 +80,7 @@ def test_echo_some(run):
 def test_tmux_logs(run):
     proc, out = run(PASSES, mode="tmux")
     log_dir = re.search(r"process logs: (\S+)", out)[1]
-    assert "hello_42" in open(os.path.join(log_dir, "TestRun0", "w.ok.log")).read()
+    assert "hello_42" in open(os.path.join(log_dir, "TestRun_0", "w.ok.log")).read()
 
 
 @pytest.mark.parametrize("flags", [["--tmux"], ["--no-attach"]])

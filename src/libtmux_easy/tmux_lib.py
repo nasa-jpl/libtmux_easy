@@ -27,7 +27,7 @@ from packaging import version
 
 from . import close as _close, dash, starter as _starter
 from .dash import keys as _keys
-from ._tmux import option, pane_env
+from .tmuxcmd import option
 from .dash.homelog import _SkipIfTeed, _Tee
 from .output import (
     POLL as _OUTPUT_POLL,
@@ -42,10 +42,10 @@ from .output import (
     plain_lines,
     typed_echo,
 )
-from .proc import pane_child_processes, pane_process, proc_alive, proc_stat
+from lte_run.proc import pane_child_processes, pane_process, proc_alive, proc_stat
 from .status import ExitStatus, PaneStatus
 from .watcher import _PaneWatcher, _WrapRun
-from .wrap import (
+from lte_run.wrap import (
     DIR_OPTION,
     PIPE_FILE_OPTION as PIPE_FILE,
     PIPE_FROM_OPTION as PIPE_FROM,
@@ -95,6 +95,36 @@ _PLACEHOLDER = "sleep 2147483647"
 _ENV_SEP = "lte:env:sep"
 # After the scrollback _pipe_many(snapshot=) reads with the pipe.
 _SNAPSHOT_SEP = "lte:snapshot:end"
+
+
+# Set by tmux for each pane, or describing the caller's own terminal or
+# session: never copied into a pane's environment. LTE_DIR would point
+# lte-run at another session's socket.
+# BASH_ENV: a non-interactive bash sources it, and one that sources ROS again
+# (e.g. a container's) would drop the overlay the copied environment has.
+SKIP_ENV = frozenset(
+    (
+        "TMUX",
+        "TMUX_PANE",
+        "TERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "COLUMNS",
+        "LINES",
+        "LTE_DIR",
+        "BASH_ENV",
+    )
+)
+
+
+def pane_env(env: Optional[Mapping[str, object]]) -> Dict[str, Optional[str]]:
+    """'env' as it may go into a pane: SKIP_ENV left out, values as strings.
+
+    @param env: a mapping, e.g. os.environ, or None. A None value stays None:
+        removed from the pane's environment (see TmuxSession.new_pane(env=))
+    @return: the variables, name -> str or None
+    """
+    return {k: None if v is None else str(v) for k, v in (env or {}).items() if k not in SKIP_ENV}
 
 
 def _check_mode(mode: str) -> str:
@@ -151,9 +181,7 @@ def _wrap_prefix() -> str:
     if path := shutil.which("lte-run"):
         return shlex.quote(path)
     src = Path(__file__).resolve().parents[1]
-    return (
-        f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m libtmux_easy.wrap"
-    )
+    return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m lte_run"
 
 
 def _make_wrap_dir() -> str:
@@ -330,6 +358,7 @@ class TmuxSession(Session):
         pane_capture: Union[None, bool, str] = None,
         mode: str = PANE_MODE_SHELL,
         rc: Optional[str] = "~/.bashrc",
+        history: bool = False,
         wait_start: bool = True,
         **kwargs,
     ) -> "TmuxSession":
@@ -352,6 +381,9 @@ class TmuxSession(Session):
         @param rc: the rc file a shell or wrap pane's bash runs, for aliases
             and a prompt; the environment is put back afterwards. None: no rc
             file.
+        @param history: save what a shell or wrap pane's bash runs to
+            $HISTFILE (~/.bash_history); False: the library's commands stay
+            out of it (HISTFILE=/dev/null after the rc file)
         @param wait_start: new_pane()'s default: False types each wrap pane's
             command without waiting for its shell, like a tmux shell script
         @param kwargs: for libtmux's Server.new_session()
@@ -367,6 +399,7 @@ class TmuxSession(Session):
         session.__post_init__(window, pane, title_status=title_status, status_file=status_file)
         session.default_mode = mode
         session.rc = rc
+        session.history = history
         session.wait_start = wait_start
         _starter.apply(run=session._tmux_run)
         session.bind_close_key()
@@ -384,6 +417,7 @@ class TmuxSession(Session):
         env: Optional[Mapping[str, str]] = None,
         mode: str = PANE_MODE_SHELL,
         rc: Optional[str] = "~/.bashrc",
+        history: bool = False,
         wait_start: bool = True,
     ) -> "TmuxSession":
         """Adopt the tmux session this process is running in ($TMUX_PANE),
@@ -402,6 +436,7 @@ class TmuxSession(Session):
             left alone
         @param mode: new_pane()'s default mode: set_default_mode()
         @param rc: as for create()
+        @param history: as for create()
         @param wait_start: as for create()
         @return: the TmuxSession
         @raise RuntimeError: not running inside tmux, or no session for this
@@ -425,6 +460,7 @@ class TmuxSession(Session):
         session.__post_init__(window, window.panes[0], title_status=title_status)
         session.default_mode = mode
         session.rc = rc
+        session.history = history
         session.wait_start = wait_start
         _starter.apply(run=session._tmux_run)
 
@@ -503,6 +539,7 @@ class TmuxSession(Session):
         self.default_mode = PANE_MODE_SHELL  # new_pane(mode=None), see set_default_mode()
         self.wait_start = True  # new_pane(wait_start=None)
         self.rc = "~/.bashrc"  # see create(rc=)
+        self.history = False  # see create(history=)
         self._session_env = {}  # see create(env=)
         self._window_env = {}  # window.id -> env, see new_window(env=)
         self._window_layout = {}  # window.id -> layout, see new_window(layout=)
@@ -649,7 +686,7 @@ class TmuxSession(Session):
 
         An alternative to send_command_before("source ...") for an
         environment that is already set up (an activated venv, a sourced ROS
-        workspace). _tmux.SKIP_ENV (TMUX, TERM, BASH_ENV, ...) is never copied.
+        workspace). SKIP_ENV (TMUX, TERM, BASH_ENV, ...) is never copied.
 
         @param env: the variables; a None value removes one. None: os.environ
         @raise libtmux.exc.LibTmuxException: tmux refused the environment
@@ -770,7 +807,8 @@ class TmuxSession(Session):
         if not bash:
             return "sh -i"
         # '~' is expanded by lte_rc.bash, with the pane's HOME.
-        return shlex.join([bash, "--rcfile", _RC_FILE, "-i", "-s", "--", self.rc or ""])
+        argv = [bash, "--rcfile", _RC_FILE, "-i", "-s", "--", self.rc or ""]
+        return shlex.join(argv + (["history"] if self.history else []))
 
     def _claim_pane(self, name, env=None, shell=None, **split_kwargs):
         """Split the pane 'name' off the current window, running 'shell' (an

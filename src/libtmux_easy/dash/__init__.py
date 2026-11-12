@@ -9,7 +9,7 @@ interactive. The "home" pane (a 'tail -F' of the script's output) is the
 placeholder that fills the selected pane's slot in its own window while it is
 on show, so every window keeps its layout.
 
-Stdlib only, like wrap.py, except app.py (Textual): only cli.main() imports
+Stdlib only, like lte_run, except app.py (Textual): only cli.main() imports
 it, so the library can use Viewport without Textual.
 
   options.py   tmux option names holding the dashboard's state

@@ -2,7 +2,7 @@
 
 from typing import Dict, Optional
 
-from .._tmux import option, tmux as _tmux
+from ..tmuxcmd import option, tmux as _tmux
 from .options import (
     AUTO,
     FROM_OPTION,

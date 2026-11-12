@@ -50,8 +50,8 @@ from typing import (
 from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
 from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, _pane_cmd
-from .proc import SHELLS, alive, cmdline, comm, proc_table
-from .wrap import (
+from lte_run.proc import SHELLS, alive, cmdline, comm, proc_table
+from lte_run.wrap import (
     PANE_MODE_OPTION,
     PANE_NAME_OPTION,
     PIPE_FILE_OPTION,
@@ -244,7 +244,7 @@ class _Subprocess:
         # launch' with a non-tty stdin re-sends SIGINT to children that
         # already got the group's, and Python children die of the second.
         tty_in, stdin = os.openpty()
-        # Without BASH_ENV, as for panes (see _tmux.SKIP_ENV).
+        # Without BASH_ENV, as for panes (see tmux_lib.SKIP_ENV).
         env = {
             k: v
             for k, v in dict(os.environ, **(env or {})).items()

@@ -16,8 +16,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Collapsible, Footer, Markdown, Static, Tree
 
-from .. import close, proc
-from .._tmux import option
+from lte_run import proc
+
+from .. import close
+from ..tmuxcmd import option
 from . import winhook
 from .control import describe, describe_long, read_status
 from .options import (

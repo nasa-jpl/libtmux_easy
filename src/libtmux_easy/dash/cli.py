@@ -6,8 +6,8 @@ import signal
 import sys
 
 from . import keys
-from .._tmux import option, tmux as _tmux
-from ..wrap import DIR_OPTION, SOCKET_NAME
+from ..tmuxcmd import option, tmux as _tmux
+from lte_run.wrap import DIR_OPTION, SOCKET_NAME
 from .control import Control
 from .options import (
     AUTO,

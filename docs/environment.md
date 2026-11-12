@@ -23,7 +23,7 @@ Plus what tmux always sets itself:
 | `SHELL` | the `default-shell` option |
 | `PWD`, `SHLVL` | the start dir; +1 |
 
-`SKIP_ENV` (`_tmux.py`): `TMUX*`, `TERM*`, `COLUMNS`, `LINES`, `LTE_DIR`,
+`SKIP_ENV` (`tmuxcmd.py`): `TMUX*`, `TERM*`, `COLUMNS`, `LINES`, `LTE_DIR`,
 `BASH_ENV`. `BASH_ENV` would make each bash script the command starts
 source it, and a container's that sources ROS drops a sourced overlay.
 
@@ -34,7 +34,10 @@ The pane runs `bash --rcfile lte_rc.bash -i -s -- RC`. `lte_rc.bash`:
 1. sources `RC` (`create(rc=)` / `current(rc=)`, default `~/.bashrc`;
    `None` for none). Debian's bash also reads `/etc/bash.bashrc` first;
 2. unexports everything, then re-exports `/proc/$$/environ`, the
-   environment tmux started the shell with.
+   environment tmux started the shell with;
+3. sets `HISTFILE=/dev/null`, so typed commands stay out of
+   `~/.bash_history`. `create(history=True)` / `current(history=True)` keeps
+   the rc file's `HISTFILE`.
 
 Aliases, functions, the prompt and shell options stay; exports are undone.
 This happens once, at shell start: after that the shell is yours. Stop the

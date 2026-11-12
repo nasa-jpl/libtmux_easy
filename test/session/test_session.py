@@ -10,7 +10,7 @@ import pytest
 from helpers import pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
 from libtmux_easy import dash
-from libtmux_easy._tmux import tmux
+from libtmux_easy.tmuxcmd import tmux
 from libtmux_easy.tmux_lib import _wrap_prefix
 
 
@@ -539,3 +539,21 @@ def test_status_after_session_closed(session, caplog):
     assert by_name["main:done"].exit_status.code == 3
     assert not by_name["main:busy"].running
     assert "raised" not in caplog.text
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_history(make_session, tmp_path, history):
+    """A pane's commands reach the rc file's HISTFILE only with
+    create(history=True)."""
+    hist = tmp_path / "hist"
+    rc = tmp_path / "rc"
+    rc.write_text(f"HISTFILE={hist}\nPROMPT_COMMAND='history -a'\n")
+    session = make_session(rc=str(rc), history=history)
+    pane = session.new_pane("p", "echo lte_hist_$((6*7))")
+    assert wait_until(lambda: "lte_hist_42" in pane_text(pane))
+    if history:
+        assert wait_until(lambda: hist.exists() and "lte_hist_" in hist.read_text())
+    else:
+        session.send_keys("true", target_pane=pane)  # one more prompt: history -a again
+        time.sleep(0.5)
+        assert not hist.exists() or "lte_hist_" not in hist.read_text()

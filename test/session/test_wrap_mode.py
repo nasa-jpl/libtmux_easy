@@ -16,17 +16,16 @@ import pytest
 
 from helpers import pane_text as _pane_text, title as _pane_title, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
-from libtmux_easy import dash, wrap
+from libtmux_easy import dash
+from lte_run import wrap
 from libtmux_easy.tmux_lib import _wrap_prefix
 
 
 def test_wrapper_import_stays_light():
-    """lte-run starts once per pane, and its console script imports the package
-    __init__ first. Pulling libtmux and psutil in there cost ~4x the startup
-    time and +7 MB per pane."""
-    probe = (
-        "import sys, libtmux_easy.wrap; print('libtmux' in sys.modules, 'psutil' in sys.modules)"
-    )
+    """lte-run starts once per pane: the lte_run package stays out of
+    libtmux_easy, whose import loads libtmux and psutil (about 3x the
+    startup, +8 MB per pane)."""
+    probe = "import sys, lte_run.wrap; print('libtmux' in sys.modules, 'psutil' in sys.modules)"
     out = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
@@ -51,7 +50,7 @@ class TestWrapStandalone:
         # for the rest of the process it runs in.
         env = dict(env, PYTHONPATH=os.pathsep.join(sys.path))
         return subprocess.run(
-            [sys.executable, "-m", "libtmux_easy.wrap", *argv],
+            [sys.executable, "-m", "lte_run", *argv],
             env=env,
             capture_output=True,
             text=True,
@@ -135,7 +134,7 @@ class TestWrapMode:
         target = psutil.Process(pids[0])
         assert target.name() == "sleep"
         wrapper = target.parent()
-        assert "libtmux_easy.wrap" in " ".join(wrapper.cmdline()) or "lte-run" in wrapper.name()
+        assert "lte_run" in " ".join(wrapper.cmdline()) or "lte-run" in wrapper.name()
         assert wrapper.pid == session._wrap_runs[pane.id].wrapper_pid
         assert wrapper.parent().pid == int(pane.pane_pid)  # bash, the pane process
 

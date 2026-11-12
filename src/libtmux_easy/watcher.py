@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Iterable, Optional
 
-from .proc import proc_alive
+from lte_run.proc import proc_alive
 from .status import ExitStatus
 
 if TYPE_CHECKING:
