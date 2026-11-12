@@ -1,13 +1,14 @@
 """ProcessGroup without pytest's plugin: a program's own group of processes."""
 
 import os
+import re
 import sys
 import threading
 import time
 
 import pytest
 
-from libtmux_easy.processes import ProcessFailure, ProcessGroup
+from libtmux_easy.processes import ProcessFailure, ProcessGroup, _TmuxBackend
 
 # Ignores the first SIGINT for a while, then exits 0 on the next.
 SLOW_STOP = (
@@ -226,6 +227,23 @@ def test_group_env(group):
     assert dict(os.environ) == before
     with pytest.raises(TypeError):
         procs.env["LTE_T_A"] = "x"  # read-only
+
+
+def test_restart(group):
+    """restart=: a failing process reruns, then its last exit counts; a stop
+    isn't restarted. tmux: each restart is in its PaneStatus."""
+    procs = group("rs")
+    failing = procs.start("w:f", "echo run; exit 3", restart=2, restart_delay=0.1, exits=3)
+    status = failing.wait_for_exit()
+    assert status.exit_status.code == 3
+    assert re.findall(r"^run$", failing.output(), re.M) == ["run"] * 3
+    assert failing.output().count("exited 3; restart") == 2
+    if isinstance(procs.backend, _TmuxBackend):
+        assert [r["code"] for r in status.restarts] == [3, 3]
+    up = procs.start("w:s", "echo up; sleep 30", ready="up", restart=-1, restart_delay=0.1)
+    procs.stop("w:s")
+    time.sleep(0.3)
+    assert not up.status().running and up.output().count("restart") == 0
 
 
 def test_build_panes_get_group_env(session, tmp_path):

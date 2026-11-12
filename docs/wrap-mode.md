@@ -11,7 +11,7 @@ exact status. The pane stays an ordinary interactive shell.
 
 | signal | from | lte-run |
 |---|---|---|
-| SIGINT, SIGQUIT | terminal, to the whole group | ignores it (it must live to report); the child restores the inherited disposition |
+| SIGINT, SIGQUIT | terminal, to the whole group | survives it (it must live to report), noting a stop; the child restores the inherited disposition |
 | SIGTSTP, SIGCONT | terminal, `fg` | default: job control works |
 | SIGTERM, SIGHUP | aimed at the wrapper | forwards to the target group |
 | `{"cmd": "signal"}` | the library | delivers to the target group |
@@ -28,8 +28,9 @@ Newline-delimited JSON over `<@lte_dir or $LTE_DIR>/ctl.sock`, one
 connection per run:
 
 ```json
-{"event": "started", "version": 1, "pane": "%3", "wrapper_pid": 101, "target_pid": 102, "argv": [...], "time": ...}
-{"event": "exited", "target_pid": 102, "code": 42, "signal": null, "time": ...}
+{"event": "started", "version": 2, "pane": "%3", "wrapper_pid": 101, "target_pid": 102, "argv": [...], "time": ...}
+{"event": "restarted", "target_pid": 103, "code": 42, "signal": null, "time": ...}
+{"event": "exited", "target_pid": 103, "code": 42, "signal": null, "time": ...}
 {"cmd": "signal", "signal": 2}
 ```
 
@@ -37,8 +38,23 @@ connection per run:
 |---|---|
 | `started` for a tracked pane | a new run: reruns typed by hand are tracked; its `argv` becomes the pane's command (status, `respawn_pane()`); `bash -c X` is shown as X |
 | `started` from a shell pane | upgrades the pane to wrap mode |
+| `restarted` | `--restart`: the run failed (its code/signal) and `target_pid` is the rerun; the same run, so no `on_exit`. Kept in `PaneStatus.restarts` |
 | EOF without `exited` | wrapper died: run is `lost`; a pidfd watch on the target takes over (status unknown) |
 | no listener (script gone) | runs unsupervised; same output and status |
+
+## Restart (`--restart N`, `--restart-delay S`)
+
+`lte-run --restart 3 -- cmd` reruns `cmd` when it fails (exit not 0, or a
+signal), up to 3 times (`-1`: no limit), `S` seconds apart (default 1).
+
+| | |
+|---|---|
+| A stop | No restart after one: SIGINT/SIGQUIT (Ctrl-C), SIGTERM/SIGHUP to lte-run, or a library `signal`, including during the delay |
+| The exit | The last run's: one `exited`, one `on_exit` |
+| Logged | A `lte-run: CMD exited 3; restart 1/3 in 1s` line on stderr (in the output and its log); `restarted` events; `PaneStatus.restarts` (`status_file` JSON too); `restarts` in `$LTE_RUN_STATUS_DIR`'s file |
+| API | `new_pane(restart=, restart_delay=)` (wrap mode), `ProcessGroup.start(restart=, restart_delay=)` (every mode: subprocesses run under lte-run too) |
+
+For the processes a launch starts, use lte_launch's `respawn=` instead.
 
 ## Tee (`--tee FILE`, `$LTE_RUN_TEE`)
 

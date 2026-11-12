@@ -12,7 +12,6 @@ from helpers import fmt, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_SHELL, PANE_MODE_WRAP, PaneExited
 from libtmux_easy import output
 from libtmux_easy.tmuxcmd import tmux
-from libtmux_easy.tmux_lib import _wrap_prefix
 
 MODES = (PANE_MODE_SHELL, PANE_MODE_EXEC, PANE_MODE_WRAP)
 
@@ -167,7 +166,7 @@ def test_wait_for_output_next_typed_run(session):
     pane = session.new_pane("p", "sh -c 'echo one'", mode=PANE_MODE_WRAP)
     session.wait_for_exit(pane, timeout=5)
     session.send_keys("sleep 1.5", target_pane=pane)
-    session.send_keys(f"{_wrap_prefix()} sh -c 'echo two'", target_pane=pane)
+    session.send_keys(f"lte-run sh -c 'echo two'", target_pane=pane)
     assert session.wait_for_output(pane, r"^two$", timeout=10, since="now").line == "two"
 
 
@@ -567,7 +566,7 @@ def test_tee_never_loses_pipe_to_capture(session, tmp_path):
         thread.start()
         try:
             session.send_keys(
-                f"{_wrap_prefix()} --tee {tee} -- sh -c "
+                f"lte-run --tee {tee} -- sh -c "
                 "'for n in 1 2 3 4 5; do echo line$n; sleep 0.05; done'",
                 target_pane=pane,
             )

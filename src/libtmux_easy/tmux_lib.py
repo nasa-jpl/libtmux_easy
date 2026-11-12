@@ -174,14 +174,8 @@ def _parse_env(lines):
     return env
 
 
-def _wrap_prefix() -> str:
-    """How the library invokes lte-run in a pane: its full path if it is
-    installed (the pane's PATH is its environment's, which may lack a venv's
-    bin), else this interpreter on this source tree (a plain checkout)."""
-    if path := shutil.which("lte-run"):
-        return shlex.quote(path)
-    src = Path(__file__).resolve().parents[1]
-    return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m lte_run"
+# Wrap mode types this bare: the pane's own PATH (its environment's) finds it.
+WRAP_COMMAND = "lte-run"
 
 
 def _make_wrap_dir() -> str:
@@ -545,6 +539,8 @@ class TmuxSession(Session):
         self._window_layout = {}  # window.id -> layout, see new_window(layout=)
         self._pane_env = {}  # pane.id -> the env it was started with
         self._cmd_capture = {}  # pane.id -> lte-run --tee file, see new_pane(cmd_capture=)
+        self._restart = {}  # pane.id -> (count, delay), see new_pane(restart=)
+        self._restarts = {}  # pane.id -> the current run's restarts, see PaneStatus
         self._exit_status = {}  # pane.id -> ExitStatus (cached; see one-shot note)
         self._stopped_by = {}  # pane.id -> last signal stop_pane() sent this run
 
@@ -860,6 +856,8 @@ class TmuxSession(Session):
         pane_capture: Union[None, bool, str] = None,
         cmd_capture: Optional[str] = None,
         wait_start: Optional[bool] = None,
+        restart: int = 0,
+        restart_delay: float = 1.0,
         **pane_kwargs,
     ) -> Pane:
         """Create a new pane named 'name' and run 'cmd' in it.
@@ -923,18 +921,25 @@ class TmuxSession(Session):
             status is 'starting'; wait_started() waits for that. The typed
             line shows twice (once above the rc file's output), and an rc file
             that reads stdin takes it.
+        @param restart: wrap mode: lte-run reruns the command when it fails
+            (exit not 0, or a signal), up to this many times; -1: no limit.
+            Not after a stop. on_exit fires once, for the last run; each
+            restart is logged and in PaneStatus.restarts ('lte-run --restart')
+        @param restart_delay: seconds before each restart
         @param pane_kwargs: for split_window() (target, vertical, percent,
             size, start_directory, attach; 'shell' too, but not in exec mode)
         @return: the Pane
         @raise ValueError: no window yet (new_window() first), the name is
-            taken in the window, an unknown 'mode', 'cmd_capture' outside wrap
-            mode, or 'shell' in exec mode
+            taken in the window, an unknown 'mode', 'cmd_capture' or 'restart'
+            outside wrap mode, or 'shell' in exec mode
         """
         mode = _check_mode(self.default_mode if mode is None else mode)
         if wait_start is None:
             wait_start = self.wait_start
         if cmd_capture is not None and mode != PANE_MODE_WRAP:
             raise ValueError("cmd_capture needs mode=PANE_MODE_WRAP (it is lte-run's --tee)")
+        if restart and mode != PANE_MODE_WRAP:
+            raise ValueError("restart needs mode=PANE_MODE_WRAP (it is lte-run's --restart)")
         if self.unnamed_window:
             raise ValueError("Cannot create a new pane before creating a new window.")
         if self.current_window is None:
@@ -947,6 +952,8 @@ class TmuxSession(Session):
 
         if cmd_capture is not None:
             pane_kwargs["_cmd_capture"] = os.path.abspath(cmd_capture)
+        if restart:
+            pane_kwargs["_restart"] = (restart, restart_delay)
         # Both used by _claim_pane(): the pane is piped as it is made (an
         # exec pane's command starts with it), then watched from byte 0.
         self._pending_output = on_output
@@ -1024,7 +1031,7 @@ class TmuxSession(Session):
                 return self.pane_targets.get(pane.id, ())
             logger.error(
                 f"lte-run never reported from pane {self.get_pane_name(pane) or pane.id}; "
-                f"tracking it as a plain shell pane. Is '{_wrap_prefix()}' runnable there?"
+                f"tracking it as a plain shell pane. Is '{WRAP_COMMAND}' on the pane's PATH?"
             )
             return self._capture_target_pids(pane, PANE_MODE_SHELL, timeout)
 
@@ -1049,6 +1056,7 @@ class TmuxSession(Session):
         mode,
         env,
         _cmd_capture=None,
+        _restart=None,
         wait_start=True,
         **pane_kwargs,
     ):
@@ -1056,6 +1064,8 @@ class TmuxSession(Session):
         pane, env = self._claim_pane(name, env, **pane_kwargs)
         if _cmd_capture is not None:
             self._cmd_capture[pane.id] = _cmd_capture
+        if _restart is not None:
+            self._restart[pane.id] = _restart
         # lte-run reports the command's pid itself: nothing to wait for. The
         # shell runs what is typed once its rc file is done.
         early = mode == PANE_MODE_WRAP and enter and not wait_start
@@ -1278,7 +1288,7 @@ class TmuxSession(Session):
         self._type(pane, command, enter)
         if held:
             self._unsubmitted.add(pane.id)
-        if enter and command.lstrip().startswith(("lte-run ", _wrap_prefix() + " ")):
+        if enter and command.lstrip().startswith(WRAP_COMMAND + " "):
             self._run_typed[pane.id] = time.monotonic()  # see _command_running()
         self.commands.setdefault(pane_name, []).append(command)
         if enter and pane.id in self._unsubmitted:
@@ -1662,7 +1672,7 @@ class TmuxSession(Session):
         if late:
             logger.error(
                 f"lte-run never reported from {', '.join(sorted(late))} within "
-                f"{timeout}s. Is '{_wrap_prefix()}' runnable there?"
+                f"{timeout}s. Is '{WRAP_COMMAND}' on the pane's PATH?"
             )
         return late
 
@@ -2017,6 +2027,7 @@ class TmuxSession(Session):
                 self._exit_status.pop(pane_id, None)  # a new run
                 self._ended.discard(pane_id)
                 self._stopped_by.pop(pane_id, None)
+                self._restarts.pop(pane_id, None)
                 self._wrap_runs[pane_id] = _WrapRun(
                     conn, msg.get("wrapper_pid"), msg.get("target_pid"), msg.get("argv", [])
                 )
@@ -2029,6 +2040,25 @@ class TmuxSession(Session):
             pane = self.get_pane(pane_id)
             if pane is not None:
                 self._refresh_pane_title(pane)
+            self._write_status_file()
+
+        elif event == "restarted":
+            run = self._wrap_runs.get(conn.pane_id)
+            if run is None or run.conn is not conn:
+                return
+            failed = {k: msg.get(k) for k in ("code", "signal", "time")}
+            try:
+                targets = (psutil.Process(int(msg["target_pid"])),)
+            except (psutil.NoSuchProcess, KeyError, ValueError, TypeError):
+                targets = ()
+            with self._status_lock:
+                run.target_pid = msg.get("target_pid")
+                self.pane_targets[conn.pane_id] = targets
+                restarts = self._restarts.setdefault(conn.pane_id, [])
+                restarts.append(failed)
+            name = self._name_for_pane_id(conn.pane_id) or conn.pane_id
+            how = ExitStatus(code=failed["code"], signal=failed["signal"])
+            logger.warning(f"Pane {name}: {how}; restarted ({len(restarts)})")
             self._write_status_file()
 
         elif event == "exited":
@@ -2111,8 +2141,11 @@ class TmuxSession(Session):
         self._wrap_started[pane.id] = threading.Event()
         self.pane_modes[pane.id] = PANE_MODE_WRAP
         log = self._cmd_capture.get(pane.id)
-        options = f"--tee {shlex.quote(log)} -- " if log else ""
-        line = f"{_wrap_prefix()} {options}{target}"
+        options = f"--tee {shlex.quote(log)} " if log else ""
+        if pane.id in self._restart:
+            count, delay = self._restart[pane.id]
+            options += f"--restart {int(count)} --restart-delay {float(delay):g} "
+        line = f"{WRAP_COMMAND} {options}{'-- ' if options else ''}{target}"
         if before:
             line = f"{before}; {SETUP_ENV}=$? {line}"
         self._type(pane, line, enter, echoes)
@@ -3408,6 +3441,7 @@ class TmuxSession(Session):
             exit_status=exit_status,
             stopped=None if running else self._stopped_by.get(pane_id),
             starting=pane_id in self._wrap_starting,
+            restarts=tuple(self._restarts.get(pane_id, ())),
         )
 
     def _name_for_pane_id(self, pane_id) -> Optional[str]:

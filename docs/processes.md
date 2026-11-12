@@ -35,8 +35,8 @@ Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until
 | `build()` | Needs `tmux=` | Uses the run's session |
 | Owner, abort on a failed test | No | Yes |
 
-Extras: `start(env=, sigint_timeout=, sigterm_timeout=)` (a process's own environment,
-SIGINT and SIGTERM grace, kept on a restart;
+Extras: `start(env=, sigint_timeout=, sigterm_timeout=, restart=, restart_delay=)` (a process's own environment,
+SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`), kept on a restart;
 `close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
 `close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.
 
@@ -56,3 +56,12 @@ A process's environment, later wins (None unsets, at any level):
 - `Process.start()` (a restart) gets it again.
 - `build()` panes: group < `copy_environment()` < `new_pane(env=)`.
 - `adopt()`: the script gets it; its panes get what the script passes on.
+
+## tmuxp configs
+
+No native loader. Two ways:
+
+- `procs.adopt("tmuxp load -d config.yaml", exits={"w:0": 7})`: works as for any session
+  script (it runs on the group's own tmux server). Panes are named `window:index`. Only
+  commands written as `lte-run CMD` in the YAML get exact exit codes; the rest are shell panes.
+- Rewrite it with `start()` or `build()`: usually as short, and every process is exact.

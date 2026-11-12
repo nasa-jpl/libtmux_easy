@@ -49,7 +49,7 @@ from typing import (
 
 from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
-from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, _pane_cmd
+from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, WRAP_COMMAND, _pane_cmd
 from lte_run.proc import SHELLS, alive, cmdline, comm, proc_table
 from lte_run.wrap import (
     PANE_MODE_OPTION,
@@ -122,10 +122,11 @@ class _TmuxBackend:
             self.session.current_pane = w.panes[-1]
         return w
 
-    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None):
+    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
         """Start 'name' in a new wrap-mode pane in its group window (made on
         first use); a restart gets a new pane, '<pane>~N'. 'log': lte-run
-        --tee's file, the command's output only."""
+        --tee's file, the command's output only. 'restart': (count, delay),
+        lte-run's --restart."""
         window, _, pane_name = name.partition(":")
         self.window(window, setup)
         self.runs[name] = self.runs.get(name, 0) + 1
@@ -143,6 +144,7 @@ class _TmuxBackend:
             on_output=on_output,
             cmd_capture=log,
             env=env,
+            **({"restart": restart[0], "restart_delay": restart[1]} if restart else {}),
         )
 
     def full(self, window):
@@ -367,9 +369,16 @@ class _SubprocessBackend:
         self.lock = threading.Lock()
         self.procs = {}
 
-    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None):
+    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
         """Start 'name' as a _Subprocess ('setup' first, in the same shell); a
-        restart replaces the old one."""
+        restart replaces the old one. 'restart': (count, delay): under
+        'lte-run --restart', which a stop (SIGINT to the group) ends."""
+        if restart:
+            count, delay = restart
+            command = (
+                f"{WRAP_COMMAND} --restart {int(count)} --restart-delay {float(delay):g}"
+                f" -- bash -c {shlex.quote(command)}"
+            )
         if setup:
             command = f"{setup} && {command}"
         tty = self.tty if any(fnmatch.fnmatchcase(name, p) for p in self.echo) else None
@@ -1230,6 +1239,8 @@ class ProcessGroup:
         env: Optional[Mapping[str, Optional[str]]] = None,
         sigint_timeout: Optional[float] = None,
         sigterm_timeout: Optional[float] = None,
+        restart: int = 0,
+        restart_delay: float = 1.0,
     ) -> Process:
         """Start 'command' as a process of the group. A stopped name can be
         started again.
@@ -1249,6 +1260,11 @@ class ProcessGroup:
             stopped; None: the group's
         @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None: the
             group's
+        @param restart: rerun it when it fails (exit not 0, or a signal), up
+            to this many times; -1: no limit. Not after a stop. Each restart
+            is logged in its output; only the last run's exit counts. Runs it
+            under 'lte-run --restart' (in subprocess mode too).
+        @param restart_delay: seconds before each restart
         @return: its Process
         @raise ValueError: it is already running, another open group of the same
             scope has the name, or the group adopted a script
@@ -1271,12 +1287,21 @@ class ProcessGroup:
                 env=env,
                 sigint_timeout=sigint_timeout,
                 sigterm_timeout=sigterm_timeout,
+                restart=restart,
+                restart_delay=restart_delay,
             ),
         )
         self._sigint_timeouts[name] = sigint_timeout
         self._sigterm_timeouts[name] = sigterm_timeout
         self.backend.start(
-            name, command, self.setup, on_exit, on_line, self.log(name), self._env_for(env)
+            name,
+            command,
+            self.setup,
+            on_exit,
+            on_line,
+            self.log(name),
+            self._env_for(env),
+            **({"restart": (restart, restart_delay)} if restart else {}),
         )
         if ready is not None:
             self.wait_for(name, ready, timeout)

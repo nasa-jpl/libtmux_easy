@@ -14,6 +14,11 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * Shell and wrap panes no longer write ~/.bash_history:
     create(history=True) to keep it.
   * The pytest plugin's log directories are TestFoo_0, not TestFoo0.
+  * lte-run --restart N [--restart-delay S]: rerun a failed command (not
+    after a stop); new_pane(restart=), ProcessGroup.start(restart=). Each
+    restart is logged and in PaneStatus.restarts. Protocol 2 ('restarted').
+  * Wrap mode types bare 'lte-run': it must be on the pane's PATH.
+  * docs/processes.md: adopting a tmuxp config.
   * Fix wait_for() and wait_for_output() missing a line printed right after
     a watch began on a pane with scrollback (tmux mode, a fast shell).
 

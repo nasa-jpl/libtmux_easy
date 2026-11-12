@@ -32,9 +32,9 @@ Two packages: `lte_run` (stdlib only, never imports `libtmux_easy`) and
   `lte-defaults` and `lte-dash` send raw tmux commands through `tmuxcmd.py`;
   they use none of libtmux's objects.
 - **Commands run as modules.** Not installed, a command runs as
-  `env PYTHONPATH=<src> python -m libtmux_easy.<module>` (or `-m lte_run`: `_wrap_prefix()`,
-  `close.self_command()`), never as a script, so modules import each other
-  normally.
+  `env PYTHONPATH=<src> python -m libtmux_easy.<module>` (`close.self_command()`),
+  never as a script, so modules import each other normally. lte-run is the
+  exception: wrap mode types bare `lte-run`, found on the pane's PATH.
 - **Textual is optional** (`[dash]` extra). apt's is too old, so `lte-dash` is
   its own `.deb`, `libtmux-easy-dash`, with Textual bundled in a private directory.
 

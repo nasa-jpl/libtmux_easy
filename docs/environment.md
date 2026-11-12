@@ -88,4 +88,4 @@ in `tmux_lib.py`.
 |---|---|
 | a variable from `~/.bashrc` is missing | by design; export it in your script's env, or type it in the pane |
 | `PATH` in a pane lacks a dir | not in `os.environ` or `env=`: pass it |
-| a command not found in a wrap pane | PATH; lte-run itself is called by full path |
+| `lte-run: command not found` in a wrap pane | it must be on the pane's PATH (its env's), not only the script's |

@@ -18,7 +18,6 @@ from helpers import pane_text as _pane_text, title as _pane_title, wait_until as
 from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
 from libtmux_easy import dash
 from lte_run import wrap
-from libtmux_easy.tmux_lib import _wrap_prefix
 
 
 def test_wrapper_import_stays_light():
@@ -70,6 +69,44 @@ class TestWrapStandalone:
         proc = self._run(env, *argv)
         assert proc.returncode == code
         assert stderr in proc.stderr
+
+    def test_restart(self, env):
+        """--restart N: a failure reruns up to N times, then its code stands;
+        a success isn't rerun; a bad count is a usage error."""
+        proc = self._run(env, "--restart", "2", "--restart-delay=0", "sh", "-c", "echo run; exit 3")
+        assert proc.returncode == 3 and proc.stdout.split() == ["run"] * 3
+        assert proc.stderr.count("lte-run: ") == 2 and "exited 3; restart 2/2" in proc.stderr
+        ok = self._run(env, "--restart", "-1", "true")
+        assert (ok.returncode, ok.stderr) == (0, "")
+        assert self._run(env, "--restart", "-2", "true").returncode == 2
+
+    def test_restart_not_after_a_stop(self, env):
+        """A signal to lte-run stops it for good: running, or between runs."""
+        env = dict(env, PYTHONPATH=os.pathsep.join(sys.path))
+        for command, sig in (("sleep 30", -signal.SIGTERM), ("exit 4", 4)):
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "lte_run",
+                    "--restart",
+                    "-1",
+                    "--restart-delay",
+                    "30",
+                    "sh",
+                    "-c",
+                    f"echo up; {command}",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            assert proc.stdout.readline() == "up\n"
+            time.sleep(0.3)  # the exit 4: into the delay
+            proc.send_signal(signal.SIGTERM)
+            out, _ = proc.communicate(timeout=10)
+            assert proc.returncode == sig and "up" not in out
 
     def test_tee(self, env, tmp_path):
         """Outside tmux, through a pipe: shown and copied, as plain text."""
@@ -168,7 +205,7 @@ class TestWrapMode:
         assert session.wait_for_exit(pane, timeout=5.0).code == 4
         old_pids = session.pane_status(pane).target_pids
 
-        session.send_keys(f"{_wrap_prefix()} sh -c 'sleep 0.5; exit 8'", target_pane=pane)
+        session.send_keys(f"lte-run sh -c 'sleep 0.5; exit 8'", target_pane=pane)
 
         assert _wait_until(lambda: session.pane_status(pane).target_pids != old_pids)
         assert session.is_running(pane) is True
@@ -188,9 +225,7 @@ class TestWrapMode:
         pane = session.new_pane("x", "sh -c 'exit 4'", mode=PANE_MODE_WRAP)
         assert session.wait_for_exit(pane, timeout=5.0).code == 4
 
-        session.server.cmd(
-            "send-keys", "-t", pane.id, "-l", f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 6'"
-        )
+        session.server.cmd("send-keys", "-t", pane.id, "-l", f"lte-run sh -c 'sleep 0.3; exit 6'")
         session.server.cmd("send-keys", "-t", pane.id, "Enter")
 
         assert _wait_until(lambda: session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 6'")
@@ -206,7 +241,7 @@ class TestWrapMode:
         session.wait_for_pane_idle(pane, timeout=5.0)
         assert session.exit_status(pane).code == 0
 
-        session.send_keys(f"{_wrap_prefix()} sh -c 'sleep 0.3; exit 5'", target_pane=pane)
+        session.send_keys(f"lte-run sh -c 'sleep 0.3; exit 5'", target_pane=pane)
 
         assert _wait_until(lambda: session.pane_status(pane).mode == PANE_MODE_WRAP)
         status = session.wait_for_exit(pane, timeout=5.0)

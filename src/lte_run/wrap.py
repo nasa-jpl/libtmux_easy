@@ -1,6 +1,7 @@
 """lte-run: run a command under libtmux_easy supervision.
 
-    lte-run [--tee FILE [-a] [--raw]] [--] COMMAND [ARG...]
+    lte-run [--tee FILE [-a] [--raw]] [--restart N [--restart-delay S]]
+            [--] COMMAND [ARG...]
 
 Prepend it to any command typed into a pane of a libtmux_easy session. It
 reports the command's pid and exact exit status to the session's Python
@@ -16,6 +17,12 @@ same output, same exit status -- so it is always safe to prepend.
               the run; the pipe closes when the command ends.
   -a          append to FILE instead of overwriting it
   --raw       keep terminal escapes and carriage returns (default: plain text)
+  --restart N rerun the command when it fails (exit not 0, or a signal),
+              up to N times; -1: no limit. Not after a stop: a signal sent
+              to lte-run, or a Ctrl-C. Each restart is reported to the
+              session ('restarted') and logged to stderr; the exit reported
+              is the last run's.
+  --restart-delay S  seconds before each restart (default 1)
 
 $LTE_RUN_TEE=FILE does what --tee FILE does (--tee wins). It is removed from the
 command's environment, so an lte-run inside it doesn't tee again.
@@ -44,7 +51,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from .proc import descendants, proc_table
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2  # 2: "restarted"
 DIR_OPTION = "@lte_dir"  # tmux session option set by TmuxSession
 DIR_ENV = "LTE_DIR"  # overrides DIR_OPTION; for tests and non-tmux use
 SOCKET_NAME = "ctl.sock"
@@ -520,14 +527,34 @@ def parse(argv: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     @return: (options, command); (None, []) for -h/--help
     @raise ValueError: an unknown option
     """
-    opts = {"tee": None, "append": False, "raw": False}
+    opts = {"tee": None, "append": False, "raw": False, "restart": 0, "restart_delay": 1.0}
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg == "--":
             i += 1
             break
-        if arg in ("-a", "--append"):
+        name, eq, value = arg.partition("=")
+        if name in ("--restart", "--restart-delay") and not eq:
+            if i + 1 >= len(argv):
+                raise ValueError(f"{name} needs a value")
+            i += 1
+            value = argv[i]
+        if name == "--restart":
+            try:
+                opts["restart"] = int(value)
+            except ValueError:
+                raise ValueError(f"--restart {value}: expected a count, or -1") from None
+            if opts["restart"] < -1:
+                raise ValueError(f"--restart {value}: expected a count, or -1")
+        elif name == "--restart-delay":
+            try:
+                opts["restart_delay"] = float(value)
+            except ValueError:
+                raise ValueError(f"--restart-delay {value}: expected seconds") from None
+            if not opts["restart_delay"] >= 0:
+                raise ValueError(f"--restart-delay {value}: expected seconds")
+        elif arg in ("-a", "--append"):
             opts["append"] = True
         elif arg == "--raw":
             opts["raw"] = True
@@ -581,13 +608,17 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
 
     # Pass the inherited dispositions on to the target. Python installs its
     # own SIGINT handler at startup unless SIGINT was already ignored, so
-    # "not SIG_IGN" here means "default" at the OS level.
+    # "not SIG_IGN" here means "default" at the OS level. The wrapper itself
+    # outlives them (see _TERMINAL_SIGNALS), noting a stop: no restart.
+    stop = threading.Event()  # a stop was asked for: no restart after it
     inherited_ign = {s: signal.getsignal(s) == signal.SIG_IGN for s in _TERMINAL_SIGNALS}
-    for s in _TERMINAL_SIGNALS:
-        signal.signal(s, signal.SIG_IGN)
+    for s, ign in inherited_ign.items():
+        signal.signal(s, signal.SIG_IGN if ign else lambda _signum, _frame: stop.set())
 
-    pid = os.fork()
-    if pid == 0:
+    def spawn() -> int:
+        pid = os.fork()
+        if pid:
+            return pid
         for s, ign in inherited_ign.items():
             signal.signal(s, signal.SIG_IGN if ign else signal.SIG_DFL)
         if tee is not None and tee.child_out is not None:
@@ -604,6 +635,7 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
             sys.stderr.flush()  # os._exit skips it; 3.8 buffers stderr to a pipe
             os._exit(127 if isinstance(exc, FileNotFoundError) else 126)
 
+    pid = spawn()
     if tee is not None:
         tee.start()
     channel.send(
@@ -617,29 +649,50 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
     )
     record_run(pid=pid)
 
+    def stop_with(sig):
+        stop.set()
+        signal_target(sig, pid)
+
     for s in _FORWARDED_SIGNALS:
-        signal.signal(s, lambda signum, _frame: signal_target(signum, pid))
+        signal.signal(s, lambda signum, _frame: stop_with(signum))
 
     def serve():
         for msg in channel.messages():
             if msg.get("cmd") == "signal":
                 try:
-                    signal_target(int(msg["signal"]), pid)
+                    stop_with(int(msg["signal"]))
                 except (KeyError, TypeError, ValueError):
                     pass
 
     threading.Thread(target=serve, daemon=True).start()
 
-    _, status = os.waitpid(pid, 0)  # retried across signal handlers (PEP 475)
+    restarts = []  # each failed run restarted: {"code", "signal", "time"}
+    while True:
+        _, status = os.waitpid(pid, 0)  # retried across signal handlers (PEP 475)
+        if os.WIFSIGNALED(status):
+            code, sig = None, os.WTERMSIG(status)
+        else:
+            code, sig = os.WEXITSTATUS(status), None
+        limit = opts["restart"]
+        if code == 0 or stop.is_set() or setup != "0" or 0 <= limit <= len(restarts):
+            break
+        restarts.append({"code": code, "signal": sig, "time": time.time()})
+        how = f"exited {code}" if sig is None else f"killed by signal {sig}"
+        count = f"{len(restarts)}/{limit}" if limit >= 0 else str(len(restarts))
+        sys.stderr.write(
+            f"lte-run: {shlex.join(argv)} {how}; restart {count} in {opts['restart_delay']:g}s\n"
+        )
+        sys.stderr.flush()
+        if stop.wait(opts["restart_delay"]):
+            break  # stopped while waiting: the failed run's status stands
+        pid = spawn()
+        channel.send(event="restarted", target_pid=pid, code=code, signal=sig, time=time.time())
+        record_run(pid=pid, restarts=restarts)
 
-    if os.WIFSIGNALED(status):
-        code, sig = None, os.WTERMSIG(status)
-    else:
-        code, sig = os.WEXITSTATUS(status), None
     if tee is not None:
         tee.finish()  # before 'exited': whoever acts on that reads a whole file
     channel.send(event="exited", target_pid=pid, code=code, signal=sig, time=time.time())
-    record_run(pid=pid, code=code, signal=sig)
+    record_run(pid=pid, code=code, signal=sig, **({"restarts": restarts} if restarts else {}))
 
     if sig is not None:
         # Die the same way, so a calling shell sees a signal death rather than

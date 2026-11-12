@@ -61,6 +61,9 @@ class PaneStatus:
     # Typed by new_pane(wait_start=False); lte-run has not reported yet.
     # 'running' is True meanwhile: the command is on its way.
     starting: bool = False
+    # new_pane(restart=): each failed run of this one that lte-run restarted,
+    # {"code", "signal", "time"}, oldest first
+    restarts: tuple = ()
 
     @property
     def state(self) -> str:

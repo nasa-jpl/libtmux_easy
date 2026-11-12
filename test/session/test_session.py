@@ -11,7 +11,6 @@ from helpers import pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
 from libtmux_easy import dash
 from libtmux_easy.tmuxcmd import tmux
-from libtmux_easy.tmux_lib import _wrap_prefix
 
 
 def test_create_and_kill_existing(make_session):
@@ -153,8 +152,6 @@ class TestWindowsAndPanes:
                 "_",
                 "LTE_DIR",
             }
-            if mode == PANE_MODE_WRAP and _wrap_prefix().startswith("env "):
-                ours.add("PYTHONPATH")  # lte-run from this source tree
             assert {k: v for k, v in got.items() if k not in ours} == {
                 k: v for k, v in want.items() if k not in ours
             }
