@@ -73,12 +73,9 @@ def inside(host, monkeypatch):
 
 
 class TestCurrent:
-    def test_outside_tmux_raises(self, monkeypatch):
-        monkeypatch.delenv("TMUX_PANE", raising=False)
-        with pytest.raises(RuntimeError, match="not running inside tmux"):
-            TmuxSession.current()
-
-    def test_adopt_and_release(self, inside):
+    def test_adopt_and_release(self, inside, monkeypatch):
+        """current() adopts the session it runs in; kill() releases only
+        what it made. Outside tmux it raises."""
         adopted = TmuxSession.current()
         assert adopted.id == inside.id
         with pytest.raises(ValueError, match="new_window"):
@@ -94,6 +91,9 @@ class TestCurrent:
         assert _has_session("lte-test-current")
         assert [w.name for w in inside.windows] == ["host"]
         assert inside._session_option("@lte_dir") == ""
+        monkeypatch.delenv("TMUX_PANE")
+        with pytest.raises(RuntimeError, match="not running inside tmux"):
+            TmuxSession.current()
 
     def test_env_leaves_session_alone(self, inside, tmp_path):
         """current() writes nothing to the session's tmux environment, even

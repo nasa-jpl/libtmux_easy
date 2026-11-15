@@ -36,7 +36,7 @@ Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until
 | Owner, abort on a failed test | No | Yes |
 
 Extras: `start(env=, sigint_timeout=, sigterm_timeout=, restart=, restart_delay=)` (a process's own environment,
-SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`), kept on a restart;
+SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`), kept by `Process.start()`;
 `close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
 `close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.
 
@@ -47,13 +47,13 @@ A process's environment, later wins (None unsets, at any level):
 | level | set by |
 |---|---|
 | inherited | `os.environ` of this process |
-| group | `Processes(env=)` |
+| group | `ProcessGroup(env=)` |
 | process | `start(env=)` |
 
 - Never written to `os.environ`: other groups, classes and tests don't see it.
 - Same in every mode; tmux panes get it exactly (`environment.md`).
 - `procs.env` is a read-only view, fixed when the group is made.
-- `Process.start()` (a restart) gets it again.
+- `Process.start()` gets it again.
 - `build()` panes: group < `copy_environment()` < `new_pane(env=)`.
 - `adopt()`: the script gets it; its panes get what the script passes on.
 

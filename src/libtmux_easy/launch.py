@@ -245,7 +245,7 @@ class Launch:
         msg = self.exit_msg()
         if msg is None:
             sys.stderr.write(
-                "lte-session: the command's exit status is unknown " "(its pane was closed?)\n"
+                "lte-session: the command's exit status is unknown (its pane was closed?)\n"
             )
             return 1
         return 128 + msg["signal"] if msg.get("signal") is not None else msg["code"]
@@ -396,7 +396,7 @@ def main(argv=None):
     parser.add_argument(
         "--keep",
         action="store_true",
-        help="stay in the session after the command ends, and leave " "it running at the end",
+        help="stay in the session after the command ends, and leave it running at the end",
     )
     parser.add_argument(
         "--width",

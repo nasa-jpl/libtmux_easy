@@ -1,5 +1,5 @@
 """
-Tests for lte-key (src/libtmux_easy/dash/keys.py): borrowing a prefix key so that
+lte-key (src/libtmux_easy/dash/keys.py): borrowing a prefix key so that
 it works where a session option is set and does what it did before anywhere
 else, then giving it back. Each test gets its own tmux server ($TMUX points
 the tmux client at it), so no binding of the user's is touched.
@@ -27,31 +27,25 @@ def tmux(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True).stdout.strip()
 
 
-def test_borrowed_key_falls_back_to_the_original_and_is_restored():
+def test_borrow_falls_back_shares_and_gives_back():
+    """A borrowed key does ours where the option is set, the original
+    elsewhere; borrowers share it (not wrapped twice), and the last
+    give_back() restores it."""
     tmux("bind-key", "o", "rename-window", "before")
     original = keys.current("o")
 
+    keys.borrow("o", "@mine", "rename-window ours")
     keys.borrow("o", "@mine", "rename-window ours")
     line = keys.current("o")
     assert '"#{@mine}"' in line and "rename-window ours" in line
     assert "rename-window before" in line  # the fallback branch
-
-    keys.give_back("o")
-    assert keys.current("o") == original
-    assert tmux("show-options", "-g").count("@lte_key_") == 0
-
-
-def test_borrowers_share_the_key_and_the_last_one_restores_it():
-    tmux("bind-key", "o", "rename-window", "before")
-    original = keys.current("o")
-    keys.borrow("o", "@mine", "rename-window ours")
-    keys.borrow("o", "@mine", "rename-window ours")  # not wrapped twice
-    assert keys.current("o").count("#{@mine}") == 1
+    assert line.count("#{@mine}") == 1
 
     keys.give_back("o")
     assert "#{@mine}" in keys.current("o")  # still borrowed
     keys.give_back("o")
     assert keys.current("o") == original
+    assert tmux("show-options", "-g").count("@lte_key_") == 0
 
 
 def test_a_bad_command_raises_and_leaves_the_key_alone():

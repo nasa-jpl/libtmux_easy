@@ -57,18 +57,9 @@ def viewport(session):
 
 
 class TestViewport:
-    def test_show_swaps_pane_in_and_home_out(self, session, viewport):
-        a = session.new_pane("a", "sleep 60")
-        home = viewport.home
-
-        viewport.show(a.id)
-
-        panes = viewport.panes()
-        assert panes[a.id] == viewport.window
-        assert panes[home] == _fmt(session, f"{session.id}:main", "#{window_id}")
-        assert viewport.view == a.id
-
     def test_browsing_keeps_layouts(self, session, viewport):
+        """show() swaps a pane in and the last one (home first) out to its
+        window; browsing and restore() leave every layout as it was."""
         a = session.new_pane("a", "sleep 60")
         b = session.new_pane("b", "sleep 60")
         session.new_window("other")
@@ -77,12 +68,22 @@ class TestViewport:
             w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in ("main", "other")
         }
 
-        for pane in (a, b, c, a):
+        home = viewport.home
+        session._tmux_run("select-window", "-t", f"{session.id}:main")
+        assert viewport.active() is False
+        viewport.show(a.id)
+        panes = viewport.panes()
+        assert viewport.view == a.id and panes[a.id] == viewport.window
+        assert panes[home] == _fmt(session, f"{session.id}:main", "#{window_id}")
+        session._tmux_run("select-window", "-t", viewport.window)
+        assert viewport.active() is True
+
+        for pane in (b, c, a):
             viewport.show(pane.id)
             assert viewport.view == pane.id
         viewport.restore()
 
-        assert viewport.view == viewport.home
+        assert viewport.view == home
         assert {
             w: _fmt(session, f"{session.id}:{w}", "#{window_layout}") for w in layouts
         } == layouts
@@ -126,12 +127,6 @@ class TestViewport:
         assert viewport.home not in (old_home, "")
         assert panes[viewport.home] == main  # the new home fills b's slot
 
-    def test_active(self, session, viewport):
-        session._tmux_run("select-window", "-t", viewport.window)
-        assert viewport.active() is True
-        session._tmux_run("select-window", "-t", f"{session.id}:main")
-        assert viewport.active() is False
-
     def test_go_to_puts_pane_back_and_selects_it(self, session, viewport):
         a = session.new_pane("a", "sleep 60")
         session.new_pane("b", "sleep 60")
@@ -143,6 +138,10 @@ class TestViewport:
         assert _fmt(session, session.id, "#{window_name} #{pane_id}") == f"main {a.id}"
 
     def test_extra_pane_stays_put(self, session, viewport):
+        """A dashboard_pane() (none without a dashboard) keeps its place and
+        size while panes are browsed and the viewed one exits."""
+        with pytest.raises(RuntimeError, match="no dashboard"):
+            session.dashboard_pane("true")
         a = session.new_pane("a", "sleep 60")
         b = session.new_pane("b", "true")
         session.wait_for_pane_idle(b, timeout=5.0)
@@ -201,14 +200,15 @@ class TestViewport:
         assert _fmt(session, extra.id, column) == _fmt(session, viewport.sidebar, column)
         assert _fmt(session, extra.id, "#{pane_height}") == "5"
 
-    def test_dashboard_pane_needs_dashboard(self, session):
-        with pytest.raises(RuntimeError, match="no dashboard"):
-            session.dashboard_pane("true")
-
 
 class TestControl:
-    def test_stop_and_respawn(self, session):
+    def test_stop_respawn_stop_all(self, session, tmp_path):
+        """Actions over the control socket; unknown ones are ignored, and a
+        socket that isn't there is offline."""
+        assert dash.Control(str(tmp_path / "nope.sock")).online() is False
+        assert dash.Control(None).send("stop", "%0") is False
         pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
+        other = session.new_pane("y", "sleep 60", mode=PANE_MODE_WRAP)
         control = dash.Control(os.path.join(session._wrap_dir, SOCKET_NAME))
         assert control.online()
 
@@ -224,19 +224,13 @@ class TestControl:
         assert control.send("stop", "%9999")  # an unknown pane, a bad command: ignored
         assert control.send("rm -rf", "%0")
         time.sleep(0.3)
-        assert session.is_running(pane)
-
-    def test_stop_all_command(self, session):
-        a = session.new_pane("a", "sleep 60", mode=PANE_MODE_WRAP)
-        b = session.new_pane("b", "sleep 60", mode=PANE_MODE_WRAP)
-        control = dash.Control(os.path.join(session._wrap_dir, SOCKET_NAME))
+        assert session.is_running(pane) and session.is_running(other)
 
         assert control.send("stop_all", None)
-
         assert _wait_until(
-            lambda: not session.is_running(a) and not session.is_running(b), timeout=10.0
+            lambda: not session.is_running(pane) and not session.is_running(other), timeout=10.0
         )
-        assert session.exit_status(a).signal == session.exit_status(b).signal == 2
+        assert session.exit_status(pane).signal == session.exit_status(other).signal == 2
 
     def test_shutdown_stops_then_kills(self, make_session):
         sess = make_session("lte-test-shutdown")
@@ -251,14 +245,11 @@ class TestControl:
         assert statuses and statuses[0].exit_status.signal == 2  # SIGINT, not SIGHUP
         sess.kill()  # already killed: a no-op, not an error
 
-    def test_offline(self, tmp_path):
-        assert dash.Control(str(tmp_path / "nope.sock")).online() is False
-        assert dash.Control(None).send("stop", "%0") is False
-
 
 @needs_textual
 def test_sidebar_labels():
-    from libtmux_easy.dash.app import describe, describe_long
+    """A pane's status label, and a command clipped to the sidebar's width."""
+    from libtmux_easy.dash.app import clip, describe, describe_long
 
     exit2 = {"code": None, "signal": 2, "inferred": False}
     assert describe({"running": True}) == ("running", "running")
@@ -271,12 +262,6 @@ def test_sidebar_labels():
         describe_long({"exit_status": exit2, "stopped": "SIGTERM"})
         == "stopped, needed SIGTERM: killed by SIGINT (2)"
     )
-
-
-@needs_textual
-def test_clip():
-    from libtmux_easy.dash.app import clip
-
     assert clip("ros2 run pkg node", 40) == "ros2 run pkg node"
     assert clip("ros2 run pkg node", 10) == "ros2 run\npkg node"
     assert clip("ros2 run pkg node --ros-args", 10) == "ros2 run\npkg nod..."
@@ -285,27 +270,25 @@ def test_clip():
     assert clip("long " * 20, 0) == ("long " * 20).strip()  # width not known yet
 
 
-class TestHomeLog:
-    def test_tee_copies_stdout_and_logging(self, session, capsys):
-        logger = logging.getLogger("test_dash")
-        logger.setLevel(logging.INFO)
-        session.log_home()
-        print("to stdout")
-        logger.info("to logging")
-        sys.stdout.flush()
+def test_home_log(session, capsys):
+    """log_home() copies stdout and logging to the home log, still printing;
+    kill() puts sys.stdout back."""
+    before = sys.stdout
+    logger = logging.getLogger("test_dash")
+    logger.setLevel(logging.INFO)
+    session.log_home()
+    assert sys.stdout is not before
+    print("to stdout")
+    logger.info("to logging")
+    sys.stdout.flush()
 
-        with open(session.home_log) as f:
-            text = f.read()
-        assert "to stdout" in text
-        assert "INFO test_dash: to logging" in text
-        assert "to stdout" in capsys.readouterr().out  # still printed too
-
-    def test_untee_on_kill(self, session):
-        before = sys.stdout
-        session.log_home()
-        assert sys.stdout is not before
-        session.kill()
-        assert sys.stdout is before
+    with open(session.home_log) as f:
+        text = f.read()
+    assert "to stdout" in text
+    assert "INFO test_dash: to logging" in text
+    assert "to stdout" in capsys.readouterr().out  # still printed too
+    session.kill()
+    assert sys.stdout is before
 
 
 @needs_textual
@@ -608,25 +591,6 @@ def test_sidebar_copies_command(tmp_path):
     assert ("set-buffer", "-w", "--", "ros2 run a b") in viewport.calls
 
 
-@needs_textual
-def test_sidebar_puts_pane_back_when_window_left(tmp_path):
-    status = tmp_path / "s.json"
-    status.write_text(json.dumps([entry("%5", "w:one", True)]))
-    viewport = FakeViewport(("%5",), options={dash.INITIAL_OPTION: "%5"})
-
-    async def scenario(app, pilot):
-        await pilot.pause(0.3)
-        viewport.shown.clear()
-        viewport.is_active = False
-        app.poll()
-        app.poll()  # once only
-        viewport.is_active = True
-        app.poll()
-        return list(viewport.shown)
-
-    assert _run_app(viewport, str(status), scenario) == ["restore", "%5"]
-
-
 class TestWinHook:
     def test_signals_on_window_change_in_its_session_only(self, session, make_session):
         import signal as _signal
@@ -676,8 +640,9 @@ class TestWinHook:
 
 
 @needs_textual
-def test_sidebar_follows_window_on_signal(tmp_path):
-    """SIGUSR1 (from winhook) moves the pane at once, no poll needed."""
+def test_sidebar_follows_window(tmp_path):
+    """Window left: home goes back (at once on winhook's SIGUSR1, no poll
+    needed), once only; back in the window: the selected pane again."""
     import signal as _signal
 
     status = tmp_path / "s.json"
@@ -690,25 +655,26 @@ def test_sidebar_follows_window_on_signal(tmp_path):
         viewport.is_active = False
         os.kill(os.getpid(), _signal.SIGUSR1)
         await pilot.pause(0.05)  # well under the poll interval
-        return list(viewport.shown)
+        on_signal = list(viewport.shown)
+        app.poll()  # once only
+        viewport.is_active = True
+        app.poll()
+        return on_signal, list(viewport.shown)
 
-    assert _run_app(viewport, str(status), scenario) == ["restore"]
+    assert _run_app(viewport, str(status), scenario) == (["restore"], ["restore", "%5"])
 
 
 # ---------- launcher(): how a dashboard starts lte-dash ----------
 
 
 @needs_textual
-def test_launcher_uses_this_python():
+def test_launcher_uses_this_python(monkeypatch):
+    """This Python, PYTHONPATH the source dir only; a Textual outside the
+    site dirs (the .deb's bundle) goes on it too, or the sidebar couldn't
+    import it."""
     cmd = dash_window.launcher()
     assert cmd.endswith(f"{sys.executable} -m libtmux_easy.dash")
-    assert ":" not in cmd.split()[1]  # PYTHONPATH: the source dir only
-
-
-@needs_textual
-def test_launcher_adds_a_private_textual(monkeypatch):
-    """Textual outside the site dirs (the .deb's bundle): its dir goes on
-    the sidebar's PYTHONPATH, or the sidebar couldn't import it."""
+    assert ":" not in cmd.split()[1]
     monkeypatch.setattr(dash_window, "_site_dirs", lambda: set())
     textual = os.path.dirname(os.path.dirname(importlib.util.find_spec("textual").origin))
     assert textual in dash_window.launcher().split()[1]

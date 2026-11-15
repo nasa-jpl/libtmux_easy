@@ -36,7 +36,7 @@ def main(argv=None):
     parser.add_argument(
         "--ctl",
         default=None,
-        help="the session's control socket (default with no --status: " "follow @lte_dir)",
+        help="the session's control socket (default with no --status: follow @lte_dir)",
     )
     parser.add_argument(
         "--open",

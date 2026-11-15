@@ -33,13 +33,16 @@ def _applied(run):
     )
 
 
-def test_no_config_gets_the_starter_once(server):
+def test_no_config_gets_the_starter_once(server, capsys):
+    """Applied once per server; lte-defaults prints the same settings."""
     start, run = server
     start()
     assert starter.apply(run) is True
     assert _applied(run)
     assert "kill-session" in "\n".join(run("list-keys", "-T", "prefix", "C-x"))
     assert starter.apply(run) is False  # once per server
+    assert starter.main([]) == 0
+    assert capsys.readouterr().out == starter.CONF
 
 
 def test_a_config_file_is_left_alone(server, tmp_path):
@@ -58,8 +61,3 @@ def test_env_turns_it_off(server, monkeypatch):
     monkeypatch.setenv("LTE_TMUX_DEFAULTS", "0")
     assert starter.apply(run) is False
     assert not _applied(run)
-
-
-def test_lte_defaults_prints_the_conf(capsys):
-    assert starter.main([]) == 0
-    assert capsys.readouterr().out == starter.CONF

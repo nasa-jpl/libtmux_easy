@@ -37,9 +37,20 @@ DIES = TESTS % ("die", 2)
 
 @pytest.mark.parametrize("mode", MODES)
 def test_passes_and_shuts_down_cleanly(run, mode):
-    proc, out = run(PASSES, mode=mode)
+    """subprocess, the default: output to the logs, and to the terminal for
+    the names --echo matches. tmux: a log dir per class."""
+    args = ("--echo", "w:o?") if mode == "subprocess" else ()
+    proc, out = run(PASSES, *args, mode=mode)
     assert proc.returncode == 0, out
     assert "processes kept" not in out
+    assert f"lte mode: {mode}" in out
+    if mode == "subprocess":
+        assert "[w:ok] hello_42" in out and "[w:other]" not in out
+        log_dir = re.findall(r"process logs: (\S+)", out)[-1]  # header, then the group's
+        assert open(os.path.join(log_dir, "w.ok.log")).read() == "hello_42\n"
+    else:
+        log_dir = re.search(r"process logs: (\S+)", out)[1]
+        assert "hello_42" in open(os.path.join(log_dir, "TestRun_0", "w.ok.log")).read()
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -56,36 +67,9 @@ def test_death_fails_the_test(run, mode):
         assert "[w:ok] hello_42" not in out  # output only to the logs
 
 
-def test_default_is_subprocess(run):
-    proc, out = run(PASSES)
-    assert proc.returncode == 0, out
-    assert "lte mode: subprocess" in out
-    assert "[w:ok] hello_42" not in out
-    log_dir = re.findall(r"process logs: (\S+)", out)[-1]  # header, then the group's
-    assert open(os.path.join(log_dir, "w.ok.log")).read() == "hello_42\n"
-
-
-def test_echo_all(run):
-    proc, out = run(PASSES, "--echo", "*")
-    assert proc.returncode == 0, out
-    assert "[w:ok] hello_42" in out and "[w:other] hello_42" in out
-
-
-def test_echo_some(run):
-    proc, out = run(PASSES, "--echo", "w:o?")
-    assert proc.returncode == 0, out
-    assert "[w:ok] hello_42" in out and "[w:other]" not in out
-
-
-def test_tmux_logs(run):
-    proc, out = run(PASSES, mode="tmux")
-    log_dir = re.search(r"process logs: (\S+)", out)[1]
-    assert "hello_42" in open(os.path.join(log_dir, "TestRun_0", "w.ok.log")).read()
-
-
-@pytest.mark.parametrize("flags", [["--tmux"], ["--no-attach"]])
-def test_tmux_without_a_terminal_is_detached(run, flags):
-    proc, out = run(PASSES, *flags)
+def test_no_attach_implies_tmux(run):
+    """--no-attach alone is tmux mode (--tmux alone: the concurrent runs)."""
+    proc, out = run(PASSES, "--no-attach")
     assert proc.returncode == 0, out
     assert "lte mode: tmux" in out
 

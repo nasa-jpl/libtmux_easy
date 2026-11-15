@@ -33,11 +33,6 @@ def read(path):
         return b""
 
 
-def test_plain_lines():
-    data = b"\x1b[31mERROR\x1b[0m: boom\r\nwork 10%\rwork 99%\r\n\npartial"
-    assert list(output.plain_lines(data)) == [(0, "ERROR: boom"), (22, "work 99%"), (42, "partial")]
-
-
 # ----- watches -----
 
 
@@ -53,6 +48,10 @@ def test_on_output_each_mode(session, mode):
 
 
 def test_plain_text(session):
+    """Lines without escapes, a carriage return keeping the last overwrite;
+    offsets are the raw bytes'."""
+    data = b"\x1b[31mERROR\x1b[0m: boom\r\nwork 10%\rwork 99%\r\n\npartial"
+    assert list(output.plain_lines(data)) == [(0, "ERROR: boom"), (22, "work 99%"), (42, "partial")]
     lines, cb = collect()
     session.new_pane(
         "p",
@@ -86,12 +85,21 @@ def test_every_match_and_once(session):
     assert first.done and [m.line for m in first.matches] == ["1"]
 
 
-def test_wait_for_output_sees_earlier_output(session):
-    """Not captured before the call: the scrollback counts."""
-    pane = session.new_pane("p", "echo listening on 8080; sleep 30", mode=PANE_MODE_WRAP)
+@pytest.mark.parametrize("mode, capture", [(PANE_MODE_WRAP, False), (PANE_MODE_EXEC, True)])
+def test_wait_for_output_sees_earlier_output(session, tmp_path, mode, capture):
+    """Printed before the call: the scrollback counts, or the capture from
+    its first byte."""
+    pane = session.new_pane(
+        "p",
+        "echo listening on 8080; sleep 30",
+        mode=mode,
+        pane_capture=str(tmp_path / "p.log") if capture else None,
+    )
     time.sleep(0.5)  # printed before anyone waits
     m = session.wait_for_output(pane, r"listening on (\d+)", timeout=5)
     assert m.match.group(1) == "8080" and m.name == "main:p"
+    if capture:
+        assert m.offset == 0
 
 
 def test_wait_for_output_line_before_the_reader(session, tmp_path, monkeypatch):
@@ -129,18 +137,6 @@ def test_watch_tee_first_no_scrollback_twice(session, tmp_path):
     assert lines == ["one"]
 
 
-def test_wait_for_output_sees_earlier_capture(session, tmp_path):
-    pane = session.new_pane(
-        "p",
-        "echo listening on 8080; sleep 30",
-        mode=PANE_MODE_EXEC,
-        pane_capture=str(tmp_path / "p.log"),
-    )
-    time.sleep(0.5)
-    m = session.wait_for_output(pane, r"listening on (\d+)", timeout=5)
-    assert m.match.group(1) == "8080" and m.offset == 0
-
-
 def test_wait_for_output_live_and_timeout(session):
     pane = session.new_pane("p", "sleep 0.5; echo ready", mode=PANE_MODE_SHELL)
     t0 = time.monotonic()
@@ -166,7 +162,7 @@ def test_wait_for_output_next_typed_run(session):
     pane = session.new_pane("p", "sh -c 'echo one'", mode=PANE_MODE_WRAP)
     session.wait_for_exit(pane, timeout=5)
     session.send_keys("sleep 1.5", target_pane=pane)
-    session.send_keys(f"lte-run sh -c 'echo two'", target_pane=pane)
+    session.send_keys("lte-run sh -c 'echo two'", target_pane=pane)
     assert session.wait_for_output(pane, r"^two$", timeout=10, since="now").line == "two"
 
 
@@ -308,28 +304,10 @@ def test_capture_exec_skips_the_starting_shell(make_session, tmp_path):
     assert [m.line for m in session.search_output(pane, ".")] == ["first"]
 
 
-def test_watch_only_files_deleted(make_session):
-    s = make_session()
-    with contextlib.suppress(FileNotFoundError):  # an earlier run's: it would be kept
-        os.remove(os.path.join(s._output_dir(), "main.p.log"))
-    pane = s.new_pane("p", "echo x; sleep 30", mode=PANE_MODE_EXEC, on_output={"x": None})
-    path = s.output_path(pane)
-    assert wait_until(lambda: os.path.exists(path) and b"x" in read(path))
-    s.kill()
-    assert not os.path.exists(path)
-
-    s = make_session("lte-test-2")
-    s.keep_output = True
-    pane = s.new_pane("p", "echo x; sleep 30", mode=PANE_MODE_EXEC, on_output={"x": None})
-    path = s.output_path(pane)
-    s.kill()
-    assert os.path.exists(path)
-    os.remove(path)
-
-
 def test_watch_files_in_the_output_dir(make_session):
-    """A watch's file goes where captures do; one there already (an earlier
-    run's capture, appended to) is kept, a pane captured on purpose too."""
+    """A watch's file goes where captures do and is deleted with the session;
+    one there already (an earlier run's capture, appended to) is kept, a pane
+    captured on purpose too, and all of them with keep_output."""
     s = make_session("lte-test-3")
     for name in ("main.new.log", "main.kept.log"):  # an earlier failed run's
         with contextlib.suppress(FileNotFoundError):
@@ -351,6 +329,14 @@ def test_watch_files_in_the_output_dir(make_session):
     assert read(old).startswith(b"earlier run")
     for p in (paths[0], paths[2]):
         os.remove(p)
+
+    s = make_session("lte-test-2")
+    s.keep_output = True
+    pane = s.new_pane("p", "echo x; sleep 30", mode=PANE_MODE_EXEC, on_output={"x": None})
+    path = s.output_path(pane)
+    s.kill()
+    assert os.path.exists(path)
+    os.remove(path)
 
 
 def test_session_capture(make_session, tmp_path):
@@ -579,9 +565,10 @@ def test_tee_never_loses_pipe_to_capture(session, tmp_path):
             thread.join()
 
 
-def test_reader_idle(session):
+def test_reader_idle_and_kill(session):
     """Nothing written: the reader blocks until its safety-net refresh (no
-    polling); no watches: it blocks outright."""
+    polling); no watches: it blocks outright. kill() ends it, and its
+    watches."""
     pane = session.new_pane("p", "echo hi; sleep 30", mode=PANE_MODE_EXEC, on_output={"hi": None})
     reader = session._reader
     assert reader._inotify is not None
@@ -589,6 +576,9 @@ def test_reader_idle(session):
     assert reader._timeout() > output.POLL
     session.unwatch_output(pane)
     assert reader._timeout() is None
+    w = session.watch_output(pane, "never")
+    session.kill()
+    assert wait_until(lambda: not reader.alive) and w.done
 
 
 def test_reader_polls_without_inotify(session, monkeypatch):
@@ -602,11 +592,3 @@ def test_reader_polls_without_inotify(session, monkeypatch):
     )
     assert session._reader._inotify is None
     assert wait_until(lambda: lines == ["hit"])
-
-
-def test_kill_closes_reader(session):
-    pane = session.new_pane("p", "sleep 30", mode=PANE_MODE_EXEC)
-    w = session.watch_output(pane, "x")
-    reader = session._reader
-    session.kill()
-    assert wait_until(lambda: not reader.alive) and w.done

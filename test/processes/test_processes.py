@@ -19,6 +19,8 @@ SLOW_STOP = (
 
 
 def test_subprocess_group(tmp_path):
+    """ready=, env=, exits=, a death raised from wait_until(), logs, on_exit;
+    build() needs a tmux session."""
     exits = []
     procs = ProcessGroup(
         "prog",
@@ -26,6 +28,8 @@ def test_subprocess_group(tmp_path):
         stop_codes={"*": (0, 130)},
         on_exit=lambda name, status, died: exits.append((name, died)),
     )
+    with pytest.raises(ValueError, match="needs a tmux session"):
+        procs.build(lambda session: None)
     a = procs.start("w:a", "echo hello $GREETING; sleep 60", ready="hello", env={"GREETING": "x"})
     assert "hello x" in a.output()
     procs.start("w:oneshot", "true", exits=0)
@@ -78,13 +82,6 @@ def test_tmux_group(session, tmp_path):
     assert not procs.status("sim:b").running
 
 
-def test_build_needs_tmux(tmp_path):
-    procs = ProcessGroup("b", log_dir=str(tmp_path))
-    with pytest.raises(ValueError, match="needs a tmux session"):
-        procs.build(lambda session: None)
-    procs.close()
-
-
 def test_per_process_sigint_timeout(tmp_path):
     """close(): each process escalates on its own deadline, all at once."""
     ignore = (
@@ -118,52 +115,6 @@ DEAF = (
 )
 
 
-def _sigterm_timeouts(procs):
-    """The group's sigterm_timeout and start()'s, each on its own deadlines."""
-    procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
-    procs.start("w:group", DEAF, ready="up")  # the group's: 0.5 s
-    t = time.monotonic()
-    procs.close(check=False)
-    assert time.monotonic() - t < 3  # not 5 s of SIGTERM grace each
-    assert procs.status("w:deaf").stopped == "SIGKILL"
-    assert procs.status("w:group").stopped == "SIGKILL"
-
-
-def test_sigterm_timeout(tmp_path):
-    """SIGTERM -> SIGKILL grace: 5 s by default, as before; settable."""
-    assert ProcessGroup("d", log_dir=str(tmp_path / "d")).sigterm_timeout == 5.0
-    _sigterm_timeouts(
-        ProcessGroup("term", log_dir=str(tmp_path), sigint_timeout=0.2, sigterm_timeout=0.5)
-    )
-    procs = ProcessGroup(
-        "term2", log_dir=str(tmp_path / "2"), sigint_timeout=0.2, sigterm_timeout=30
-    )
-    p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
-    p.stop(check=False)
-    p.start().wait_for("up")  # a restart keeps it
-    t = time.monotonic()
-    p.stop(check=False)
-    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
-    p.start().wait_for("up")
-    t = time.monotonic()
-    procs.stop("w:deaf", check=False, sigterm_timeout=0.1)  # stop()'s own
-    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
-    procs.close()
-
-
-def test_sigterm_timeout_tmux(session, tmp_path):
-    _sigterm_timeouts(
-        ProcessGroup(
-            "term",
-            tmux=session,
-            prefix="",
-            log_dir=str(tmp_path),
-            sigint_timeout=0.2,
-            sigterm_timeout=0.5,
-        )
-    )
-
-
 def test_sigterm_timeout_adopted(tmp_path):
     """adopt()'s panes: the group's sigterm_timeout."""
     script = tmp_path / "s.py"
@@ -183,8 +134,6 @@ def test_sigterm_timeout_adopted(tmp_path):
     assert time.monotonic() - t < 3
     assert procs.status("w:x").stopped == "SIGKILL"
 
-
-# ---------- ProcessGroup(env=) ----------
 
 SHOW_ENV = 'echo "A=${LTE_T_A-unset} B=${LTE_T_B-unset} I=${LTE_T_INH-unset}"; sleep 60'
 
@@ -206,6 +155,30 @@ def group(request, tmp_path, monkeypatch):
     yield make
     for procs in made:
         procs.close()
+
+
+def test_sigterm_timeout(group):
+    """SIGTERM -> SIGKILL grace: the group's and start()'s, each on its own
+    deadline; a restart keeps it, stop() has its own."""
+    procs = group("term", sigint_timeout=0.2, sigterm_timeout=0.5)
+    procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
+    procs.start("w:group", DEAF, ready="up")  # the group's: 0.5 s
+    t = time.monotonic()
+    procs.close(check=False)
+    assert time.monotonic() - t < 3  # not 5 s of SIGTERM grace each
+    assert procs.status("w:deaf").stopped == "SIGKILL"
+    assert procs.status("w:group").stopped == "SIGKILL"
+    procs = group("term2", sigint_timeout=0.2, sigterm_timeout=30)
+    p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
+    p.stop(check=False)
+    p.start().wait_for("up")  # a restart keeps it
+    t = time.monotonic()
+    p.stop(check=False)
+    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
+    p.start().wait_for("up")
+    t = time.monotonic()
+    procs.stop("w:deaf", check=False, sigterm_timeout=0.1)  # stop()'s own
+    assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
 
 
 def shown(proc):

@@ -14,20 +14,19 @@ from libtmux_easy.tmuxcmd import tmux
 
 
 def test_create_and_kill_existing(make_session):
+    """create() refuses an existing name unless kill_existing; the first
+    new_window() reuses the session's initial window."""
     session = make_session("lte-test-create", window=None)
     assert session.session_name == "lte-test-create"
     assert session_exists("lte-test-create")
     with pytest.raises(ValueError, match="already exists"):
         TmuxSession.create("lte-test-create", kill_existing=False)
-    assert make_session("lte-test-create", window=None) is not None
+    session = make_session("lte-test-create", window=None)
+    assert session.new_window("w").name == "w"
+    assert len(session.windows) == 1
 
 
 class TestWindowsAndPanes:
-    def test_first_window_reuses_the_initial_one(self, make_session):
-        session = make_session(window=None)
-        window = session.new_window("w")
-        assert window.name == "w"
-        assert len(session.windows) == 1
 
     def test_first_pane_replaces_the_placeholder(self, session, tmp_path):
         """A window's placeholder pane is gone once the first pane is split
@@ -243,13 +242,6 @@ class TestShellMode:
         assert (status.code, status.signal, status.ok) == (42, None, False)
         assert session.exit_status(pane) == status  # cached: a re-probe would read 0
 
-    def test_sigint_is_inferred(self, session):
-        """Ctrl-C shows up as $? = 130: signal 2, but only inferred."""
-        pane = session.new_pane("x", "sh -c 'exec sleep 300'")
-        session.stop_pane(pane, sigint_timeout=5.0)
-        status = session.exit_status(pane)
-        assert (status.signal, status.inferred) == (2, True)
-
     def test_sigint_handler_exit_code(self, session):
         cmd = (
             "python3 -c 'import signal, sys, time; "
@@ -262,13 +254,15 @@ class TestShellMode:
 
     def test_slow_shell_start(self, session, tmp_path):
         """The pane's shell still runs ~/.bashrc when new_pane() is called:
-        the command is tracked, not the rc file's 'sleep'."""
+        the command is tracked, not the rc file's 'sleep'. Ctrl-C shows up as
+        $? = 130: signal 2, but only inferred."""
         (tmp_path / ".bashrc").write_text("sleep 1\nPS1='slow$ '\n")
         pane = session.new_pane("x", "sleep 100", env={"HOME": str(tmp_path)})
         time.sleep(0.5)
         assert session.is_running(pane)
         assert session.stop_pane(pane, sigint_timeout=5.0)
-        assert session.exit_status(pane).signal == 2
+        status = session.exit_status(pane)
+        assert (status.signal, status.inferred) == (2, True)
 
 
 def _exec_status(session, pane):
@@ -371,13 +365,17 @@ def test_wait_for_exit_after_it_ended(session, mode, cmd):
 @pytest.mark.parametrize("mode", ["shell", PANE_MODE_WRAP])
 def test_wait_for_exit_leaves_no_callback(session, mode):
     """Each wait unregisters its callback, timed out or not: a pane polled
-    in a loop doesn't collect one per call. Its own on_exit stays."""
+    in a loop doesn't collect one per call. Its own on_exit stays and fires
+    once; a wait after the exit returns at once."""
     calls = []
     pane = session.new_pane("x", "sh -c 'sleep 1; exit 3'", mode=mode, on_exit=calls.append)
     for _ in range(3):
         assert not session.wait_for_exit(pane, timeout=0.05).known
-    for _ in range(3):
+    assert session.wait_for_exit(pane, timeout=5).code == 3
+    start = time.time()
+    for _ in range(2):
         assert session.wait_for_exit(pane, timeout=5).code == 3
+    assert time.time() - start < 0.5
     assert session._exit_callbacks[pane.id] == [calls.append]
     assert len(calls) == 1
 
@@ -447,18 +445,18 @@ def _exec_status_wait(session, pane):
 
 class TestStopping:
     def test_stop_pane(self, session):
+        """SIGINT, then SIGTERM for one that ignores it; an idle pane is
+        stopped already."""
         sleeper = session.new_pane("sleeper", "sleep 100")
         idle = session.new_pane("idle", "true")
+        trapper = session.new_pane("trapper", "trap '' INT; sleep 100")
 
         assert session.wait_for_pane_idle(sleeper, timeout=0.5, poll_interval=0.1) is False
         assert session.stop_pane(sleeper, sigint_timeout=5.0) is True
+        assert session.pane_status(sleeper).stopped == "SIGINT"
         assert session.stop_pane(idle, sigint_timeout=5.0) is True
-
-    def test_stop_pane_escalates_past_sigint(self, session):
-        pane = session.new_pane("trapper", "trap '' INT; sleep 100")
-        time.sleep(0.5)
-        assert session.stop_pane(pane, sigint_timeout=1.0) is True
-        assert session.pane_status(pane).stopped == "SIGTERM"
+        assert session.stop_pane(trapper, sigint_timeout=1.0) is True
+        assert session.pane_status(trapper).stopped == "SIGTERM"
 
     def test_stop_all_in_parallel(self, session):
         """One pane ignores SIGINT and needs SIGTERM; in parallel, the whole
@@ -487,25 +485,21 @@ class TestStopping:
         assert session.pane_status(done).state == "ok"
 
     def test_stopped_vs_ended_on_its_own(self, session):
+        """Same exit status, only one asked to stop; a rerun clears it."""
         stopped = session.new_pane("s", "sleep 60", mode=PANE_MODE_WRAP)
         crashed = session.new_pane("c", "sh -c 'kill -INT $$'", mode=PANE_MODE_WRAP)
         session.wait_for_exit(crashed, timeout=5.0)
         session.stop_pane(stopped, sigint_timeout=5.0)
 
-        # Same exit status; only one was asked to stop.
         assert session.exit_status(stopped) == session.exit_status(crashed)
         assert session.pane_status(stopped).state == "stopped"
         assert session.pane_status(crashed).state == "failed"
         assert str(session.pane_status(stopped)) == "stopped (SIGINT): killed by signal 2"
 
-    def test_rerun_clears_stopped(self, session):
-        pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
-        session.stop_pane(pane, sigint_timeout=5.0)
-        session.respawn_pane(pane, "sh -c 'sleep 0.3; exit 1'")
-
-        assert session.wait_for_exit(pane, timeout=5.0).code == 1
-        assert session.pane_status(pane).stopped is None
-        assert session.pane_status(pane).state == "failed"
+        session.respawn_pane(stopped, "sh -c 'sleep 0.3; exit 1'")
+        assert session.wait_for_exit(stopped, timeout=5.0).code == 1
+        assert session.pane_status(stopped).stopped is None
+        assert session.pane_status(stopped).state == "failed"
 
 
 def test_status_file_and_title(make_session, tmp_path):

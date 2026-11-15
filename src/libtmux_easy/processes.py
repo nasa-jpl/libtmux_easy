@@ -49,7 +49,14 @@ from typing import (
 
 from .output import PaneExited, file_size
 from .status import ExitStatus, PaneStatus
-from .tmux_lib import _SNAPSHOT_SEP, HEADLESS_ENV, PANE_MODE_WRAP, WRAP_COMMAND, _pane_cmd
+from .tmux_lib import (
+    _SNAPSHOT_SEP,
+    HEADLESS_ENV,
+    PANE_MODE_WRAP,
+    WRAP_COMMAND,
+    _check_restart,
+    _pane_cmd,
+)
 from lte_run.proc import SHELLS, alive, cmdline, comm, proc_table
 from lte_run.wrap import (
     PANE_MODE_OPTION,
@@ -98,8 +105,8 @@ def _unique_prefix(session, prefix):
 class _TmuxBackend:
     """Each process in a wrap-mode pane; one window per 'window' group, named
     '<prefix>/<window>' so classes sharing the session don't clash. All
-    groups of a class share one. A restart gets a new pane, '<name>~N',
-    next to the old one's output."""
+    groups of a class share one. Starting a name again gets a new pane,
+    '<name>~N', next to the old one's output."""
 
     def __init__(self, session, prefix):
         self.session = session
@@ -124,9 +131,9 @@ class _TmuxBackend:
 
     def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
         """Start 'name' in a new wrap-mode pane in its group window (made on
-        first use); a restart gets a new pane, '<pane>~N'. 'log': lte-run
-        --tee's file, the command's output only. 'restart': (count, delay),
-        lte-run's --restart."""
+        first use); starting it again gets a new pane, '<pane>~N'. 'log':
+        lte-run --tee's file, the command's output only. 'restart': (count,
+        delay), lte-run's --restart."""
         window, _, pane_name = name.partition(":")
         self.window(window, setup)
         self.runs[name] = self.runs.get(name, 0) + 1
@@ -144,7 +151,8 @@ class _TmuxBackend:
             on_output=on_output,
             cmd_capture=log,
             env=env,
-            **({"restart": restart[0], "restart_delay": restart[1]} if restart else {}),
+            restart=restart[0] if restart else 0,
+            restart_delay=restart[1] if restart else 1.0,
         )
 
     def full(self, window):
@@ -361,7 +369,8 @@ class _Subprocess:
 
 class _SubprocessBackend:
     """Plain subprocesses, their output in their logs; also on 'tty' for
-    names matching an 'echo' pattern. A restart replaces the old one."""
+    names matching an 'echo' pattern. Starting a name again replaces the old
+    one."""
 
     def __init__(self, tty, echo):
         self.tty = tty
@@ -370,9 +379,9 @@ class _SubprocessBackend:
         self.procs = {}
 
     def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
-        """Start 'name' as a _Subprocess ('setup' first, in the same shell); a
-        restart replaces the old one. 'restart': (count, delay): under
-        'lte-run --restart', which a stop (SIGINT to the group) ends."""
+        """Start 'name' as a _Subprocess ('setup' first, in the same shell),
+        replacing an old one. 'restart': (count, delay): under 'lte-run
+        --restart', which a stop (SIGINT to the group) ends."""
         if restart:
             count, delay = restart
             command = (
@@ -688,7 +697,7 @@ class _AdoptedBackend:
             return self.script[name].kill()
         _kill(self.panes[name].targets())
 
-    def start(self, *args):
+    def start(self, *args, **kwargs):
         """Always ValueError: an adopted pane was started by the script."""
         raise ValueError("start(): these are the script's panes; it can't be started again")
 
@@ -767,8 +776,9 @@ class _AdoptedPane:
             return
         if run is not None:  # lte-run's record: exact
             self.pids = (run["pid"],)
+            # Its wrapper lives on between a failed run and its restart.
             ended = "code" in run
-            running = not ended and alive(run["pid"])
+            running = not ended and (alive(run["pid"]) or alive(run.get("wrapper") or 0))
             status = ExitStatus(code=run.get("code"), signal=run.get("signal"))
         elif row is None:  # the pane is gone
             running, status = False, ExitStatus()
@@ -1267,13 +1277,15 @@ class ProcessGroup:
         @param restart_delay: seconds before each restart
         @return: its Process
         @raise ValueError: it is already running, another open group of the same
-            scope has the name, or the group adopted a script
+            scope has the name, the group adopted a script, or a bad 'restart'
+            or 'restart_delay'
         @raise ProcessFailure: no 'ready' line in time, or it exited first
         """
         if self._adopted:
             raise ValueError(
-                "start(): this group adopted a script's session; " "start more in another group"
+                "start(): this group adopted a script's session; start more in another group"
             )
+        _check_restart(restart, restart_delay)
         name = self._name(name)
         on_exit, on_line = self._begin(name, command, fail_on, exits, stop_codes)
         self._commands[name] = (
@@ -1301,7 +1313,7 @@ class ProcessGroup:
             on_line,
             self.log(name),
             self._env_for(env),
-            **({"restart": (restart, restart_delay)} if restart else {}),
+            restart=(restart, restart_delay) if restart else None,
         )
         if ready is not None:
             self.wait_for(name, ready, timeout)

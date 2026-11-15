@@ -16,6 +16,10 @@ def _alive(name):
     return subprocess.run(["tmux", "has-session", "-t", name], capture_output=True).returncode == 0
 
 
+def _q():
+    return "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
+
+
 @pytest.fixture(autouse=True)
 def no_pause(monkeypatch):
     monkeypatch.setattr(close, "PAUSE", 0)
@@ -88,7 +92,9 @@ def test_window_runs_it(plain):
 
 def test_script_stops_its_own_panes(session, tmp_path):
     """The script answers 'close': its callbacks run, it stops its panes the
-    wrap-mode way, and lte-close runs the shell actions and kills the session."""
+    wrap-mode way, and lte-close runs the shell actions, kills the session and
+    gives back the Q key create() borrowed."""
+    assert "libtmux_easy.close" in _q()
     calls = []
     pane = session.new_pane("server", "sleep 60", mode=PANE_MODE_WRAP)
     session.on_close(lambda s: calls.append(("before", s.is_running(pane))), when="before")
@@ -105,12 +111,7 @@ def test_script_stops_its_own_panes(session, tmp_path):
     assert "The session's script is stopping its panes:" in lines
     assert "  main:server: stopped" in lines
     assert not _alive("lte-test")
-
-
-def test_script_gives_the_key_back_when_closed(session):
-    assert "libtmux_easy.close" in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
-    close.Closer(session.id, out=lambda _: None)()
-    assert "libtmux_easy.close" not in "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
+    assert _q() == ""
 
 
 def test_close_in_process(session, tmp_path):
@@ -125,14 +126,15 @@ def test_close_in_process(session, tmp_path):
     assert calls == [True, 2]
     assert (tmp_path / "log").read_text() == "shell\n"
     assert not _alive("lte-test")
-
-
-def test_on_close_rejects_bad_when(session):
     with pytest.raises(ValueError):
         session.on_close("true", when="during")
 
 
 def test_bind_close_key(session):
+    """Asked for: wraps the user's binding; kill() puts theirs back. The
+    session's own Q goes too."""
+    assert "libtmux_easy.close" in _q()
+
     def binding():
         return "\n".join(tmux("list-keys", "-T", "prefix", "C-x"))
 
@@ -143,19 +145,9 @@ def test_bind_close_key(session):
 
         session.kill()
         assert "libtmux_easy.close" not in binding() and "kill-session" in binding()
+        assert _q() == ""
     finally:
         tmux("unbind-key", "-T", "prefix", "C-x")
-
-
-def _q():
-    return "\n".join(tmux("list-keys", "-T", "prefix", "Q"))
-
-
-def test_create_borrows_q_if_free(make_session):
-    sess = make_session("lte-test-q")
-    assert "libtmux_easy.close" in _q()
-    sess.kill()
-    assert _q() == ""
 
 
 def test_user_binding_of_q_wins(make_session):

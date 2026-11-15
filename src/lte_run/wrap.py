@@ -39,9 +39,9 @@ import resource
 import select
 import shlex
 import shutil
-import stat
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -61,9 +61,8 @@ PIPE_FILE_OPTION = "@lte_pipe_file"  # pane option: the file the pane's output g
 PIPE_FROM_OPTION = "@lte_pipe_from"  # pane option: where in it the current capture began
 PIPE_TEE_OPTION = "@lte_pipe_tee"  # pane option: lte-run --tee has the pipe
 PIPE_ID_OPTION = "@lte_pipe_id"  # pane option: new for each pipe (a rerun's same file)
-PIPE_WHOLE_OPTION = (
-    "@lte_pipe_whole"  # pane option: "1" if the library's pipe began at the pane's first byte
-)
+# pane option: "1" if the library's pipe began at the pane's first byte
+PIPE_WHOLE_OPTION = "@lte_pipe_whole"
 _PIPE_REQ = "@lte_pipe_req"  # pane options: a pipe request, see guarded_pipe()
 PANE_NAME_OPTION = "@lte_name"  # pane option: its new_pane() name
 PANE_MODE_OPTION = "@lte_mode"  # pane option: its new_pane() mode
@@ -94,7 +93,8 @@ def record_run(**fields):
     process that didn't start it. A file, not a pane option: a tmux call
     from here loses the command's first output. Best effort.
 
-    @param fields: the JSON: target pid, then how it ended
+    @param fields: the JSON: target pid, then how it ended; the wrapper's pid
+        is added, alive while a restart is pending
     """
     directory, pane = os.environ.get(STATUS_DIR_ENV), os.environ.get("TMUX_PANE")
     if not directory or not pane:
@@ -102,7 +102,7 @@ def record_run(**fields):
     path = os.path.join(directory, pane + ".json")
     try:
         with open(path + ".tmp", "w") as f:
-            json.dump(fields, f)
+            json.dump(dict(fields, wrapper=os.getpid()), f)
         os.replace(path + ".tmp", path)
     except OSError:
         pass
@@ -185,6 +185,41 @@ _TERMINAL_SIGNALS = (signal.SIGINT, signal.SIGQUIT)
 # These arrive at the wrapper specifically (kill <pid>, the pane closing).
 # Passed on rather than dying, so the target is not orphaned.
 _FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+# Any of them is a stop: no restart after it.
+_STOP_SIGNALS = _TERMINAL_SIGNALS + _FORWARDED_SIGNALS
+
+
+class _Stop:
+    """Whether a stop was asked for; set from a signal handler or the serve
+    thread. Not a threading.Event: its set() takes a lock that the main
+    thread may hold inside wait() when the handler runs, a deadlock."""
+
+    def __init__(self):
+        self._set = False
+        self._r, self._w = os.pipe()  # close-on-exec (PEP 446)
+        os.set_blocking(self._w, False)
+
+    def set(self):
+        """Note the stop; wake wait()."""
+        self._set = True
+        try:
+            os.write(self._w, b"x")
+        except OSError:
+            pass  # the pipe is full: wait() wakes all the same
+
+    def is_set(self) -> bool:
+        """Whether a stop was asked for."""
+        return self._set
+
+    def wait(self, timeout: float) -> bool:
+        """Up to 'timeout' s, until set().
+
+        @return: is_set()
+        """
+        if not self._set:
+            select.select([self._r], [], [], timeout)  # retried after a handler (PEP 475)
+        return self._set
 
 
 def find_dir() -> Optional[str]:
@@ -330,8 +365,9 @@ def plain_text(data: bytes) -> bytes:
     return data
 
 
-QUIET = 0.15  # after the command ends, its last output is taken to have arrived
-# once the copy has been this quiet (at most DRAIN seconds)
+# After the command ends, its last output is taken to have arrived once the
+# copy has been QUIET s quiet, at most DRAIN s on.
+QUIET = 0.15
 DRAIN = 2.0
 
 
@@ -609,33 +645,64 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
     # Pass the inherited dispositions on to the target. Python installs its
     # own SIGINT handler at startup unless SIGINT was already ignored, so
     # "not SIG_IGN" here means "default" at the OS level. The wrapper itself
-    # outlives them (see _TERMINAL_SIGNALS), noting a stop: no restart.
-    stop = threading.Event()  # a stop was asked for: no restart after it
-    inherited_ign = {s: signal.getsignal(s) == signal.SIG_IGN for s in _TERMINAL_SIGNALS}
-    for s, ign in inherited_ign.items():
-        signal.signal(s, signal.SIG_IGN if ign else lambda _signum, _frame: stop.set())
+    # outlives the terminal's (see _TERMINAL_SIGNALS), noting a stop: no
+    # restart after one.
+    stop = _Stop()
+    inherited_ign = {s: signal.getsignal(s) == signal.SIG_IGN for s in _STOP_SIGNALS}
+    for s in _TERMINAL_SIGNALS:
+        if not inherited_ign[s]:
+            signal.signal(s, lambda _signum, _frame: stop.set())
+    pid = 0  # the current run's target
 
-    def spawn() -> int:
-        pid = os.fork()
-        if pid:
-            return pid
-        for s, ign in inherited_ign.items():
-            signal.signal(s, signal.SIG_IGN if ign else signal.SIG_DFL)
-        if tee is not None and tee.child_out is not None:
-            os.dup2(tee.child_out, 1)
-            os.dup2(tee.child_out, 2)
-        if setup != "0":  # a run all the same: 'started', then 'exited' with its status
-            sys.stderr.write(f"lte-run: setup failed ({setup}); not running {shlex.join(argv)}\n")
-            sys.stderr.flush()
-            os._exit(int(setup) if setup.isdigit() else 1)
+    def spawn(restart: bool = False) -> bool:
+        """Fork and exec the command; 'pid' is the new run. _STOP_SIGNALS are
+        blocked meanwhile, so no handler sees a run half-made.
+
+        @param restart: not after a stop
+        @return: whether it started
+        """
+        nonlocal pid
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
         try:
-            os.execvp(argv[0], argv)
+            if restart and stop.is_set():
+                return False
+            pid = os.fork()
+            if not pid:
+                exec_child(mask)
+            return True
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+
+    def exec_child(mask):
+        """The forked child: the inherited dispositions and 'mask' back, then
+        exec. Never returns. A restart forks with threads running, so only
+        what is safe after that: no locks but stderr's, which only this
+        thread takes."""
+        code = 126
+        try:
+            for s, ign in inherited_ign.items():
+                signal.signal(s, signal.SIG_IGN if ign else signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            if tee is not None and tee.child_out is not None:
+                os.dup2(tee.child_out, 1)
+                os.dup2(tee.child_out, 2)
+            if setup != "0":  # a run all the same: 'started', then 'exited' with its status
+                sys.stderr.write(
+                    f"lte-run: setup failed ({setup}); not running {shlex.join(argv)}\n"
+                )
+                code = int(setup) if setup.isdigit() else 1
+            else:
+                os.execvp(argv[0], argv)
         except OSError as exc:
             sys.stderr.write(f"lte-run: {argv[0]}: {exc.strerror}\n")
-            sys.stderr.flush()  # os._exit skips it; 3.8 buffers stderr to a pipe
-            os._exit(127 if isinstance(exc, FileNotFoundError) else 126)
+            code = 127 if isinstance(exc, FileNotFoundError) else 126
+        finally:
+            try:
+                sys.stderr.flush()  # os._exit skips it; 3.8 buffers stderr to a pipe
+            finally:
+                os._exit(code)
 
-    pid = spawn()
+    spawn()
     if tee is not None:
         tee.start()
     channel.send(
@@ -683,9 +750,8 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
             f"lte-run: {shlex.join(argv)} {how}; restart {count} in {opts['restart_delay']:g}s\n"
         )
         sys.stderr.flush()
-        if stop.wait(opts["restart_delay"]):
+        if stop.wait(opts["restart_delay"]) or not spawn(restart=True):
             break  # stopped while waiting: the failed run's status stands
-        pid = spawn()
         channel.send(event="restarted", target_pid=pid, code=code, signal=sig, time=time.time())
         record_run(pid=pid, restarts=restarts)
 

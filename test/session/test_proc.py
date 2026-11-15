@@ -1,4 +1,4 @@
-"""libtmux_easy.proc: finding and inspecting processes, against real
+"""lte_run.proc: finding and inspecting processes, against real
 subprocesses and tmux sessions."""
 
 import os

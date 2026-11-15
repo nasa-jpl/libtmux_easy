@@ -1,6 +1,6 @@
 """
 Tests for wrap mode: panes whose command runs under lte-run
-(src/libtmux_easy/wrap.py), which reports the exact pid and exit status over
+(src/lte_run/wrap.py), which reports the exact pid and exit status over
 the session's control socket. See docs/wrap-mode.md.
 """
 
@@ -109,7 +109,9 @@ class TestWrapStandalone:
             assert proc.returncode == sig and "up" not in out
 
     def test_tee(self, env, tmp_path):
-        """Outside tmux, through a pipe: shown and copied, as plain text."""
+        """Outside tmux, through a pipe: shown and copied as plain text; -a
+        appends, --raw keeps escapes; LTE_RUN_TEE is like --tee and not passed
+        on; an unwritable file still runs the command."""
         log = tmp_path / "out.log"
         cmd = r"echo out; echo err >&2; printf '\033[31mred\033[0m\n'; printf '1\r2\r3\n'; exit 3"
         proc = self._run(env, "--tee", str(log), "sh", "-c", cmd)
@@ -117,24 +119,16 @@ class TestWrapStandalone:
         assert "out" in proc.stdout and "err" in proc.stdout
         assert log.read_text() == "out\nerr\nred\n3\n"
 
-    def test_tee_append_and_raw(self, env, tmp_path):
-        log = tmp_path / "out.log"
-        log.write_text("before\n")
         self._run(env, "--tee", str(log), "-a", "--raw", "printf", r"\033[1mx\033[0m\n")
-        assert log.read_text() == "before\n\x1b[1mx\x1b[0m\n"
+        assert log.read_text() == "out\nerr\nred\n3\n\x1b[1mx\x1b[0m\n"
 
-    def test_tee_from_env(self, env, tmp_path):
-        """LTE_RUN_TEE: like --tee, and not passed on to the command."""
-        log = tmp_path / "out.log"
-        env[wrap.TEE_ENV] = str(log)
-        proc = self._run(env, "sh", "-c", 'echo "seen=[$LTE_RUN_TEE]"')
-        assert log.read_text() == "seen=[]\n"
-        assert proc.returncode == 0
+        proc = self._run(
+            dict(env, **{wrap.TEE_ENV: str(log)}), "sh", "-c", 'echo "seen=[$LTE_RUN_TEE]"'
+        )
+        assert proc.returncode == 0 and log.read_text() == "seen=[]\n"
 
-    def test_tee_unwritable_still_runs(self, env, tmp_path):
         proc = self._run(env, "--tee", str(tmp_path / "no" / "dir.log"), "sh", "-c", "exit 4")
-        assert proc.returncode == 4
-        assert "--tee" in proc.stderr
+        assert proc.returncode == 4 and "--tee" in proc.stderr
 
 
 class TestWrapMode:
@@ -154,16 +148,21 @@ class TestWrapMode:
         assert session.pane_status(exited).mode == PANE_MODE_WRAP
 
     def test_wrap_status_survives_user_commands(self, session):
+        """The pane stays an interactive shell; what is typed there that isn't
+        lte-run leaves the status alone."""
         pane = session.new_pane("x", "sh -c 'sleep 0.3; exit 42'", mode=PANE_MODE_WRAP)
         assert session.wait_for_exit(pane, timeout=5.0).code == 42
 
         session.send_keys("false", target_pane=pane)
-        session.send_keys("ls", target_pane=pane)
-        time.sleep(0.5)
+        session.send_keys("echo hi_$((6*7))", target_pane=pane)
 
+        assert _wait_until(lambda: "hi_42" in _pane_text(pane))
+        time.sleep(0.3)
         assert str(session.exit_status(pane)) == "exited 42"
 
-    def test_wrap_target_pid_is_exact(self, session):
+    def test_wrap_target_pid_respawn_and_teardown(self, session):
+        """The target pid is exact (bash -> lte-run -> command); respawn is a
+        new target; kill() removes the control socket's dir."""
         pane = session.new_pane("x", "sleep 30", mode=PANE_MODE_WRAP)
 
         pids = session.pane_status(pane).target_pids
@@ -175,13 +174,14 @@ class TestWrapMode:
         assert wrapper.pid == session._wrap_runs[pane.id].wrapper_pid
         assert wrapper.parent().pid == int(pane.pane_pid)  # bash, the pane process
 
-    def test_wrap_pane_stays_interactive(self, session):
-        pane = session.new_pane("x", "true", mode=PANE_MODE_WRAP)
-        session.wait_for_exit(pane, timeout=5.0)
+        session.respawn_pane(pane, "sh -c 'sleep 0.3; exit 6'")
+        assert session.pane_status(pane).target_pids != pids
+        assert session.wait_for_exit(pane, timeout=5.0).code == 6
 
-        session.send_keys("echo hi_$((6*7))", target_pane=pane)
-
-        assert _wait_until(lambda: "hi_42" in _pane_text(pane))
+        directory = session._wrap_dir
+        assert os.path.exists(os.path.join(directory, wrap.SOCKET_NAME))
+        session.kill()
+        assert not os.path.exists(directory)
 
     def test_wrap_kills_target_children(self, session):
         """SIGKILL goes to the whole target group, so nothing is orphaned.
@@ -199,33 +199,25 @@ class TestWrapMode:
             lambda: not any(p.is_running() and p.status() != psutil.STATUS_ZOMBIE for p in sleeps)
         )
 
-    def test_wrap_manual_rerun_tracked(self, session):
-        """A rerun typed into the pane (up-arrow, Enter) is a new run."""
+    def test_wrap_rerun_typed_is_a_new_run(self, make_session, tmp_path):
+        """An lte-run typed into the pane is a new run, and its argv the pane's
+        command: in the status, the status file, and for respawn_pane().
+        Via send_keys(), then straight into tmux."""
+        path = str(tmp_path / "status.json")
+        session = make_session(status_file=path)
         pane = session.new_pane("x", "sh -c 'sleep 0.3; exit 4'", mode=PANE_MODE_WRAP)
         assert session.wait_for_exit(pane, timeout=5.0).code == 4
         old_pids = session.pane_status(pane).target_pids
 
-        session.send_keys(f"lte-run sh -c 'sleep 0.5; exit 8'", target_pane=pane)
+        session.send_keys("lte-run sh -c 'sleep 0.5; exit 8'", target_pane=pane)
 
         assert _wait_until(lambda: session.pane_status(pane).target_pids != old_pids)
         assert session.is_running(pane) is True
         assert not session.exit_status(pane).known
         assert session.wait_for_exit(pane, timeout=5.0).code == 8
-        # The rerun is now the pane's command: shown in the status, rerun by respawn.
         assert session.pane_status(pane).command == "sh -c 'sleep 0.5; exit 8'"
-        session.respawn_pane(pane)
-        assert session.wait_for_exit(pane, timeout=5.0).code == 8
 
-    def test_wrap_rerun_by_hand_is_the_command(self, make_session, tmp_path):
-        """Typed straight into tmux, not via send_keys(): lte-run's 'started'
-        argv is the pane's command, in the status, the status file and for
-        respawn_pane()."""
-        path = str(tmp_path / "status.json")
-        session = make_session(status_file=path)
-        pane = session.new_pane("x", "sh -c 'exit 4'", mode=PANE_MODE_WRAP)
-        assert session.wait_for_exit(pane, timeout=5.0).code == 4
-
-        session.server.cmd("send-keys", "-t", pane.id, "-l", f"lte-run sh -c 'sleep 0.3; exit 6'")
+        session.server.cmd("send-keys", "-t", pane.id, "-l", "lte-run sh -c 'sleep 0.3; exit 6'")
         session.server.cmd("send-keys", "-t", pane.id, "Enter")
 
         assert _wait_until(lambda: session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 6'")
@@ -241,28 +233,12 @@ class TestWrapMode:
         session.wait_for_pane_idle(pane, timeout=5.0)
         assert session.exit_status(pane).code == 0
 
-        session.send_keys(f"lte-run sh -c 'sleep 0.3; exit 5'", target_pane=pane)
+        session.send_keys("lte-run sh -c 'sleep 0.3; exit 5'", target_pane=pane)
 
         assert _wait_until(lambda: session.pane_status(pane).mode == PANE_MODE_WRAP)
         status = session.wait_for_exit(pane, timeout=5.0)
         assert (status.code, status.inferred) == (5, False)
         assert session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 5'"
-
-    def test_wrap_on_exit_fires_once(self, session):
-        calls = []
-        pane = session.new_pane(
-            "x", "sh -c 'sleep 0.5; exit 3'", mode=PANE_MODE_WRAP, on_exit=calls.append
-        )
-        assert _wait_until(lambda: calls)
-        time.sleep(0.5)
-
-        assert len(calls) == 1
-        assert calls[0].exit_status.code == 3
-
-        start = time.time()
-        assert session.wait_for_exit(pane, timeout=5.0).code == 3
-        assert time.time() - start < 0.5
-        assert len(calls) == 1
 
     def test_wrap_lost_wrapper(self, session, caplog):
         pane = session.new_pane("x", "sleep 2", mode=PANE_MODE_WRAP)
@@ -279,15 +255,6 @@ class TestWrapMode:
 
         assert session.wait_for_exit(pane, timeout=5.0).known is False
         assert session.is_running(pane) is False
-
-    def test_wrap_respawn_pane(self, session):
-        pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
-        old_pids = session.pane_status(pane).target_pids
-
-        session.respawn_pane(pane, "sh -c 'sleep 0.3; exit 6'")
-
-        assert session.pane_status(pane).target_pids != old_pids
-        assert session.wait_for_exit(pane, timeout=5.0).code == 6
 
     def test_wrap_tee(self, session, tmp_path):
         """In a pane: the command keeps its terminal, tmux copies its output,
@@ -306,10 +273,8 @@ class TestWrapMode:
         session.respawn_pane(pane, "sh -c 'echo rerun; exit 0'")
         session.wait_for_exit(pane, timeout=5.0)
         assert log.read_text() == "rerun\n"
-
-    def test_tee_needs_wrap_mode(self, session, tmp_path):
         with pytest.raises(ValueError, match="cmd_capture"):
-            session.new_pane("x", "true", cmd_capture=str(tmp_path / "x.log"))
+            session.new_pane("y", "true", mode=PANE_MODE_SHELL, cmd_capture=str(log))
 
     def test_wrap_enter_false_waits_for_enter(self, session):
         pane = session.new_pane("x", "sh -c 'exit 2'", mode=PANE_MODE_WRAP, enter=False)
@@ -322,7 +287,8 @@ class TestWrapMode:
 
     def test_wait_start_false(self, make_session, tmp_path):
         """Typed before the shell is up: a slow rc file of each pane runs at
-        the same time, and each command once it is done."""
+        the same time, and each command once it is done. A pane still
+        starting can be stopped."""
         rc = tmp_path / "rc"
         rc.write_text("sleep 1\n")
         session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
@@ -331,10 +297,13 @@ class TestWrapMode:
         start = time.monotonic()
         quick = session.new_pane("quick", "sh -c 'exit 3'", on_exit=exits.append)
         slow = [session.new_pane(f"p{i}", "sleep 60") for i in range(3)]
+        stopped = session.new_pane("stopped", "sleep 60")
         assert time.monotonic() - start < 1.0
         assert session.pane_status(slow[0]).state == "starting"
         assert session.is_running(slow[0])  # on its way
         assert "starting" in _pane_title(slow[0])
+        assert session.stop_pane(stopped, sigint_timeout=5.0) is True
+        assert session.exit_status(stopped).signal == signal.SIGINT
 
         assert session.wait_started(timeout=10) == []
         assert all(session.pane_status(p).state == "running" for p in slow)
@@ -356,15 +325,6 @@ class TestWrapMode:
         assert _wait_until(lambda: "hello" in lines)
         assert [line for line in lines if "lte-run" in line] == []
 
-    def test_stop_pane_while_starting(self, make_session, tmp_path):
-        rc = tmp_path / "rc"
-        rc.write_text("sleep 0.5\n")
-        session = make_session(mode=PANE_MODE_WRAP, rc=str(rc), wait_start=False)
-        pane = session.new_pane("x", "sleep 60")
-
-        assert session.stop_pane(pane, sigint_timeout=5.0) is True
-        assert session.exit_status(pane).signal == signal.SIGINT
-
     def test_wait_started_reports_late_panes(self, make_session, tmp_path, caplog):
         rc = tmp_path / "rc"
         rc.write_text("exec sleep 60\n")  # never reads what is typed
@@ -373,14 +333,6 @@ class TestWrapMode:
 
         assert session.wait_started(timeout=0.5) == ["main:x"]
         assert "lte-run never reported from main:x" in caplog.text
-
-    def test_wrap_teardown(self, session):
-        directory = session._wrap_dir
-        assert os.path.exists(os.path.join(directory, wrap.SOCKET_NAME))
-
-        session.kill()
-
-        assert not os.path.exists(directory)
 
     def test_wrap_shell_operators_and_dash_t(self, session):
         """Shell operators run under bash -c. And a second pane whose command

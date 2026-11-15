@@ -127,6 +127,14 @@ def pane_env(env: Optional[Mapping[str, object]]) -> Dict[str, Optional[str]]:
     return {k: None if v is None else str(v) for k, v in (env or {}).items() if k not in SKIP_ENV}
 
 
+def _check_restart(restart: int, delay: float):
+    """ValueError unless lte-run takes them: a count or -1, seconds >= 0."""
+    if restart < -1:
+        raise ValueError(f"restart={restart!r}: expected a count, or -1 (no limit)")
+    if not delay >= 0:
+        raise ValueError(f"restart_delay={delay!r}: expected seconds >= 0")
+
+
 def _check_mode(mode: str) -> str:
     """'mode' if it is a pane mode (shell, exec, wrap); else ValueError."""
     if mode not in _PANE_MODES:
@@ -591,9 +599,8 @@ class TmuxSession(Session):
         # Files made only for a watch (or a mark): deleted with the session.
         self._temp_files = set()
         self._kept_files = set()  # captured on purpose: never deleted
-        self._temp_scopes = (
-            {}
-        )  # target -> files in its dir before (a watch's window/session capture)
+        # target -> files in its dir before (a watch's window/session capture)
+        self._temp_scopes = {}
         self.keep_output = False  # keep a watch's files too
 
     def new_window(
@@ -931,7 +938,8 @@ class TmuxSession(Session):
         @return: the Pane
         @raise ValueError: no window yet (new_window() first), the name is
             taken in the window, an unknown 'mode', 'cmd_capture' or 'restart'
-            outside wrap mode, or 'shell' in exec mode
+            outside wrap mode, a bad 'restart' or 'restart_delay', or 'shell'
+            in exec mode
         """
         mode = _check_mode(self.default_mode if mode is None else mode)
         if wait_start is None:
@@ -940,6 +948,7 @@ class TmuxSession(Session):
             raise ValueError("cmd_capture needs mode=PANE_MODE_WRAP (it is lte-run's --tee)")
         if restart and mode != PANE_MODE_WRAP:
             raise ValueError("restart needs mode=PANE_MODE_WRAP (it is lte-run's --restart)")
+        _check_restart(restart, restart_delay)
         if self.unnamed_window:
             raise ValueError("Cannot create a new pane before creating a new window.")
         if self.current_window is None:
@@ -1780,6 +1789,7 @@ class TmuxSession(Session):
         if command is None:
             command = self.commands[self.get_pane_name(pane)][0]
         self._exit_status.pop(pane.id, None)
+        self._restarts.pop(pane.id, None)  # the old run's
         if self._reader is not None:
             self._reader.new_run(pane.id)
 
@@ -2371,9 +2381,8 @@ class TmuxSession(Session):
                     PIPE_ID: f"lib-{time.monotonic_ns()}",
                     PIPE_WHOLE: "",
                 },
-            ) + [
-                ";"
-            ]  # late
+            )
+            args.append(";")  # dropped after the last command
             if current and current != path and current.endswith(f".{pane_id}.log"):
                 stale.append(current)
         if args:
