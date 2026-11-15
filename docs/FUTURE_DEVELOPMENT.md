@@ -20,6 +20,12 @@ done, delete it (the commit is the record).
 | idea | `PaneStatus.command` for adopted panes | `""` today; wrap panes could report lte-run's command |
 | idea | A line in flight may come twice when `adopt()` follows a script's late watch pipe | rare; dedupe by offset if it bites |
 
+## pytest plugin: failures ([pytest-plugin.md](pytest-plugin.md))
+
+| status | item | notes |
+|---|---|---|
+| idea | `skip_rest_on_failure=False`: a failed assertion doesn't skip the rest of the class | today any failure skips it. A death would still skip. The flag is read when the test ends, so flipping it back after a few asserts never runs if one fails; a `with procs.keep_going():` block that remembers the failure leaving it is the safe form inside a test |
+
 ## Output ([output.md](output.md))
 
 | status | item | notes |
