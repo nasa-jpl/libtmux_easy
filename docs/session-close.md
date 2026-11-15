@@ -11,7 +11,7 @@
 | kill now | `kill()` | | `tmux kill-session`, closing the last window |
 | let go, leave it up | `release(keep_windows=True)` | `q` closes the sidebar only | |
 
-- "Stop" is SIGINT, then SIGTERM, then SIGKILL (10 / 5 / 2 s), stopping at
+- "Stop" is SIGINT, then SIGTERM, then SIGKILL (5 / 5 / 2 s), stopping at
   the first that works. How each pane mode delivers them:
   [exit-status.md](exit-status.md#stopping).
 - "Kill" sends only SIGHUP: no graceful shutdown, no close actions. tmux has

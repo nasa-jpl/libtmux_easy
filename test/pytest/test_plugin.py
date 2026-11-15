@@ -102,7 +102,7 @@ def test_tmux_not_installed(run, tmp_path):
     assert "--tmux: tmux is not installed" in out
 
 
-# Ready once it says so; later prints a line fail_on catches.
+# Ready once it says so; later prints a line output_checks catches.
 SERVER = """
 import sys, time
 print("listening on 8080", flush=True)
@@ -123,7 +123,7 @@ from libtmux_easy.testing import Processes
 class TestSrv:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, fail_on={"*": "BOOM"})
+        cls.procs = Processes(cls, output_checks={"*": "BOOM"})
         cls.procs.start("w:srv", f"{sys.executable} srv.py", ready=%r, timeout=2)
 
     @classmethod
@@ -134,18 +134,18 @@ class TestSrv:
         assert "listening on 8080" in self.procs.output("w:srv")
         assert self.procs.wait_for("w:srv", r"tick (\\d)").group(1) == "1"
 
-    def test_fail_on(self):
+    def test_output_checks(self):
         self.procs.wait_for("w:srv", "BOOM")
 """
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_ready_wait_for_and_fail_on(run, mode):
+def test_ready_wait_for_and_output_checks(run, mode):
     proc, out = run(OUTPUT_TESTS % r"listening on \d+", mode=mode, files={"srv.py": SERVER})
     assert proc.returncode == 1, out
     assert "1 failed, 1 passed in" in out  # and no teardown error
-    assert "FAILED test_inner.py::TestSrv::test_fail_on" in out
-    assert "w:srv printed 'BOOM' (fail_on 'BOOM')" in out
+    assert "FAILED test_inner.py::TestSrv::test_output_checks" in out
+    assert "w:srv printed 'BOOM' (output_checks 'BOOM')" in out
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -213,9 +213,9 @@ def test_death():
     procs.start("w:dies", CMD + " die", ready=r"hello_42")
     time.sleep(2)
 
-def test_fail_on_per_start():
+def test_output_checks_per_start():
     procs = Processes()
-    procs.start("w:bad", f"echo BAD; exec {CMD}", fail_on="BAD")
+    procs.start("w:bad", f"echo BAD; exec {CMD}", output_checks="BAD")
     time.sleep(1)
 
 def test_unclean_stop():
@@ -238,8 +238,8 @@ def test_own_processes(run, mode):
     assert "solo:solo is already running" in out, out
     assert "FAILED test_inner.py::test_death" in out, out
     assert "w:dies exited 3" in out, out
-    assert "FAILED test_inner.py::test_fail_on_per_start" in out, out
-    assert "w:bad printed 'BAD' (fail_on 'BAD')" in out, out
+    assert "FAILED test_inner.py::test_output_checks_per_start" in out, out
+    assert "w:bad printed 'BAD' (output_checks 'BAD')" in out, out
     assert "FAILED test_inner.py::test_unclean_stop" in out, out
     assert "w:stubborn did not stop cleanly" in out, out
     assert "ERROR" not in out.split("short test summary")[-1], out  # teardowns clean
@@ -293,7 +293,7 @@ def test_unique_prefix():
     assert _unique_prefix(_FakeSession("module/w"), "mod") == "mod"
 
 
-# setup_class / teardown_class; fail_on functions; wait_until; Processes()
+# setup_class / teardown_class; output_checks functions; wait_until; Processes()
 # in a test beside the class's group; LTE_LOG_DIR; BASH_ENV not sourced.
 CLASS_TESTS = """
 import os, sys, time
@@ -304,7 +304,7 @@ CMD = f"{sys.executable} proc.py"
 class TestA:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, fail_on={"*": lambda line: "saw BAD" if "BAD" in line else None})
+        cls.procs = Processes(cls, output_checks={"*": lambda line: "saw BAD" if "BAD" in line else None})
         cls.procs.start("w:a", CMD, ready=r"hello_42")
         cls.procs.wait_until(lambda: "hello_42" in cls.procs.output("w:a"), timeout=5)
         cls.procs.start("w:env", f"echo dir=$LTE_LOG_DIR bash_env=${{BASH_ENV_RAN:-no}}; exec {CMD}")
@@ -412,9 +412,9 @@ def test_out_of_order():
     procs.start("w:job", f"echo three; echo one; exec {CMD}")
     procs.wait_for_in_order("w:job", ["one", "three"], timeout=1)
 
-def test_stop_codes():
+def test_allowed_exit_codes():
     procs = Processes()
-    procs.start("w:s", "sleep 60", stop_codes=(0, 130))
+    procs.start("w:s", "sleep 60", allowed_exit_codes=(0, 130))
     procs.stop("w:s")
 
 def test_close_without_checks():
@@ -428,7 +428,7 @@ def test_close_without_checks():
 class TestParams:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
+        cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
         cls.procs.start("w:p", f"echo n={cls.n}; exec {CMD}", ready="hello_42")
 
     @classmethod
@@ -486,7 +486,7 @@ def test_features(run, mode):
         "test_arg",
         "test_owner_is_a_class",
         "test_exits",
-        "test_stop_codes",
+        "test_allowed_exit_codes",
         "test_close_without_checks",
         "TestParams[n=1]::test_n",
         "TestParams[n=2]::test_n",
@@ -518,7 +518,7 @@ class TestWithEnv:
     @classmethod
     def setup_class(cls):
         cls.procs = Processes(cls, env={"LTE_T_A": "group", "LTE_T_B": "group"},
-                              stop_codes={"*": (0, 130)})
+                              allowed_exit_codes={"*": (0, 130)})
 
     @classmethod
     def teardown_class(cls):
@@ -533,7 +533,7 @@ class TestWithEnv:
 
 class TestWithout:
     def test_no_leak(self):
-        with Processes(stop_codes={"*": (0, 130)}) as procs:
+        with Processes(allowed_exit_codes={"*": (0, 130)}) as procs:
             procs.start("w:c", SHOW)
             procs.wait_for("w:c", "A=unset B=unset")
 """

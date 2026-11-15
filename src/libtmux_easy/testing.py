@@ -12,7 +12,7 @@ teardown_class:
     class TestSystem:
         @classmethod
         def setup_class(cls):
-            cls.procs = Processes(cls, fail_on={"*": r"Traceback"})
+            cls.procs = Processes(cls, output_checks={"*": r"Traceback"})
             cls.procs.start("sim:server", "./server", ready=r"listening")
             cls.procs.wait_until(server_answers)   # any gate
 
@@ -25,7 +25,7 @@ teardown_class:
             with Processes() as procs:   # this test's own, stopped after it
                 procs.start("tools:probe", "./probe")
 
-A process that dies, or prints a fail_on line, fails the test running
+A process that dies, or prints an output check's line, fails the test running
 when it happened. A failed test stops the class's processes at once and
 skips the rest of the class. A session script's processes: build() runs
 its build(session) function, adopt() runs the script and adopts its panes.
@@ -52,7 +52,7 @@ from . import lte_dash
 from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
-from .processes import _Check, _Codes
+from .processes import ExitCodes, OutputChecks
 from .status import PaneStatus
 from .tmux_lib import TmuxSession
 
@@ -317,7 +317,7 @@ class Processes(processes.ProcessGroup):
 
     Make one in setup_class:
 
-        cls.procs = Processes(cls, fail_on={"*": r"Traceback"})
+        cls.procs = Processes(cls, output_checks={"*": r"Traceback"})
 
     or in a test, for that test alone (closed at the end of the 'with', or
     else after the test):
@@ -335,14 +335,16 @@ class Processes(processes.ProcessGroup):
         first); a class also skips its remaining tests. Names ('window:pane')
         are unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
-    @param fail_on: output that means a process failed, though still running:
-        {name or "*": check}. A check is a regex (searched in each line), a
-        function line -> problem message or None, or a list of them. "*":
-        every process. A match is a death: the running test fails. E.g.
-        fail_on={"*": r"Traceback", "sim:server": r"ERROR"}
-    @param stop_codes: exit codes allowed when a process is stopped: {name or
-        "*": code or codes}, default 0. A signal N is 128+N: 130 allows dying
-        of SIGINT.
+    @param output_checks: output that fails a process while it runs, by
+        process name ("*": every process). Each value is an OutputCheck or a
+        list of them: a regex (string or compiled), searched in each line; or
+        a function that gets each line and returns a problem message, or None
+        when the line is fine. A hit counts as a death: the running test
+        fails. E.g. {"*": r"Traceback", "sim:server": [r"ERROR", my_check]}
+    @param allowed_exit_codes: the exit codes a process may end with when it
+        is stopped, by process name ("*": every process): an int or a set of
+        them. Default 0. Death by signal N is 128+N, so 130 allows dying of
+        SIGINT. E.g. {"*": {0, 130}}
     @param sigint_timeout: seconds a stopped process gets after SIGINT before
         SIGTERM
     @param on_abort: called with no arguments when a test of the owner fails,
@@ -364,9 +366,9 @@ class Processes(processes.ProcessGroup):
         self,
         owner: Union[pytest.Item, type, None] = None,
         *,
-        fail_on: Optional[Mapping[str, Union[_Check, Sequence[_Check]]]] = None,
-        stop_codes: Optional[Mapping[str, _Codes]] = None,
-        sigint_timeout: float = 10.0,
+        output_checks: Optional[Mapping[str, OutputChecks]] = None,
+        allowed_exit_codes: Optional[Mapping[str, ExitCodes]] = None,
+        sigint_timeout: float = 5.0,
         on_abort: Optional[Callable[[], None]] = None,
         log_dir: Union[str, os.PathLike, None] = None,
         on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
@@ -407,8 +409,8 @@ class Processes(processes.ProcessGroup):
             echo=config.lte_echo,
             tty=config.lte_tty,
             setup=_plugin["setup"],
-            fail_on=fail_on,
-            stop_codes=stop_codes,
+            output_checks=output_checks,
+            allowed_exit_codes=allowed_exit_codes,
             sigint_timeout=sigint_timeout,
             sigterm_timeout=sigterm_timeout,
             on_abort=on_abort,

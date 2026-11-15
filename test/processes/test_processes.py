@@ -25,7 +25,7 @@ def test_subprocess_group(tmp_path):
     procs = ProcessGroup(
         "prog",
         log_dir=str(tmp_path),
-        stop_codes={"*": (0, 130)},
+        allowed_exit_codes={"*": (0, 130)},
         on_exit=lambda name, status, died: exits.append((name, died)),
     )
     with pytest.raises(ValueError, match="needs a tmux session"):
@@ -72,7 +72,7 @@ def test_kill_all(tmp_path):
 def test_tmux_group(session, tmp_path):
     """Panes in a session of the program's, bare window names."""
     procs = ProcessGroup(
-        "prog", tmux=session, prefix="", log_dir=str(tmp_path), stop_codes={"*": (0, 130)}
+        "prog", tmux=session, prefix="", log_dir=str(tmp_path), allowed_exit_codes={"*": (0, 130)}
     )
     procs.start("sim:a", "echo ready; sleep 60", ready="ready")
     procs.start("sim:b", "sleep 60")
@@ -147,7 +147,11 @@ def group(request, tmp_path, monkeypatch):
 
     def make(name="env", **kwargs):
         procs = ProcessGroup(
-            name, tmux=tmux, log_dir=str(tmp_path / name), stop_codes={"*": (0, 130)}, **kwargs
+            name,
+            tmux=tmux,
+            log_dir=str(tmp_path / name),
+            allowed_exit_codes={"*": (0, 130)},
+            **kwargs,
         )
         made.append(procs)
         return procs
@@ -232,7 +236,7 @@ def test_build_panes_get_group_env(session, tmp_path):
         "b",
         tmux=session,
         log_dir=str(tmp_path),
-        stop_codes={"*": (0, 130)},
+        allowed_exit_codes={"*": (0, 130)},
         env={"LTE_T_A": "group", "LTE_T_B": "group"},
     )
     procs.build(build)

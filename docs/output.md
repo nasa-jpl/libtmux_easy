@@ -106,7 +106,7 @@ tmux): [wrap-mode.md](wrap-mode.md).
 | lte-session's home | a transcript pipe of its own: that pane can't be captured or watched |
 
 ```python
-cls.procs = Processes(cls, fail_on={"*": [r"Traceback"], "servers:web": r"ERROR"})  # a match fails the test
+cls.procs = Processes(cls, output_checks={"*": [r"Traceback"], "servers:web": r"ERROR"})  # a match fails the test
 cls.procs.start("servers:web", cmd, ready=r"Serving HTTP")   # waits for it
 port = cls.procs.wait_for("servers:web", r"port (\d+)").group(1)
 ```

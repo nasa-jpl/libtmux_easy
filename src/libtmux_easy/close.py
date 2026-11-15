@@ -55,7 +55,7 @@ KEY_ROLE = "close"  # ~/.tmux.conf: set -g @lte_key_close KEY ("" for none)
 WINDOW_NAME = "close"
 WHEN = ("before", "after")
 
-TIMEOUTS = (10.0, 5.0, 2.0)  # SIGINT, SIGTERM, SIGKILL: as stop_pane()
+TIMEOUTS = (5.0, 5.0, 2.0)  # SIGINT, SIGTERM, SIGKILL: as stop_pane()
 ACK_TIMEOUT = 2.0  # for the script to take the 'close' command
 SCRIPT_TIMEOUT = 120.0  # for it to finish
 PAUSE = 1.5  # the summary stays up this long before the kill
@@ -340,7 +340,7 @@ def main(argv=None):
         type=_timeouts,
         default=TIMEOUTS,
         metavar="INT,TERM,KILL",
-        help="seconds to wait after each signal (default 10,5,2)",
+        help="seconds to wait after each signal (default 5,5,2)",
     )
     parser.add_argument("--here", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(

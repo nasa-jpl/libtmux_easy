@@ -19,7 +19,7 @@ SERVER = f"{sys.executable} -u -m http.server {PORT} --bind 127.0.0.1"
 class TestWeb:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, fail_on={"*": r"Traceback"})  # a match fails the test
+        cls.procs = Processes(cls, output_checks={"*": r"Traceback"})  # a match fails the test
         cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
 
     @classmethod

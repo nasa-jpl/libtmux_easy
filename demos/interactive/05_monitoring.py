@@ -78,7 +78,7 @@ def main():
             f"""
             {s.exit_status(launch)}, like a healthy run. So watch both: the exit
             status (the supervisor dying) and the output (its children dying).
-            The pytest plugin does both: see fail_on in docs/pytest-plugin.md.
+            The pytest plugin does both: see output_checks in docs/pytest-plugin.md.
         """
         )
 

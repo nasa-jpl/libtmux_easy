@@ -203,7 +203,7 @@ class TestAdopt:
 class TestStays:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
+        cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
         cls.procs.adopt(f"{sys.executable} script.py --stay", ready="built",
                         exits={"ctl:job": 4})
 
@@ -227,7 +227,7 @@ class TestPlainTmux:
     # a script with no libtmux_easy: a command pane, a loop; an idle shell is left out
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, stop_codes={"*": (0, 130)})
+        cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
         cls.procs.adopt("sh plain.sh")
 
     @classmethod
@@ -276,7 +276,7 @@ def script(tmp_path, text):
     return f"{PY} {path}"
 
 def test_two_sessions(tmp_path):
-    with Processes(stop_codes=SIGINT_OK) as procs:
+    with Processes(allowed_exit_codes=SIGINT_OK) as procs:
         procs.adopt(script(tmp_path, '''
 for name in ("one", "two"):
     s = TmuxSession.create(name, mode="wrap")
@@ -289,7 +289,7 @@ for name in ("one", "two"):
 def test_reads_from_the_first_byte(tmp_path, capture):
     # printed before adopt(): from the script's capture; else, though the
     # script's watch piped it late, the scrollback
-    with Processes(stop_codes=SIGINT_OK) as procs:
+    with Processes(allowed_exit_codes=SIGINT_OK) as procs:
         procs.adopt(script(tmp_path, f'''
 s = TmuxSession.create("early", mode="wrap", pane_capture={capture})
 s.new_window("w")
@@ -312,7 +312,7 @@ def test_script_fails(tmp_path):
         procs.close(check=False)
 
 def test_adopted_panes_cant_start_again(tmp_path):
-    with Processes(stop_codes=SIGINT_OK) as procs:
+    with Processes(allowed_exit_codes=SIGINT_OK) as procs:
         [x] = procs.adopt(script(tmp_path, '''
 s = TmuxSession.create("again", mode="wrap")
 s.new_window("w")
@@ -322,7 +322,7 @@ s.new_pane("x", "sleep 60")
             x.start()
 
 def test_adopt_and_build_come_first():
-    with Processes(stop_codes=SIGINT_OK) as procs:
+    with Processes(allowed_exit_codes=SIGINT_OK) as procs:
         procs.start("w:a", "sleep 60")
         with pytest.raises(ValueError, match="call it first"):
             procs.adopt("true")

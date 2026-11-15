@@ -1714,7 +1714,7 @@ class TmuxSession(Session):
     def stop_pane(
         self,
         target_pane: Union[Pane, str],
-        sigint_timeout: float = 10.0,
+        sigint_timeout: float = 5.0,
         sigterm_timeout: float = 5.0,
         sigkill_timeout: float = 2.0,
         poll_interval: float = 0.2,

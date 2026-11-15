@@ -22,7 +22,7 @@ process die mid-test.
 ## How it fits together
 
 ```
-setup_class      cls.procs = Processes(cls, fail_on=)  an empty group
+setup_class      cls.procs = Processes(cls, output_checks=)  an empty group
                  web = procs.start(name, cmd, ready=)  start; wait for a line; a handle
                  procs.wait_until(fn)                  a gate: any code
 each test        a new instance of the class: state lives on cls
@@ -47,11 +47,11 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
 - **Logs**: each process's output goes to `<window>.<pane>.log` in pytest's
   tmp dir; the run ends with `process logs: <dir>`. Each process also gets
   `LTE_LOG_DIR`, e.g. to point a tool's own logs there.
-- **Failing on output**: `Processes(cls, fail_on={"*": r"Traceback",
-  "sim:launch": some_function})`, or `start(..., fail_on=)`. A function
+- **Failing on output**: `Processes(cls, output_checks={"*": r"Traceback",
+  "sim:launch": some_function})`, or `start(..., output_checks=)`. A function
   gets each line and returns a problem or `None`, e.g. to parse a
   supervisor's "process died" lines.
-- **Health**: each death or `fail_on` hit fails one test: the one running
+- **Health**: each death or `output_checks` hit fails one test: the one running
   when it happened. Between checks it is only recorded, so long tests call
   `check_health()` (or wait with `wait_until`, or a probe that checks).
 - **On failure**: a failed test stops its class's processes at once and
@@ -61,7 +61,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
   Stopped and checked at the end of the `with`; the class's keep running.
   Names are unique within a class.
 - **Also**: `exits=0` for a process that finishes (`wait_for_exit`),
-  `stop_codes`, `wait_for("*", ...)`, `wait_for_in_order`, `arg()` for
+  `allowed_exit_codes`, `wait_for("*", ...)`, `wait_for_in_order`, `arg()` for
   `--arg NAME=VALUE`, `@parametrize` for a class per value.
 
 ## All demos
@@ -69,7 +69,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
 | demo | what |
 |---|---|
 | `basic/test_web.py` | the smallest class: one server |
-| `basic/test_tour.py` | staged start, gates, `fail_on`, long tests, logs |
+| `basic/test_tour.py` | staged start, gates, `output_checks`, long tests, logs |
 | `basic/test_per_test.py` | `Processes()` in a test: processes per test, restarts |
 | `script_layout/` | a session script's system as data; the test `start()`s it |
 | `script_build/` | the test runs the script's `build(session)`; also tests its runtime watches |

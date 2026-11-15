@@ -9,7 +9,7 @@ run tests against it, shut it down.
 What it shows:
   setup_class      start in stages: a server, a gate (any code), then workers
   ready=           wait for a line in a process's output before going on
-  fail_on          a line that fails the test (a regex, or a function)
+  output_checks          a line that fails the test (a regex, or a function)
   every test       checked after it ran: a death fails it, not a later one
   test_long_run    a long test calling check_health(), so a death fails it
                    within half a second, not at the end
@@ -59,7 +59,7 @@ class TestTour:
 
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, fail_on=FAIL_ON)  # empty; logs in a tmp dir of its own
+        cls.procs = Processes(cls, output_checks=FAIL_ON)  # empty; logs in a tmp dir of its own
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
         # start() returns a handle: cls.web.wait_for(...), cls.web.stop().
         cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")

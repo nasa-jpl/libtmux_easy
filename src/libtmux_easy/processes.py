@@ -4,14 +4,14 @@ The engine under the pytest plugin (testing.py), usable by any program:
 
     from libtmux_easy.processes import ProcessGroup
 
-    procs = ProcessGroup("bringup", fail_on={"*": r"Traceback"})
+    procs = ProcessGroup("bringup", output_checks={"*": r"Traceback"})
     procs.start("sim:server", "./server", ready=r"listening")
     procs.start("sim:client", "./client")
     procs.wait_until(server_answers)
     ...
     procs.close()          # SIGINT all at once, then SIGTERM, SIGKILL
 
-A death (an exit nobody asked for, or a fail_on line) is recorded; check()
+A death (an exit nobody asked for, or an output check's line) is recorded; check()
 raises ProcessFailure for it, and every wait calls check(). on_exit=
 hears each exit as it happens. Where processes run: subprocesses
 (default), or panes of a TmuxSession (tmux=session).
@@ -74,14 +74,27 @@ if TYPE_CHECKING:
     from .tmux_lib import TmuxSession
 
 _T = TypeVar("_T")
-# A fail_on check: a regex searched in each line, or line -> problem or None.
-_Check = Union[str, Callable[[str], Optional[str]]]
-# An exit code, or several.
-_Codes = Union[int, Iterable[int]]
+
+# Argument types of output_checks= and the exit codes, for callers' annotations too.
+OutputCheck = Union[str, "re.Pattern", Callable[[str], Optional[str]]]
+"""A regex (a string or compiled), searched in each line of output; or a
+function that gets each line and returns a problem message, or None."""
+OutputChecks = Union[OutputCheck, Sequence[OutputCheck]]
+"""One OutputCheck, or a list of them."""
+ExitCodes = Union[int, Iterable[int]]
+"""One exit code, or several (a set, list or tuple). Death by signal N is
+128+N: 130 is SIGINT."""
+
+
+def _check_list(checks: OutputChecks) -> List[OutputCheck]:
+    """'checks' as a list: one check, or a list of them."""
+    if isinstance(checks, (str, re.Pattern)) or callable(checks):
+        return [checks]
+    return list(checks)
 
 
 class ProcessFailure(AssertionError):
-    """A process died, printed a fail_on line, or did not stop cleanly. An
+    """A process died, printed an output check's line, or did not stop cleanly. An
     AssertionError, so a test that gets one fails as for an assert."""
 
 
@@ -833,9 +846,9 @@ class _AdoptedPane:
 class _Run:
     """One start of a process: whether its exit is expected, and when it came."""
 
-    def __init__(self, exits=None, stop_codes=(0,)):
+    def __init__(self, exits=None, allowed_exit_codes=(0,)):
         self.exits = exits  # codes it may finish with on its own; None: it must not
-        self.stop_codes = stop_codes  # codes it may exit with when stopped
+        self.allowed_exit_codes = allowed_exit_codes  # codes it may exit with when stopped
         self.stopping = False
         self.died = False
         self.finished = False  # exited on its own, with a code in 'exits'
@@ -895,7 +908,7 @@ class Process:
 
         @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param check: fail unless SIGINT stopped it, with one of its stop_codes
+        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
         @return: its PaneStatus
@@ -1054,7 +1067,7 @@ class _BuildSession:
 
     def new_pane(self, name, cmd, **kwargs):
         """TmuxSession.new_pane(), and the pane becomes process 'window:name'
-        of the group, with a log, fail_on and exit tracking. Default mode:
+        of the group, with a log, output_checks and exit tracking. Default mode:
         wrap."""
         group = self._group
         window = self._backend.short(self._session.current_window.name)
@@ -1122,7 +1135,7 @@ class ProcessGroup:
     subclass that adds a test owner and takes the mode from pytest's
     command line.
 
-        procs = ProcessGroup("bringup", fail_on={"*": r"Traceback"})
+        procs = ProcessGroup("bringup", output_checks={"*": r"Traceback"})
         procs.start("sim:server", "./server", ready=r"listening")
         ...
         procs.close()
@@ -1137,12 +1150,16 @@ class ProcessGroup:
         of these patterns ("*": all) to 'tty'
     @param tty: where 'echo' prints; None: stdout
     @param setup: a shell command run before each process
-    @param fail_on: output that means a process failed, though still running:
-        {name or "*": check}. A check is a regex (searched in each line), a
-        function line -> problem message or None, or a list of them. A match
-        is a death.
-    @param stop_codes: exit codes allowed when stopped: {name or "*": code or
-        codes}, default 0. A signal N is 128+N: 130 allows dying of SIGINT.
+    @param output_checks: output that fails a process while it runs, by
+        process name ("*": every process). Each value is an OutputCheck or a
+        list of them: a regex (string or compiled), searched in each line; or
+        a function that gets each line and returns a problem message, or None
+        when the line is fine. A hit counts as a death. E.g.
+        {"*": r"Traceback", "sim:server": [r"ERROR", my_check]}
+    @param allowed_exit_codes: the exit codes a process may end with when it
+        is stopped, by process name ("*": every process): ExitCodes, an int or
+        a set of them. Default 0. Death by signal N is 128+N, so 130 allows
+        dying of SIGINT. E.g. {"*": {0, 130}}
     @param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
         it per process.
     @param on_abort: called with no arguments before a failed test stops the
@@ -1168,9 +1185,9 @@ class ProcessGroup:
         echo: Iterable[str] = (),
         tty: Optional[TextIO] = None,
         setup: Optional[str] = None,
-        fail_on: Optional[Mapping[str, Union[_Check, Sequence[_Check]]]] = None,
-        stop_codes: Optional[Mapping[str, _Codes]] = None,
-        sigint_timeout: float = 10.0,
+        output_checks: Optional[Mapping[str, OutputChecks]] = None,
+        allowed_exit_codes: Optional[Mapping[str, ExitCodes]] = None,
+        sigint_timeout: float = 5.0,
         on_abort: Optional[Callable[[], None]] = None,
         on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
         keep_open: bool = False,
@@ -1195,18 +1212,15 @@ class ProcessGroup:
         self.keep_open = keep_open
         self.setup = setup
         self.env = types.MappingProxyType(dict(env or {}))
-        self.fail_on = {
-            n: [p] if isinstance(p, str) or callable(p) else list(p)
-            for n, p in (fail_on or {}).items()
-        }
-        self.stop_codes = dict(stop_codes or {})
+        self.output_checks = {n: _check_list(c) for n, c in (output_checks or {}).items()}
+        self.allowed_exit_codes = dict(allowed_exit_codes or {})
         self.sigint_timeout = sigint_timeout
         self.sigterm_timeout = sigterm_timeout
         self.on_abort = on_abort
         self.on_exit = on_exit
         self.names = []
         self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
-        self.failed_on = []  # (problem, during a stop) of each fail_on hit
+        self.failed_on = []  # (problem, during a stop) of each output_checks hit
         self.stopping = False
         self._aborted = None  # why a failed test stopped everything
         self._runs = {}  # name -> _Run of its latest start
@@ -1243,9 +1257,9 @@ class ProcessGroup:
         command: str,
         ready: Union[str, "re.Pattern", None] = None,
         timeout: float = 30.0,
-        fail_on: Union[_Check, Sequence[_Check]] = (),
-        exits: Optional[_Codes] = None,
-        stop_codes: Optional[_Codes] = None,
+        output_checks: OutputChecks = (),
+        exits: Optional[ExitCodes] = None,
+        allowed_exit_codes: Optional[ExitCodes] = None,
         env: Optional[Mapping[str, Optional[str]]] = None,
         sigint_timeout: Optional[float] = None,
         sigterm_timeout: Optional[float] = None,
@@ -1259,11 +1273,12 @@ class ProcessGroup:
         @param command: a shell command
         @param ready: a regex: wait for a line matching it, as wait_for() does
         @param timeout: seconds to wait for 'ready'
-        @param fail_on: more fail_on patterns for it
+        @param output_checks: more checks, for this process only: an
+            OutputCheck or a list of them (see the class)
         @param exits: a code (or several) it finishes with on its own, so that
             exit is no death; wait_for_exit() waits for it
-        @param stop_codes: the codes it may exit with when stopped; None: the
-            group's
+        @param allowed_exit_codes: the codes it may exit with when stopped
+            (ExitCodes); None: the group's
         @param env: variables to set (None: unset), over the group's env=, over
             this process's environment
         @param sigint_timeout: seconds SIGINT gets before SIGTERM when it is
@@ -1287,15 +1302,15 @@ class ProcessGroup:
             )
         _check_restart(restart, restart_delay)
         name = self._name(name)
-        on_exit, on_line = self._begin(name, command, fail_on, exits, stop_codes)
+        on_exit, on_line = self._begin(name, command, output_checks, exits, allowed_exit_codes)
         self._commands[name] = (
             command,
             dict(
                 ready=ready,
                 timeout=timeout,
-                fail_on=fail_on,
+                output_checks=output_checks,
                 exits=exits,
-                stop_codes=stop_codes,
+                allowed_exit_codes=allowed_exit_codes,
                 env=env,
                 sigint_timeout=sigint_timeout,
                 sigterm_timeout=sigterm_timeout,
@@ -1323,18 +1338,20 @@ class ProcessGroup:
         """A process's env= over the group's: None if neither has any."""
         return {**self.env, **(env or {})} or None
 
-    def _begin(self, name, command, fail_on=(), exits=None, stop_codes=None):
+    def _begin(self, name, command, output_checks=(), exits=None, allowed_exit_codes=None):
         """A new run of 'name': checks, bookkeeping. Returns the backend's
         (on_exit, on_line) for it."""
         if name in self._runs and self.status(name).running:
             raise ValueError(f"{name} is already running")
         if any(name in p._runs for p in _open if p is not self and p.scope is self.scope):
             raise ValueError(f"{name} is taken: another open group of {self.prefix} has it")
-        patterns = self.fail_on.get("*", []) + self.fail_on.get(name, [])
-        patterns += [fail_on] if isinstance(fail_on, str) or callable(fail_on) else list(fail_on)
-        if stop_codes is None:
-            stop_codes = self.stop_codes.get(name, self.stop_codes.get("*", 0))
-        run = self._runs[name] = _Run(_codes(exits), _codes(stop_codes))
+        patterns = self.output_checks.get("*", []) + self.output_checks.get(name, [])
+        patterns += _check_list(output_checks)
+        if allowed_exit_codes is None:
+            allowed_exit_codes = self.allowed_exit_codes.get(
+                name, self.allowed_exit_codes.get("*", 0)
+            )
+        run = self._runs[name] = _Run(_codes(exits), _codes(allowed_exit_codes))
         if name not in self.names:
             self.names.append(name)
         return (
@@ -1346,7 +1363,7 @@ class ProcessGroup:
         self,
         build: Callable[..., _T],
         *args,
-        exits: Optional[Mapping[str, _Codes]] = None,
+        exits: Optional[Mapping[str, ExitCodes]] = None,
         **kwargs,
     ) -> _T:
         """Run 'build(session, *args, **kwargs)': a session script's function
@@ -1379,7 +1396,7 @@ class ProcessGroup:
         name: str = "script",
         ready: Union[str, "re.Pattern", None] = None,
         timeout: float = 60.0,
-        exits: Optional[Mapping[str, _Codes]] = None,
+        exits: Optional[Mapping[str, ExitCodes]] = None,
     ) -> List[Process]:
         """Test a session script as it is: run 'command' (as process 'name'),
         then make every pane it made a process of this group, named
@@ -1478,7 +1495,7 @@ class ProcessGroup:
 
         @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param check: fail unless SIGINT stopped it, with one of its stop_codes
+        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
         @return: its PaneStatus
@@ -1504,7 +1521,7 @@ class ProcessGroup:
         A second close() does nothing; nor does --keep-open.
 
         @param check: fail unless each stopped cleanly: SIGINT was enough, with
-            one of its stop_codes, and no fail_on line while stopping
+            one of its allowed_exit_codes, and no output_checks line while stopping
         @raise ProcessFailure: with 'check', one did not (the pytest subclass
             fails the test instead)
         """
@@ -1564,12 +1581,12 @@ class ProcessGroup:
     @staticmethod
     def _clean(status, run):
         """Whether a stopped process stopped cleanly: SIGINT (or nothing) was
-        enough, and its exit code is one of the run's stop_codes."""
+        enough, and its exit code is one of the run's allowed_exit_codes."""
         if status.stopped not in (None, "SIGINT"):
             return False
         code = _exit_code(status)
         # An adopted shell pane's exit code is not known: SIGINT was enough.
-        return code in run.stop_codes or (code is None and status.stopped == "SIGINT")
+        return code in run.allowed_exit_codes or (code is None and status.stopped == "SIGINT")
 
     def _on_exit(self, name, status, run):  # a watcher thread
         """A process exited (a watcher thread): finished, as asked by 'exits',
@@ -1605,7 +1622,7 @@ class ProcessGroup:
 
     def _on_line(self, name, patterns):
         """The on_line callback checking each output line of 'name' against its
-        fail_on 'patterns' (a hit is recorded for check()); None if there
+        output_checks 'patterns' (a hit is recorded for check()); None if there
         are none."""
         if not patterns:
             return None
@@ -1618,7 +1635,7 @@ class ProcessGroup:
                 else:
                     what = (
                         check.search(line)
-                        and f"{name} printed {line!r} (fail_on {check.pattern!r})"
+                        and f"{name} printed {line!r} (output_checks {check.pattern!r})"
                     )
                 if what:
                     what += f" (log: {self.log(name)})"
@@ -1764,7 +1781,7 @@ class ProcessGroup:
         return "\n    ".join(self.output(name).strip().splitlines()[-lines:])
 
     def check(self):
-        """Fail if anything died, or printed a fail_on line, since the last
+        """Fail if anything died, or printed an output check's line, since the last
         check(). Each problem fails one test: the one it happened in. Runs
         after every test; call it while waiting to fail fast.
 
