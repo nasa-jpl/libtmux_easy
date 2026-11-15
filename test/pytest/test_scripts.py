@@ -203,7 +203,7 @@ class TestAdopt:
 class TestStays:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
+        cls.procs = Processes(cls, allowed_exit_codes=130)
         cls.procs.adopt(f"{sys.executable} script.py --stay", ready="built",
                         exits={"ctl:job": 4})
 
@@ -227,7 +227,7 @@ class TestPlainTmux:
     # a script with no libtmux_easy: a command pane, a loop; an idle shell is left out
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
+        cls.procs = Processes(cls, allowed_exit_codes=130)
         cls.procs.adopt("sh plain.sh")
 
     @classmethod
@@ -257,7 +257,7 @@ def test_adopt(run, mode):
     assert "PASSED test_inner.py::TestStays::test_script_runs" in out, out
     assert "ERROR test_inner.py::TestStays" not in out, out
     assert "FAILED test_inner.py::TestDies::test_job" in out, out
-    assert "ctl:job exited 4" in out, out
+    assert "ctl:job died" in out and "exit:    4" in out, out
     assert "script's session kept: tmux -S" in out, out
     assert "PASSED test_inner.py::TestPlainTmux::test_plain_panes" in out, out
     assert "ERROR test_inner.py::TestPlainTmux" not in out, out
@@ -268,7 +268,7 @@ EDGES = """
 import sys, pytest
 from libtmux_easy.testing import Processes
 PY = sys.executable
-SIGINT_OK = {"*": (0, 130)}  # sleep dies of Ctrl-C
+SIGINT_OK = 130  # sleep dies of Ctrl-C
 
 def script(tmp_path, text):
     path = tmp_path / "s.py"

@@ -15,7 +15,7 @@ from libtmux_easy.testing import Processes, check_health
 class TestSystem:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, output_checks={"*": r"Traceback"})   # empty; logs in a tmp dir
+        cls.procs = Processes(cls, fail_on_output=r"Traceback")   # empty; logs in a tmp dir
         cls.procs.start("sim:server", "./server", ready=r"listening")
         cls.procs.wait_until(server_answers, timeout=30)   # a gate: any code
         cls.procs.start("test:client", "./client")
@@ -102,7 +102,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, output_checks=None, allowed_exit_codes=None, sigint_timeout=5, on_abort=None, log_dir=None, sigterm_timeout=5, env=None)`
+`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, sigint_timeout=5, on_abort=None, log_dir=None, sigterm_timeout=5, env=None)`
 
 Tests use this one. `libtmux_easy.processes.ProcessGroup` is the engine it
 subclasses, for programs that aren't tests ([processes.md](processes.md)):
@@ -111,8 +111,8 @@ same methods, no test owner, mode set by `tmux=`.
 | argument | meaning |
 |---|---|
 | `owner` | the test class (`cls` in `setup_class`); none in a test: that test. Its failed tests abort the group |
-| `output_checks` | stdout/stderr output that fails a process while it runs: `{name or "*": checks}`. `checks` is one check or a list. A check is a regex (string or compiled), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `{"*": r"Traceback", "sim:server": [r"ERROR", my_check]}` |
-| `allowed_exit_codes` | exit codes a process may end with when stopped: `{name or "*": code or set of codes}`, default 0. Death by signal N is 128+N: `{"*": {0, 130}}` allows SIGINT |
+| `fail_on_output` | stdout/stderr output that fails a process while it runs: a check for every process, an `Only(...)` rule for some, or a list of both. A check is a regex (string, or compiled for flags), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `[r"Traceback", Only(launch_death(), command="*ros2 launch*")]` |
+| `allowed_exit_codes` | nonzero exit codes a process may end with when stopped; 0 always may. An int for every process, an `Only(...)` rule for some, or a list of both. Death by signal N is 128+N: `130` allows SIGINT |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
 | `on_abort` | called with no arguments when a test fails, before everything is stopped: bring things down your own way |
@@ -121,7 +121,7 @@ same methods, no test owner, mode set by `tmux=`.
 
 | method | does |
 |---|---|
-| `start(name, cmd, ready=, timeout=30, output_checks=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `output_checks`: more patterns for it. `exits`: codes it may finish with on its own (no death). `allowed_exit_codes`: as above, for it. `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
+| `start(name, cmd, ready=, timeout=30, fail_on_output=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on_output`, `allowed_exit_codes`: more for it, on top of the group's; plain values, no `Only`. `exits`: codes it may finish with on its own (no death). `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
 | `stop(name, sigint_timeout=, check=True, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
 | `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
@@ -129,7 +129,7 @@ same methods, no test owner, mode set by `tmux=`.
 | `wait_for_exit(name, timeout)` | an `exits=` process finishing; fails on a wrong code |
 | `wait_until(fn, timeout)` | `fn()` until truthy, checking health between calls |
 | `output(name)`, `log(name)`, `status(name)` | what it printed (latest start), its log file, its `PaneStatus` |
-| `check()` | raise if anything died or matched `output_checks` since the last check |
+| `check()` | raise if anything died or hit `fail_on_output` since the last check |
 | `build(fn, ..., exits=)`, `adopt(cmd, ...)` | a session script's processes: see below |
 | `procs["window:pane"]` | its `Process` |
 | `kill(name)` | SIGKILL: a death, unless in `expect_exit` |
@@ -140,6 +140,42 @@ without it: `stop()`, `kill()`, `wait_for(regex)`, `wait_for_in_order()`,
 `wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`; `start()`
 starts it again with the same command and options. It follows the name, so
 it stays valid after a stop and a new start.
+
+### Targeting: `Only`
+
+`Only(value, name="*", command=None)`: `value` (what `start()` would take)
+for only the processes both globs match. `name`: a glob on `window:pane`;
+`command`: a glob on its command line. Group arguments only; everything adds
+up.
+
+```python
+from libtmux_easy.testing import Only, Processes
+
+Processes(cls,
+    fail_on_output=[
+        r"Traceback",                                   # every process
+        Only(launch_death(), command="*ros2 launch*"),  # launch processes
+        Only([r"ERROR", too_slow], name="sim:server"),
+    ],
+    allowed_exit_codes=[130, Only({2, 3}, name="pub:*")],
+)
+procs.start("sim:client", "./client", fail_on_output=r"refused", allowed_exit_codes=2)
+```
+
+Failures name the process, then labelled lines:
+
+```
+sim:server failed an output check
+  command: ./server --port 9000
+  line:    'step 812: latency 250 ms'
+  check:   too_slow
+  msg:     latency 250 ms > 100
+  log:     /tmp/.../sim_server.log
+```
+
+A regex hit shows `matched: r'...'` in place of `check:` and `msg:`. Deaths,
+unclean stops and timeouts use the same layout, with `exit:`, `stopped:`,
+`wanted:` or `waited:` and the last 8 lines of output.
 
 ## Testing a session script
 
@@ -160,7 +196,7 @@ default)`, `parametrize(names, values)`.
 | when | what | outcome |
 |---|---|---|
 | a process exits, not stopped and not an expected `exits=` code | recorded (exit watch) | a death |
-| an `output_checks` match | recorded (output watch) | a death |
+| a `fail_on_output` hit | recorded (output watch) | a death |
 | in the test: `check()`, `check_health()`, `wait_until`, `wait_for*` | checked | FAILED now |
 | after each test | `pytest_runtest_call` checks every open group | FAILED, with the last output and the log's path |
 | a test (or `setup_class`) fails | `pytest_runtest_makereport`: `on_abort()`, then `close(check=False)` on the class's and the test's groups | stopped at once, no checks; the rest of the class SKIPPED |
@@ -193,14 +229,14 @@ drop the overlay.
   (under lte-session). Chosen in `pytest_configure` from the flags; not an
   option of its own.
 - **Backends.** `_SubprocessBackend`: `Popen(["bash", "-c", cmd])` per
-  process, a reader thread (plain text, log, `output_checks`, `--echo`) and a
+  process, a reader thread (plain text, log, `fail_on_output`, `--echo`) and a
   waiter thread (exit). `_TmuxBackend`: wrap-mode panes (`cmd_capture=<log>`,
   i.e. `lte-run --tee`), exit and output watches from `TmuxSession`. The session has
   `wait_start=False`: `start()` returns at once and all rc files run in
   parallel; a process is `starting` until lte-run reports (docs/wrap-mode.md).
   `Processes` holds
   what is common: names, `_Run` per start (stopping, died, finished),
-  deaths, `output_checks` hits, report-once counters.
+  deaths, `fail_on_output` hits, report-once counters.
 - **Reading output.** Subprocess: the reader's lines. tmux: the
   `cmd_capture` log, not a pane capture, which also holds the shell's
   prompt and the typed command. Each start rewrites it, so it holds the
@@ -238,6 +274,6 @@ drop the overlay.
   then SIGKILL (2 s).
 - `ros2 launch` exits 0 on SIGINT and keeps running after a child dies; the
   only record is `[ERROR] [name-N]: process has died [pid P, exit code C`.
-  Hence `output_checks` functions (`lte_launch_test.launch_death`).
+  Hence `fail_on_output` functions (`lte_launch_test.launch_death`).
 - A bare `rclpy.spin()` dies *by* SIGINT; catch `KeyboardInterrupt` /
   `ExternalShutdownException` to exit 0, or allow 130 in `allowed_exit_codes`.

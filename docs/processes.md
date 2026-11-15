@@ -7,7 +7,7 @@ test owner, the command-line mode and pytest failures.
 ```python
 from libtmux_easy.processes import ProcessFailure, ProcessGroup
 
-procs = ProcessGroup("bringup", output_checks={"*": r"Traceback"},
+procs = ProcessGroup("bringup", fail_on_output=r"Traceback",
                      on_exit=lambda name, status, died: ...)
 procs.start("sim:server", "./server", ready=r"listening", env={"RATE": "10"})
 procs.wait_until(server_answers)     # raises ProcessFailure on any death
@@ -21,7 +21,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 | `prefix=` | tmux window prefix (default `name`); `""`: bare window names |
 | `echo=`, `tty=` | Subprocesses: print output of matching names to `tty` (stdout) |
 | `on_exit=` | `on_exit(name, PaneStatus, died)` from a watcher thread, on every exit |
-| `output_checks=`, `allowed_exit_codes=`, `sigint_timeout=`, `sigterm_timeout=`, `setup=`, `log_dir=` | As in the plugin |
+| `fail_on_output=`, `allowed_exit_codes=`, `sigint_timeout=`, `sigterm_timeout=`, `setup=`, `log_dir=` | As in the plugin |
 | `keep_open=` | `close()` stops nothing |
 | `env=` | Variables for every process of the group (None unsets); see below |
 

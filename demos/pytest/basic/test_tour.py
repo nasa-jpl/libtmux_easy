@@ -9,7 +9,7 @@ run tests against it, shut it down.
 What it shows:
   setup_class      start in stages: a server, a gate (any code), then workers
   ready=           wait for a line in a process's output before going on
-  output_checks          a line that fails the test (a regex, or a function)
+  fail_on_output         a line that fails the test (a regex, or a function)
   every test       checked after it ran: a death fails it, not a later one
   test_long_run    a long test calling check_health(), so a death fails it
                    within half a second, not at the end
@@ -24,7 +24,7 @@ import tempfile
 import time
 import urllib.request
 
-from libtmux_easy.testing import Processes, check_health
+from libtmux_easy.testing import Only, Processes, check_health
 
 PY = sys.executable
 PORT = 8700 + os.getpid() % 500  # two runs at once don't share a port
@@ -47,10 +47,10 @@ def server_answers():
 
 
 # A line that fails the test: a regex, or a function line -> problem or None.
-FAIL_ON = {
-    "*": r"Traceback",  # any process
-    "workers:w1": lambda line: "w1 is sad" if "sad" in line else None,
-}
+FAIL_ON = [
+    r"Traceback",  # any process
+    Only(lambda line: "w1 is sad" if "sad" in line else None, name="workers:w1"),
+]
 
 
 class TestTour:
@@ -59,7 +59,7 @@ class TestTour:
 
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, output_checks=FAIL_ON)  # empty; logs in a tmp dir of its own
+        cls.procs = Processes(cls, fail_on_output=FAIL_ON)  # empty; logs in a tmp dir of its own
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
         # start() returns a handle: cls.web.wait_for(...), cls.web.stop().
         cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")

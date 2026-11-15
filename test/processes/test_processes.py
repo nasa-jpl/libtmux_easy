@@ -1,5 +1,6 @@
 """ProcessGroup without pytest's plugin: a program's own group of processes."""
 
+import io
 import os
 import re
 import sys
@@ -8,7 +9,7 @@ import time
 
 import pytest
 
-from libtmux_easy.processes import ProcessFailure, ProcessGroup, _TmuxBackend
+from libtmux_easy.processes import Only, ProcessFailure, ProcessGroup, _TmuxBackend
 
 # Ignores the first SIGINT for a while, then exits 0 on the next.
 SLOW_STOP = (
@@ -25,7 +26,7 @@ def test_subprocess_group(tmp_path):
     procs = ProcessGroup(
         "prog",
         log_dir=str(tmp_path),
-        allowed_exit_codes={"*": (0, 130)},
+        allowed_exit_codes=130,
         on_exit=lambda name, status, died: exits.append((name, died)),
     )
     with pytest.raises(ValueError, match="needs a tmux session"):
@@ -35,12 +36,73 @@ def test_subprocess_group(tmp_path):
     procs.start("w:oneshot", "true", exits=0)
     procs.wait_for_exit("w:oneshot")
     procs.start("w:dies", "sleep 0.2; exit 3")
-    with pytest.raises(ProcessFailure, match=r"w:dies exited 3"):
+    with pytest.raises(ProcessFailure, match=r"w:dies died\n  command: .*\n  exit:    3"):
         procs.wait_until(lambda: False, timeout=5)
     assert ("w:oneshot", False) in exits and ("w:dies", True) in exits
     assert (tmp_path / "w.a.log").read_text().startswith("hello x")
     procs.close()
     assert ("w:a", False) in exits
+
+
+def test_only_rules(tmp_path):
+    """Plain values are for every process, Only(...) for those its globs
+    pick; start()'s add to them; 0 is always allowed. Failure messages."""
+
+    def too_slow(line):
+        return "too slow" if "SLOW" in line else None
+
+    procs = ProcessGroup(
+        "rules",
+        log_dir=str(tmp_path),
+        fail_on_output=[r"Traceback", Only(too_slow, name="a:*"), Only(r"BAD", command="echo BAD*")],
+        allowed_exit_codes=[Only(3, name="b:*")],
+    )
+    try:
+        # Not picked: no hit for 'b', which prints SLOW but isn't in window a.
+        procs.start("b:x", "echo SLOW; sleep 60", ready="SLOW")
+        procs.start("a:x", "echo up; sleep 0.3; echo SLOW; sleep 60", ready="up")
+        with pytest.raises(ProcessFailure) as exc:
+            procs.wait_until(lambda: False, timeout=5)
+        assert str(exc.value).splitlines() == [
+            "a:x failed an output check",
+            "  command: echo up; sleep 0.3; echo SLOW; sleep 60",
+            "  line:    'SLOW'",
+            "  check:   test_only_rules.too_slow",
+            "  msg:     too slow",
+            f"  log:     {procs.log('a:x')}",
+        ]
+        procs.start("c:bad", "echo BAD; sleep 60", ready="BAD")
+        with pytest.raises(ProcessFailure, match=r"matched: r'BAD'"):
+            procs.check()
+        # start() adds a check, and an exit code; 0 is always allowed.
+        procs.start("b:y", "trap 'exit 3' INT; echo up; sleep 60 & wait", ready="up")
+        procs.start(
+            "d:z", "trap 'exit 0' INT; echo up; sleep 60 & wait", ready="up", allowed_exit_codes=4
+        )
+        procs.stop("b:y")
+        procs.stop("d:z")
+        procs.start("d:w", "trap 'exit 5' INT; echo up; sleep 60 & wait", ready="up")
+        with pytest.raises(ProcessFailure) as exc:
+            procs.stop("d:w")
+        assert "d:w did not stop cleanly\n  command:" in str(exc.value)
+        assert "  stopped: SIGINT\n  exit:    5 (allowed: 0)\n" in str(exc.value)
+        assert "  last output:\n    up" in str(exc.value)
+    finally:
+        procs.close(check=False)
+
+
+def test_wrong_types(tmp_path):
+    """Wrong types fail at once, with an example of the right form."""
+    with pytest.raises(TypeError, match=r"is not a regex or a function, e\.g\."):
+        ProcessGroup("t", log_dir=str(tmp_path), fail_on_output={"*": r"Traceback"})
+    with pytest.raises(TypeError, match=r"is not an exit code"):
+        ProcessGroup("t", log_dir=str(tmp_path), allowed_exit_codes={"*": 130})
+    procs = ProcessGroup("t", log_dir=str(tmp_path))
+    with pytest.raises(TypeError, match=r"Only\(\.\.\.\) is for the group"):
+        procs.start("w:x", "sleep 60", fail_on_output=Only("x"))
+    with pytest.raises(TypeError, match=r"Only\(\.\.\.\) is for the group"):
+        procs.start("w:x", "sleep 60", allowed_exit_codes=Only(2))
+    procs.close()
 
 
 def test_close_stops_all_at_once(tmp_path):
@@ -72,7 +134,7 @@ def test_kill_all(tmp_path):
 def test_tmux_group(session, tmp_path):
     """Panes in a session of the program's, bare window names."""
     procs = ProcessGroup(
-        "prog", tmux=session, prefix="", log_dir=str(tmp_path), allowed_exit_codes={"*": (0, 130)}
+        "prog", tmux=session, prefix="", log_dir=str(tmp_path), allowed_exit_codes=130
     )
     procs.start("sim:a", "echo ready; sleep 60", ready="ready")
     procs.start("sim:b", "sleep 60")
@@ -124,11 +186,21 @@ def test_sigterm_timeout_adopted(tmp_path):
         "s.new_window('w')\n"
         f"s.new_pane('x', {DEAF!r})\n"
     )
+    tty = io.StringIO()
     procs = ProcessGroup(
-        "adopt", log_dir=str(tmp_path / "logs"), sigint_timeout=0.2, sigterm_timeout=0.3
+        "adopt",
+        log_dir=str(tmp_path / "logs"),
+        sigint_timeout=0.2,
+        sigterm_timeout=0.3,
+        tty=tty,
+        fail_on_output=Only("up", command=f"{sys.executable} -c *"),
     )
     procs.adopt(f"{sys.executable} {script}")
+    # Its command: the command line it runs, through lte-run; printed.
+    assert f"adopt(): w:x runs {sys.executable} -c " in tty.getvalue(), tty.getvalue()
     procs.wait_for("w:x", "up", timeout=10)
+    with pytest.raises(ProcessFailure, match=r"w:x failed an output check"):
+        procs.check()
     t = time.monotonic()
     procs.close(check=False)
     assert time.monotonic() - t < 3
@@ -150,7 +222,7 @@ def group(request, tmp_path, monkeypatch):
             name,
             tmux=tmux,
             log_dir=str(tmp_path / name),
-            allowed_exit_codes={"*": (0, 130)},
+            allowed_exit_codes=130,
             **kwargs,
         )
         made.append(procs)
@@ -236,7 +308,7 @@ def test_build_panes_get_group_env(session, tmp_path):
         "b",
         tmux=session,
         log_dir=str(tmp_path),
-        allowed_exit_codes={"*": (0, 130)},
+        allowed_exit_codes=130,
         env={"LTE_T_A": "group", "LTE_T_B": "group"},
     )
     procs.build(build)

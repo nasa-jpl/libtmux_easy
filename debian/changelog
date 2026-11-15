@@ -7,9 +7,15 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * lte-run is its own package, lte_run (with the /proc helpers, formerly
     libtmux_easy.proc and libtmux_easy.wrap), so libtmux_easy's __init__
     imports its names directly. libtmux_easy._tmux is now tmuxcmd.
-  * Breaking: fail_on= is now output_checks=, stop_codes= is now
-    allowed_exit_codes=. Their types are OutputCheck(s) and ExitCodes in
-    libtmux_easy.processes; a compiled regex works as a check too.
+  * Breaking: fail_on= is now fail_on_output=, stop_codes= is now
+    allowed_exit_codes=. Both take plain values for every process, or
+    Only(value, name=, command=) rules (globs) for some; no more
+    {"*": ...} dicts. start()'s add to the group's. Exit code 0 is always
+    allowed. Wrong types raise TypeError.
+  * Failure messages name the process, then labelled lines (command, line,
+    matched or check and msg, exit, stopped, wanted, log, last output).
+  * adopt(): a pane's command is the command line it runs, printed at
+    adoption.
   * Breaking: modules named after their commands: dash/ is lte_dash/,
     launch is lte_session, starter is lte_defaults.
   * SIGINT's default grace is 5 s (was 10): stop_pane(), ProcessGroup,

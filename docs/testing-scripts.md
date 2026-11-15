@@ -87,14 +87,18 @@ first in the group:
 
 - An idle shell (a prompt, nothing running) is not adopted.
 - A plain-tmux pane gone with no status reads as `unknown`: pass
-  `allowed_exit_codes={"*": (0, 130)}` or accept it with `exits=`.
+  `allowed_exit_codes=130` or accept it with `exits=`.
 - On failure the server is kept: `tmux -S <socket> attach` is printed.
+- A pane's command, for `Only(command=)` and failure messages, is the command
+  line it runs at adoption, printed as `adopt(): w:x runs ...`. It may differ
+  from what the script typed (`/usr/bin/python3 /opt/ros/.../ros2 launch
+  ...`): glob `"*ros2 launch*"`.
 
 Demo: `script_adopt/`. A plain tmux script works too:
 
 ```python
 # up.sh:  tmux new-session -d -s app -n web 'web'; tmux new-window -t app -n worker 'worker'
-cls.procs = Processes(cls, allowed_exit_codes={"*": (0, 130)})
+cls.procs = Processes(cls, allowed_exit_codes=130)
 cls.procs.adopt("sh up.sh")
 cls.procs["web:0"].wait_for(r"listening")
 ```

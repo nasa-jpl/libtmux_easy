@@ -63,7 +63,7 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
             cls.procs.close()
     ```
 
-    - **fails on its own**: a test fails if a process exits early or prints an `output_checks` line, even when the test never checked;
+    - **fails on its own**: a test fails if a process exits early or prints a `fail_on_output` line, even when the test never checked;
     - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
     - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
 
@@ -247,7 +247,7 @@ from libtmux_easy.testing import Processes
 class TestWeb:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, output_checks={"*": r"Traceback"})   # a match fails the test
+        cls.procs = Processes(cls, fail_on_output=r"Traceback")   # a match fails the test
         cls.web = cls.procs.start("servers:web", "python3 -m http.server 8000", ready=r"Serving HTTP")
 
     @classmethod
@@ -260,7 +260,7 @@ class TestWeb:
 
 pytest makes a new instance of the class for every test, so what the tests
 share goes on `cls`. A test fails if a process exits early or prints a
-`output_checks` line, even if the test never noticed; the rest of the class is
+`fail_on_output` line, even if the test never noticed; the rest of the class is
 then skipped. A test can start and stop its own: `with Processes() as
 procs:` in the test. Logs go to pytest's temp dir.
 

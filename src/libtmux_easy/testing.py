@@ -12,7 +12,7 @@ teardown_class:
     class TestSystem:
         @classmethod
         def setup_class(cls):
-            cls.procs = Processes(cls, output_checks={"*": r"Traceback"})
+            cls.procs = Processes(cls, fail_on_output=r"Traceback")
             cls.procs.start("sim:server", "./server", ready=r"listening")
             cls.procs.wait_until(server_answers)   # any gate
 
@@ -52,7 +52,7 @@ from . import lte_dash
 from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
-from .processes import ExitCodes, OutputChecks
+from .processes import ExitCodes, Match, OneOrMany, Only  # noqa: F401
 from .status import PaneStatus
 from .tmux_lib import TmuxSession
 
@@ -317,7 +317,7 @@ class Processes(processes.ProcessGroup):
 
     Make one in setup_class:
 
-        cls.procs = Processes(cls, output_checks={"*": r"Traceback"})
+        cls.procs = Processes(cls, fail_on_output=r"Traceback")
 
     or in a test, for that test alone (closed at the end of the 'with', or
     else after the test):
@@ -335,16 +335,15 @@ class Processes(processes.ProcessGroup):
         first); a class also skips its remaining tests. Names ('window:pane')
         are unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
-    @param output_checks: stdout/stderr output that fails a process while
-        it runs, by process name ("*": every process). Each value is an OutputCheck or a
-        list of them: a regex (string or compiled), searched in each line; or
-        a function that gets each line and returns a problem message, or None
-        when the line is fine. A hit counts as a death: the running test
-        fails. E.g. {"*": r"Traceback", "sim:server": [r"ERROR", my_check]}
-    @param allowed_exit_codes: the exit codes a process may end with when it
-        is stopped, by process name ("*": every process): an int or a set of
-        them. Default 0. Death by signal N is 128+N, so 130 allows dying of
-        SIGINT. E.g. {"*": {0, 130}}
+    @param fail_on_output: stdout/stderr output that fails a process while
+        it runs: a Match (a regex, or a function line -> problem message or
+        None) for every process, an Only(...) rule for some, or a list of
+        both. A hit counts as a death: the running test fails. E.g.
+        [r"Traceback", Only(launch_death(), command="*ros2 launch*")]
+    @param allowed_exit_codes: nonzero exit codes a process may end with
+        when it is stopped (0 always may): an int for every process, an
+        Only(...) rule for some, or a list of both. Death by signal N is
+        128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
     @param sigint_timeout: seconds a stopped process gets after SIGINT before
         SIGTERM
     @param on_abort: called with no arguments when a test of the owner fails,
@@ -366,8 +365,8 @@ class Processes(processes.ProcessGroup):
         self,
         owner: Union[pytest.Item, type, None] = None,
         *,
-        output_checks: Optional[Mapping[str, OutputChecks]] = None,
-        allowed_exit_codes: Optional[Mapping[str, ExitCodes]] = None,
+        fail_on_output: Optional[OneOrMany[Union[Match, Only]]] = None,
+        allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
         sigint_timeout: float = 5.0,
         on_abort: Optional[Callable[[], None]] = None,
         log_dir: Union[str, os.PathLike, None] = None,
@@ -409,7 +408,7 @@ class Processes(processes.ProcessGroup):
             echo=config.lte_echo,
             tty=config.lte_tty,
             setup=_plugin["setup"],
-            output_checks=output_checks,
+            fail_on_output=fail_on_output,
             allowed_exit_codes=allowed_exit_codes,
             sigint_timeout=sigint_timeout,
             sigterm_timeout=sigterm_timeout,
