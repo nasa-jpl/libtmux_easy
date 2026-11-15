@@ -12,7 +12,7 @@ The engine under the pytest plugin (testing.py), usable by any program:
     procs.close()          # SIGINT all at once, then SIGTERM, SIGKILL
 
 A death (an exit nobody asked for, or an output check's line) is recorded; check()
-raises ProcessFailure for it, and every wait calls check(). on_exit=
+raises ProcessFailure for it, and every wait calls check(). on_exit()
 hears each exit as it happens. Where processes run: subprocesses
 (default), or panes of a TmuxSession (tmux=session).
 
@@ -1380,8 +1380,6 @@ class ProcessGroup:
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    :param on_exit: on_exit(name, PaneStatus, died) on each exit, from a
-        watcher thread; 'died': an exit nobody asked for
     :param keep_open: close() stops nothing
     :param scope: groups with the same scope share names; None: this one
     :param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
@@ -1405,7 +1403,6 @@ class ProcessGroup:
         setup: Optional[str] = None,
         fail_on_output: Optional[OneOrMany[Union[Match, Only]]] = None,
         allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
-        on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
         keep_open: bool = False,
         scope=None,
         sigint_timeout: float = 5.0,
@@ -1436,7 +1433,7 @@ class ProcessGroup:
         )
         self.sigint_timeout = sigint_timeout
         self.sigterm_timeout = sigterm_timeout
-        self.on_exit = on_exit
+        self._exit_callbacks = []  # on_exit()'s
         self.names = []
         self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
         self.failed_on = []  # (problem, during a stop) of each fail_on_output hit
@@ -1830,8 +1827,28 @@ class ProcessGroup:
             run.died = True
             self.died.append((name, status, run))
         run.exited.set()
-        if self.on_exit is not None:
-            self.on_exit(name, status, run.died)
+        for callback in list(self._exit_callbacks):
+            callback(name, status, run.died)
+
+    def on_exit(self, callback: Callable[[str, PaneStatus, bool], None]) -> Callable:
+        """Call callback(name, PaneStatus, died) on every exit of the group's
+        processes, as it happens, from a watcher thread: keep it short.
+        'died': an exit nobody asked for. A decorator too.
+
+            @procs.on_exit
+            def exited(name, status, died):
+                print(name, status.exit_status, "died" if died else "")
+
+        :param callback: called with the process name, its PaneStatus, died
+        :return: 'callback'
+        """
+        self._exit_callbacks.append(callback)
+        return callback
+
+    def remove_on_exit(self, callback: Callable):
+        """Stop calling an on_exit() callback; not added: nothing."""
+        if callback in self._exit_callbacks:
+            self._exit_callbacks.remove(callback)
 
     def wait_for_exit(self, name: str, timeout: float = 10.0) -> PaneStatus:
         """Wait for a process started with 'exits' to finish.

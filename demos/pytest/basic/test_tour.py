@@ -11,11 +11,14 @@ What it shows:
   ready=           wait for a line in a process's output before going on
   fail_on_output   a line that fails the test (a regex, or a function); Only()
                    for some processes
-  env=, on_exit=   variables for every process; a callback on every exit
+  env=             variables for every process of the group
   every test       checked after it ran: a death fails it, not a later one
-  wait_for_line()  a line of one process's output ("*": any process)
-  mark(), since=   only lines after a mark: mark, act, wait; lines in order
-  wait_for_condition()  any condition, e.g. the server answers
+  waits            each fails at once if something died:
+    wait_for_line()       a line of its output, printed already or later;
+                          a LineMatch: .line, m[1]. "*": any process
+    mark(), since=        only lines after a mark: mark, act, wait
+    since=a LineMatch     lines in order
+    wait_for_condition()  any code, e.g. the server answers
   exits=           a process that finishes on its own: wait_for_exit()
   expect_exit()    an exit the test causes on purpose (kill()) is no death
   allowed_exit_codes  a process that exits 2 on SIGINT, stopped cleanly
@@ -68,12 +71,10 @@ class TestTour:
 
     @classmethod
     def setup_class(cls):
-        cls.exits = []  # (name, died) of every exit, from on_exit
         cls.procs = Processes(  # empty; logs in a tmp dir of its own
             cls,
             fail_on_output=FAIL_ON,
             env={"TOUR": "1"},  # for every process of the group
-            on_exit=lambda name, status, died: cls.exits.append((name, died)),
             on_test_failure=lambda: print("a test failed: saving state first"),
         )
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
@@ -92,21 +93,28 @@ class TestTour:
             os.remove(CRASH_FILE)
         cls.procs.close()
 
-    def test_server(self):
-        assert server_answers()
-        self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200')  # its output
+    def test_wait_for_line(self):
+        # Any line since its start counts, even one printed before the call.
+        m = self.web.wait_for_line(r"Serving HTTP on (\S+) port (\d+)")
+        assert m[2] == str(PORT) and m.line.startswith("Serving HTTP")
 
     def test_after_a_mark(self):
-        # Mark, act, wait: only what it printed after the mark counts.
+        # Mark, act, wait: only what it printed after the mark counts, so
+        # this is the reply to this request, not an earlier one.
         mark = self.web.mark()
         assert server_answers()
         self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200', since=mark)
 
     def test_lines_in_order(self):
-        # since= an earlier match: a later line, so the order is checked.
+        # since= an earlier match: only later lines, so the order is checked.
         first = self.w0.wait_for_line(r"tick (\d+)")
         later = self.w0.wait_for_line(r"tick (\d+)", since=first)
         assert int(later[1]) > int(first[1])
+
+    def test_wait_for_condition(self):
+        # Anything that isn't a line: a reply, a file, a topic. Its result
+        # comes back.
+        assert self.procs.wait_for_condition(server_answers, timeout=5)
 
     def test_output_and_logs(self):
         self.w0.wait_for_line(r"tick 5")
@@ -114,7 +122,8 @@ class TestTour:
         assert "w0 tick 0" in open(self.w0.log()).read()
 
     def test_any_process(self):
-        self.procs.wait_for_line("*", r"tick 3")  # a line from any process
+        m = self.procs.wait_for_line("*", r"tick 3")  # a line from any process
+        assert m.name in ("workers:w0", "workers:w1")  # which one
         assert self.procs["workers:w0"].name == self.w0.name  # a handle by name
 
     def test_one_shot(self):
@@ -128,7 +137,6 @@ class TestTour:
         with self.procs.expect_exit("workers:w0"):
             self.w0.kill()
         assert self.w0.status().exit_status.signal == 9
-        assert ("workers:w0", False) in self.exits  # on_exit heard it: not a death
         self.w0.start()
 
     def test_allowed_exit_code(self):

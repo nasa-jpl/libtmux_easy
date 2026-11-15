@@ -102,7 +102,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, on_test_failure=None, log_dir=None, on_exit=None, sigint_timeout=5, sigterm_timeout=5, env=None)`
+`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, on_test_failure=None, log_dir=None, sigint_timeout=5, sigterm_timeout=5, env=None)`
 
 Tests use this one. `libtmux_easy.processes.ProcessGroup` is the engine it
 subclasses, for programs that aren't tests ([processes.md](processes.md)):

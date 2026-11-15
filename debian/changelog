@@ -19,6 +19,9 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * Breaking: Processes(on_abort=) is now on_test_failure=, and only on
     Processes. start(timeout=) is now ready_timeout=. start() and stop()
     options are keyword-only; sigint_timeout sits next to sigterm_timeout.
+  * Breaking: ProcessGroup(on_exit=) is now a method: procs.on_exit(fn)
+    adds a callback (a decorator too), remove_on_exit(fn) removes it.
+    Processes() no longer takes on_exit=.
   * Breaking: wait_for() is now wait_for_line(), wait_until() is now
     wait_for_condition(); wait_for_in_order() is gone. wait_for_line()
     returns a LineMatch (.line, .match, m[1], .group()); since= a mark()

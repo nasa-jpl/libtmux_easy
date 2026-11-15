@@ -349,8 +349,6 @@ class Processes(processes.ProcessGroup):
         your own way first
     :param log_dir: where the processes' logs go; None: a new temp dir named
         after the owner
-    :param on_exit: on_exit(name, PaneStatus, died), on every exit, from a
-        watcher thread. 'died': nobody asked for it.
     :param sigint_timeout: seconds a stopped process gets after SIGINT before
         SIGTERM
     :param sigterm_timeout: seconds it then gets after SIGTERM before SIGKILL
@@ -370,7 +368,6 @@ class Processes(processes.ProcessGroup):
         allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
         on_test_failure: Optional[Callable[[], None]] = None,
         log_dir: Union[str, os.PathLike, None] = None,
-        on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
         sigint_timeout: float = 5.0,
         sigterm_timeout: float = 5.0,
         env: Optional[Mapping[str, Optional[str]]] = None,
@@ -413,7 +410,6 @@ class Processes(processes.ProcessGroup):
             allowed_exit_codes=allowed_exit_codes,
             sigint_timeout=sigint_timeout,
             sigterm_timeout=sigterm_timeout,
-            on_exit=on_exit,
             keep_open=config.lte_keep_open,
             scope=scope,
             env=env,

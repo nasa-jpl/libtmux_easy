@@ -27,8 +27,8 @@ def test_subprocess_group(tmp_path):
         "prog",
         log_dir=str(tmp_path),
         allowed_exit_codes=130,
-        on_exit=lambda name, status, died: exits.append((name, died)),
     )
+    procs.on_exit(lambda name, status, died: exits.append((name, died)))
     with pytest.raises(ValueError, match="needs a tmux session"):
         procs.build(lambda session: None)
     a = procs.start("w:a", "echo hello $GREETING; sleep 60", ready="hello", env={"GREETING": "x"})
