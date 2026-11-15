@@ -51,10 +51,10 @@ from libtmux.session import Session
 from libtmux.window import Window
 from packaging import version
 
-from . import close as _close, dash, starter as _starter
-from .dash import keys as _keys
+from . import close as _close, lte_dash, lte_defaults as _defaults
+from .lte_dash import keys as _keys
 from .tmuxcmd import option
-from .dash.homelog import _SkipIfTeed, _Tee
+from .lte_dash.homelog import _SkipIfTeed, _Tee
 from .output import (
     POLL as _OUTPUT_POLL,
     QUIET as _OUTPUT_QUIET,
@@ -429,7 +429,7 @@ class TmuxSession(Session):
         session.rc = rc
         session.history = history
         session.wait_start = wait_start
-        _starter.apply(run=session._tmux_run)
+        _defaults.apply(run=session._tmux_run)
         session.bind_close_key()
         if env:
             session.copy_environment(env)
@@ -490,21 +490,21 @@ class TmuxSession(Session):
         session.rc = rc
         session.history = history
         session.wait_start = wait_start
-        _starter.apply(run=session._tmux_run)
+        _defaults.apply(run=session._tmux_run)
 
         session._adopted = True
         session.unnamed_window = False
         session.unnamed_pane = {}
         session.current_window = session.current_pane = None
-        dash_window = session._session_option(dash.WINDOW_OPTION)
+        dash_window = session._session_option(lte_dash.WINDOW_OPTION)
         if dash_window and session.get_window(dash_window) is not None:
             session._dash_window = dash_window
-            session._dash_sidebar = session._session_option(dash.SIDEBAR_OPTION) or None
+            session._dash_sidebar = session._session_option(lte_dash.SIDEBAR_OPTION) or None
             session._dash_owned = False
             if status_file is None:
                 # lte-session's run dir outlives us, so the sidebar can still
                 # read how our panes ended after kill().
-                run_dir = session._session_option(dash.RUN_DIR_OPTION)
+                run_dir = session._session_option(lte_dash.RUN_DIR_OPTION)
                 if run_dir and os.path.isdir(run_dir):
                     status_file = tempfile.mkstemp(prefix="status_", suffix=".json", dir=run_dir)[1]
                 else:
@@ -534,7 +534,7 @@ class TmuxSession(Session):
     def _publish_status_file(self):
         """Point the session's @lte_status at our status file, for a sidebar
         that follows it (lte-dash without --status)."""
-        self._set_session_option(dash.STATUS_OPTION, os.path.abspath(self.status_file))
+        self._set_session_option(lte_dash.STATUS_OPTION, os.path.abspath(self.status_file))
         self._write_status_file()
 
     def _ensure_status_file(self):
@@ -605,7 +605,7 @@ class TmuxSession(Session):
         self._wrap_listener.listen(64)
         self.set_option(DIR_OPTION, self._wrap_dir)
         if status_file is not None:
-            self._set_session_option(dash.STATUS_OPTION, os.path.abspath(status_file))
+            self._set_session_option(lte_dash.STATUS_OPTION, os.path.abspath(status_file))
         self._ensure_watcher().add_listener(self._wrap_listener)
 
         self._killed = False  # see kill()
@@ -3172,7 +3172,7 @@ class TmuxSession(Session):
         keep_status = status and not status.startswith(self._wrap_dir + os.sep)
         for name, ours in (
             (DIR_OPTION, self._wrap_dir),
-            (dash.STATUS_OPTION, None if keep_status else status),
+            (lte_dash.STATUS_OPTION, None if keep_status else status),
         ):
             if ours and self._session_option(name) == ours:
                 self._set_session_option(name, None)
@@ -3198,7 +3198,7 @@ class TmuxSession(Session):
         if self._dash_open():
             # A pane of ours on show has the home pane parked in its slot,
             # which kill-window would take with it.
-            dash.Viewport(
+            lte_dash.Viewport(
                 self._dash_window, run=self._tmux_run, sidebar=self._dash_sidebar
             ).restore()
         for window_id in self._own_windows:
@@ -3231,7 +3231,7 @@ class TmuxSession(Session):
     def dashboard(
         self,
         name: str = "dash",
-        width: Union[int, str] = dash.AUTO,
+        width: Union[int, str] = lte_dash.AUTO,
         select: bool = True,
         log_home: bool = True,
         mouse: bool = True,
@@ -3270,7 +3270,7 @@ class TmuxSession(Session):
             return None
         run = self._tmux_run
         if not self._dash_open():
-            launcher = dash.launcher()  # fail before touching the session
+            launcher = lte_dash.launcher()  # fail before touching the session
             initial_pane = self.resolve_target_pane(initial) if initial is not None else None
 
             self._ensure_status_file()
@@ -3282,7 +3282,7 @@ class TmuxSession(Session):
             if log_home:
                 self.log_home()
 
-            window_id, sidebar = dash.open_window(
+            window_id, sidebar = lte_dash.open_window(
                 self.id,
                 self.status_file,
                 self.home_log,
@@ -3317,9 +3317,9 @@ class TmuxSession(Session):
             # and kill-window would take it with it.
             if self._dash_sidebar:
                 self._tmux_run("kill-pane", "-t", self._dash_sidebar)
-            dash.Viewport(self._dash_window, run=self._tmux_run).restore()
+            lte_dash.Viewport(self._dash_window, run=self._tmux_run).restore()
             self._tmux_run("kill-window", "-t", self._dash_window)
-        for name in (dash.WINDOW_OPTION, dash.SIDEBAR_OPTION):
+        for name in (lte_dash.WINDOW_OPTION, lte_dash.SIDEBAR_OPTION):
             self._set_session_option(name, None)
         self._dash_window = self._dash_sidebar = None
 
@@ -3349,7 +3349,9 @@ class TmuxSession(Session):
             raise ValueError(f"side must be 'below' or 'right', got {side!r}")
         if not self._dash_open():
             raise RuntimeError("no dashboard open; call dashboard() first")
-        viewport = dash.Viewport(self._dash_window, run=self._tmux_run, sidebar=self._dash_sidebar)
+        viewport = lte_dash.Viewport(
+            self._dash_window, run=self._tmux_run, sidebar=self._dash_sidebar
+        )
         viewport.repair()
         args = ["split-window", "-d", "-v" if side == "below" else "-h", "-t", viewport.view]
         if size is not None:
@@ -3369,7 +3371,7 @@ class TmuxSession(Session):
     @property
     def home_log(self) -> Optional[str]:
         """The file the dashboard's home pane follows. See log_home()."""
-        return os.path.join(self._wrap_dir, dash.HOME_LOG) if self._wrap_dir else None
+        return os.path.join(self._wrap_dir, lte_dash.HOME_LOG) if self._wrap_dir else None
 
     def log_home(self, stdout: bool = True, logs: bool = True):
         """Copy this script's output to home_log, for the dashboard's home pane.

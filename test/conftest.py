@@ -17,7 +17,7 @@ _TMPDIR = tempfile.mkdtemp(prefix="lte-tests-")
 os.environ["TMUX_TMPDIR"] = _TMPDIR
 for _var in ("TMUX", "TMUX_PANE", "LTE_DIR", "LTE_RUN_TEE"):
     os.environ.pop(_var, None)
-# The same bindings with or without a ~/.tmux.conf (test_starter.py turns it on).
+# The same bindings with or without a ~/.tmux.conf (test_lte_defaults.py turns it on).
 os.environ["LTE_TMUX_DEFAULTS"] = "0"
 # Start the server with no config (not yours: ~/.tmux.conf, /etc/tmux.conf),
 # and keep it up when a test kills its last session: a later 'tmux' would

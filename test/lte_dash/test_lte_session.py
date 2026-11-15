@@ -1,5 +1,5 @@
 """
-Tests for lte-session (src/libtmux_easy/launch.py) and TmuxSession.current().
+Tests for lte-session (src/libtmux_easy/lte_session.py) and TmuxSession.current().
 See docs/lte-session.md. The launcher runs headless here (no
 TTY), which is its CI path: it follows the command's output and exits with
 its status.
@@ -11,8 +11,8 @@ import subprocess
 import pytest
 
 from libtmux_easy import TmuxSession, PANE_MODE_WRAP
-from libtmux_easy import close, dash
-from libtmux_easy.dash import keys
+from libtmux_easy import close, lte_dash
+from libtmux_easy.lte_dash import keys
 
 from helpers import lte_session as _launch, wait_until
 
@@ -108,29 +108,33 @@ class TestCurrent:
         adopted.kill()
 
     def test_reuses_dashboard_and_publishes_status(self, inside):
-        window, _ = dash.open_window(inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat")
+        window, _ = lte_dash.open_window(
+            inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat"
+        )
 
         adopted = TmuxSession.current()
         assert adopted._dash_window == window
         assert adopted.status_file is not None
-        assert inside._session_option(dash.STATUS_OPTION) == os.path.abspath(adopted.status_file)
+        assert inside._session_option(lte_dash.STATUS_OPTION) == os.path.abspath(
+            adopted.status_file
+        )
         adopted.new_window("mine")
         adopted.new_pane("p", "sleep 30", mode=PANE_MODE_WRAP)
-        assert [e["name"] for e in dash.read_status(adopted.status_file)] == ["mine:p"]
+        assert [e["name"] for e in lte_dash.read_status(adopted.status_file)] == ["mine:p"]
 
         adopted.close_dashboard()  # not ours: left open
         adopted.kill()
         assert window in [w.id for w in inside.windows]
-        assert inside._session_option(dash.STATUS_OPTION) == ""
+        assert inside._session_option(lte_dash.STATUS_OPTION) == ""
 
     def test_release_puts_a_viewed_pane_back(self, inside):
-        window, sidebar = dash.open_window(
+        window, sidebar = lte_dash.open_window(
             inside.id, None, None, None, home_cmd="cat", sidebar_cmd="cat"
         )
         adopted = TmuxSession.current()
         adopted.new_window("mine")
         pane = adopted.new_pane("p", "sleep 30", mode=PANE_MODE_WRAP)
-        viewport = dash.Viewport(window, run=inside._tmux_run, sidebar=sidebar)
+        viewport = lte_dash.Viewport(window, run=inside._tmux_run, sidebar=sidebar)
         home = viewport.home
         viewport.show(pane.id)
 
@@ -150,7 +154,7 @@ class TestCurrent:
 
         assert [w.name for w in inside.windows] == ["host", "test_x/nodes"]
         assert pane.id in [p.id for w in inside.windows for p in w.panes]
-        assert [e["name"] for e in dash.read_status(adopted.status_file)] == ["test_x/nodes:p"]
+        assert [e["name"] for e in lte_dash.read_status(adopted.status_file)] == ["test_x/nodes:p"]
         nxt = TmuxSession.current()
         nxt.new_window("nodes")  # the name is free again
         nxt.kill()

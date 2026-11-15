@@ -29,8 +29,8 @@ from typing import List, Optional, Union
 
 from lte_run import wrap
 
-from . import close, dash, starter
-from .dash import keys
+from . import close, lte_dash, lte_defaults
+from .lte_dash import keys
 from .tmuxcmd import option, tmux as _tmux
 
 ENV_FILE = "env.json"  # the launching shell's environment and cwd
@@ -104,7 +104,7 @@ class Launch:
 
     @param argv: the command
     @param name: the session's name; None: lte_<command>_<pid>
-    @param width: the sidebar's columns, 'N%', or dash.AUTO
+    @param width: the sidebar's columns, 'N%', or lte_dash.AUTO
     @param dash_on: False: no dashboard, just the home pane
     @raise RuntimeError: tmux could not make the session or its home pane
     """
@@ -113,7 +113,7 @@ class Launch:
         self,
         argv: List[str],
         name: Optional[str] = None,
-        width: Union[int, str] = dash.AUTO,
+        width: Union[int, str] = lte_dash.AUTO,
         dash_on: bool = True,
     ):
         self.argv = argv
@@ -147,7 +147,7 @@ class Launch:
         # history-limit applies to panes created from here on, hence the
         # throwaway first window.
         _tmux("set-option", "-t", self.session, "history-limit", str(HISTORY_LIMIT))
-        starter.apply()
+        lte_defaults.apply()
         self.close_key = keys.chosen(close.KEY_ROLE, close.KEY)
         if self.close_key and keys.borrow(
             self.close_key,
@@ -164,10 +164,10 @@ class Launch:
         self.return_to = None  # (client, session) to switch back to, inside tmux
         if dash_on:
             try:
-                self.window, _ = dash.open_window(
+                self.window, _ = lte_dash.open_window(
                     self.session, None, None, None, width=width, home_cmd="cat"
                 )
-                self.home = option(self.window, dash.HOME_OPTION, "-wq")
+                self.home = option(self.window, lte_dash.HOME_OPTION, "-wq")
             except RuntimeError as exc:
                 sys.stderr.write(f"lte-session: no dashboard. {exc}")
         if self.window is None:
@@ -193,11 +193,11 @@ class Launch:
         src = Path(__file__).resolve().parents[1]
         runner = (
             f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} "
-            f"-m libtmux_easy.launch --run {shlex.quote(self.run_dir)} -- "
+            f"-m libtmux_easy.lte_session --run {shlex.quote(self.run_dir)} -- "
             + " ".join(shlex.quote(a) for a in argv)
         )
-        _tmux("set-option", "-q", "-t", self.session, dash.RUN_DIR_OPTION, self.run_dir)
-        _tmux("set-option", "-q", "-t", self.session, dash.HOME_STATUS_OPTION, "running")
+        _tmux("set-option", "-q", "-t", self.session, lte_dash.RUN_DIR_OPTION, self.run_dir)
+        _tmux("set-option", "-q", "-t", self.session, lte_dash.HOME_STATUS_OPTION, "running")
         _tmux("respawn-pane", "-k", "-t", self.home, runner, check=True)
         _tmux("select-pane", "-t", self.home, "-T", "home")
         _tmux("select-window", "-t", self.window)
@@ -314,7 +314,7 @@ class Launch:
             if not self.alive():
                 return
             state = self.describe_exit() if self.exit_msg() else "unknown"
-            _tmux("set-option", "-q", "-t", self.session, dash.HOME_STATUS_OPTION, state)
+            _tmux("set-option", "-q", "-t", self.session, lte_dash.HOME_STATUS_OPTION, state)
             if not keep:
                 self.leave()
             elif notify:
@@ -400,7 +400,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--width",
-        default=dash.AUTO,
+        default=lte_dash.AUTO,
         help="sidebar columns, N%%, or auto (fit the panes listed at start)",
     )
     parser.add_argument("--no-dash", action="store_true", help="no sidebar, just the home pane")

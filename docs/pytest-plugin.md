@@ -215,7 +215,7 @@ drop the overlay.
   item and, after a passing test, closes (and checks) the test's groups
   still open.
 - **`--tmux` attach.** `pytest_cmdline_main` (tryfirst) execs
-  `python -m libtmux_easy.launch -- python -m pytest <same args>`. pytest
+  `python -m libtmux_easy.lte_session -- python -m pytest <same args>`. pytest
   already captures fds 0-2 there: the tty check uses `/dev/tty` and the
   foreground process group, and capture (stdin included) is suspended
   before the exec so the new process gets the real terminal.

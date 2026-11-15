@@ -60,7 +60,7 @@
 
 - Exec mode: `respawn_pane()` reruns the command without the
   `send_command_before()` setup.
-- Key borrowing (`dash/keys.py` `borrow()`/`give_back()`) updates the
+- Key borrowing (`lte_dash/keys.py` `borrow()`/`give_back()`) updates the
   `@lte_key_<key>_users` count read-modify-write, unlocked: two processes
   borrowing or returning at once can lose a count, leaving the key borrowed
   or restoring it too early. Seen in `test_concurrent_tmux_runs_dont_clash`.

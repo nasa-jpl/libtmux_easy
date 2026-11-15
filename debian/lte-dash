@@ -6,6 +6,6 @@ import sys
 
 sys.path.insert(0, "/usr/lib/libtmux-easy-dash")
 
-from libtmux_easy.dash.cli import main  # noqa: E402
+from libtmux_easy.lte_dash.cli import main  # noqa: E402
 
 sys.exit(main())

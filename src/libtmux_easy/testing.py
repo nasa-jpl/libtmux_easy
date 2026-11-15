@@ -48,7 +48,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 import pytest
 
-from . import dash
+from . import lte_dash
 from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
@@ -101,7 +101,7 @@ def under_lte_session() -> bool:
     @return: True if it does
     """
     pane = os.environ.get("TMUX_PANE")
-    return bool(pane) and bool(option(pane, dash.WINDOW_OPTION))
+    return bool(pane) and bool(option(pane, lte_dash.WINDOW_OPTION))
 
 
 def _wants_tmux(config):
@@ -130,7 +130,7 @@ def pytest_cmdline_main(config):
     cmd = [
         sys.executable,
         "-m",
-        "libtmux_easy.launch",
+        "libtmux_easy.lte_session",
         "--name",
         _free_session_name(f"lte_test_{os.getpid()}"),
     ]

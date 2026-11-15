@@ -9,14 +9,14 @@ interactive. The "home" pane (a 'tail -F' of the script's output) is the
 placeholder that fills the selected pane's slot in its own window while it is
 on show, so every window keeps its layout.
 
-Stdlib only, like lte_run, except app.py (Textual): only cli.main() imports
-it, so the library can use Viewport without Textual.
+Stdlib only, like lte_run, except app.py (Textual): only cli.main()
+imports it, so the library can use Viewport without Textual.
 
   options.py   tmux option names holding the dashboard's state
   window.py    open_window(), launcher()
   viewport.py  Viewport: swap panes in and out
   control.py   Control (actions to the script), read_status()
-  cli.py       lte-dash
+  cli.py       lte-dash (the command)
   app.py       the sidebar UI (Textual)
   keys.py      lte-key: borrow a prefix key
   winhook.py   a tmux hook that tells the sidebar its window changed

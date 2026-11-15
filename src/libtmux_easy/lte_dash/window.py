@@ -43,7 +43,7 @@ def launcher() -> str:
             path.append(textual)  # a private copy, e.g. the .deb's bundle
         return (
             f"env PYTHONPATH={shlex.quote(os.pathsep.join(path))} "
-            f"{shlex.quote(sys.executable)} -m libtmux_easy.dash"
+            f"{shlex.quote(sys.executable)} -m libtmux_easy.lte_dash"
         )
     if shutil.which("lte-dash"):
         return "lte-dash"

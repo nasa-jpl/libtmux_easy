@@ -9,7 +9,7 @@ import pytest
 
 from helpers import pane_text, title, wait_until
 from libtmux_easy import PANE_MODE_EXEC, PANE_MODE_WRAP, TmuxSession, session_exists
-from libtmux_easy import dash
+from libtmux_easy import lte_dash
 from libtmux_easy.tmuxcmd import tmux
 
 
@@ -506,13 +506,13 @@ def test_status_file_and_title(make_session, tmp_path):
     path = str(tmp_path / "status.json")
     session = make_session(status_file=path)
     pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
-    assert [(e["name"], e["running"]) for e in dash.read_status(path)] == [("main:x", True)]
+    assert [(e["name"], e["running"]) for e in lte_dash.read_status(path)] == [("main:x", True)]
 
     session.stop_pane(pane, sigint_timeout=5.0)
 
     assert wait_until(lambda: title(pane) == "x [stopped]")
     # The title and the file are updated one after the other: wait for both.
-    assert wait_until(lambda: dash.read_status(path)[0]["stopped"] == "SIGINT")
+    assert wait_until(lambda: lte_dash.read_status(path)[0]["stopped"] == "SIGINT")
 
 
 def test_status_after_session_closed(session, caplog):

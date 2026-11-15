@@ -264,7 +264,7 @@ class Tour:
         src = str(Path(libtmux_easy.__file__).resolve().parents[1])
         env = dict(os.environ, **{_MARKER: "1"})
         env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
-        cmd = [sys.executable, "-m", "libtmux_easy.launch", "--name", self.name]
+        cmd = [sys.executable, "-m", "libtmux_easy.lte_session", "--name", self.name]
         if self.args.no_dash:
             cmd.append("--no-dash")
         cmd += ["--", sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]

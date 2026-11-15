@@ -16,7 +16,7 @@ import pytest
 
 from helpers import pane_text as _pane_text, title as _pane_title, wait_until as _wait_until
 from libtmux_easy import PANE_MODE_WRAP, PANE_MODE_SHELL
-from libtmux_easy import dash
+from libtmux_easy import lte_dash
 from lte_run import wrap
 
 
@@ -223,7 +223,7 @@ class TestWrapMode:
         assert _wait_until(lambda: session.pane_status(pane).command == "sh -c 'sleep 0.3; exit 6'")
         assert session.wait_for_exit(pane, timeout=5.0).code == 6
         assert _wait_until(
-            lambda: dash.read_status(path)[0]["command"] == "sh -c 'sleep 0.3; exit 6'"
+            lambda: lte_dash.read_status(path)[0]["command"] == "sh -c 'sleep 0.3; exit 6'"
         )
         session.respawn_pane(pane)
         assert session.wait_for_exit(pane, timeout=5.0).code == 6

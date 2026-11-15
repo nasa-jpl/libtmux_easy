@@ -1,6 +1,6 @@
 """Raw tmux commands, without libtmux: for the modules that only send tmux
 commands and need none of its Session/Window/Pane objects (dash, keys,
-launch, close, starter), so they stay stdlib only. It talks to the server of
+lte_session, close, lte_defaults), so they stay stdlib only. It talks to the server of
 the calling process ($TMUX), or the default one."""
 
 import subprocess

@@ -40,7 +40,7 @@ def lte_session(*argv, env=None, cwd=None, timeout=60):
     }
     env["PYTHONPATH"] = SRC
     return subprocess.run(
-        [sys.executable, "-m", "libtmux_easy.launch", *argv],
+        [sys.executable, "-m", "libtmux_easy.lte_session", *argv],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

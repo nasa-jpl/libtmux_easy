@@ -1,10 +1,10 @@
-# tmux defaults (`starter.py`, `lte-defaults`)
+# tmux defaults (`lte_defaults.py`, `lte-defaults`)
 
 Two things, both kept out of the way of a user's own tmux setup:
 
 | what | applies when | turn off / change |
 |---|---|---|
-| starter settings (`starter.CONF`) | the tmux server loaded **no** config file | `LTE_TMUX_DEFAULTS=0` |
+| starter settings (`lte_defaults.CONF`) | the tmux server loaded **no** config file | `LTE_TMUX_DEFAULTS=0` |
 | library keys: `prefix g`, `prefix Q` | the key is **unbound**; only in lte sessions | `@lte_key_dash`, `@lte_key_close` in `~/.tmux.conf` |
 
 Python code never sets or unsets these: how keys work is the user's call,

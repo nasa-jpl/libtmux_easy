@@ -40,7 +40,7 @@ renders everything else.
   window: while `prefix w`'s chooser is open, the viewed pane's own window
   previews with home in its slot (`working/WINDOW_CHOOSER.md`).
 - Instant: a global `session-window-changed[100+]` hook, guarded to this
-  session, sends the sidebar SIGUSR1 (`dash/winhook.py`). Global and at its
+  session, sends the sidebar SIGUSR1 (`lte_dash/winhook.py`). Global and at its
   own index, since a session-scoped hook shadows the user's global one.
   Removed on exit; a dead sidebar's entry is swept on the next start. The
   poll is the fallback.
@@ -68,13 +68,13 @@ renders everything else.
   unknown when nonzero). Colors: green running or exit 0, red failed, yellow
   stopped (by `x`, `X`, `stop_pane()`), cyan starting, magenta unknown.
 - **Home** shows the script's stdout, stderr and logging via `log_home()`
-  (`dash/homelog.py`).
+  (`lte_dash/homelog.py`).
 
 **Public**, used by tlaunch: `lte-dash --open`, `dash.open_window()`, the
 status-file fields, the control commands. A non-library launcher keeps the
 status file current and answers the socket.
 
-## Borrowed keys (`dash/keys.py`, `lte-key`)
+## Borrowed keys (`lte_dash/keys.py`, `lte-key`)
 
 `prefix g` (back to the dashboard) must not need `~/.tmux.conf`, and must not
 clobber the user's binding:

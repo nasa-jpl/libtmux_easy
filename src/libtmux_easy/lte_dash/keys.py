@@ -19,7 +19,7 @@ The library's own keys (the dashboard's g, lte-close's Q) are borrowed only
 when unbound, so a binding of the user's always wins, and ~/.tmux.conf can
 pick others: 'set -g @lte_key_dash G', 'set -g @lte_key_close ""' (none).
 
-Stdlib only, like lte_run and dash/.
+Stdlib only, like lte_run and lte_dash/.
 """
 
 import argparse

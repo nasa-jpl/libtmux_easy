@@ -1,11 +1,11 @@
-"""Tests for the starter tmux settings (src/libtmux_easy/starter.py). Each test
+"""Tests for the starter tmux settings (src/libtmux_easy/lte_defaults.py). Each test
 gets its own tmux server, with no config file unless it writes one."""
 
 import subprocess
 
 import pytest
 
-from libtmux_easy import starter
+from libtmux_easy import lte_defaults
 
 
 @pytest.fixture
@@ -37,12 +37,12 @@ def test_no_config_gets_the_starter_once(server, capsys):
     """Applied once per server; lte-defaults prints the same settings."""
     start, run = server
     start()
-    assert starter.apply(run) is True
+    assert lte_defaults.apply(run) is True
     assert _applied(run)
     assert "kill-session" in "\n".join(run("list-keys", "-T", "prefix", "C-x"))
-    assert starter.apply(run) is False  # once per server
-    assert starter.main([]) == 0
-    assert capsys.readouterr().out == starter.CONF
+    assert lte_defaults.apply(run) is False  # once per server
+    assert lte_defaults.main([]) == 0
+    assert capsys.readouterr().out == lte_defaults.CONF
 
 
 def test_a_config_file_is_left_alone(server, tmp_path):
@@ -50,8 +50,8 @@ def test_a_config_file_is_left_alone(server, tmp_path):
     conf = tmp_path / ".tmux.conf"
     conf.write_text("set -g status-left mine\n")
     start()
-    assert starter.has_config(run)
-    assert starter.apply(run) is False
+    assert lte_defaults.has_config(run)
+    assert lte_defaults.apply(run) is False
     assert not _applied(run)
 
 
@@ -59,5 +59,5 @@ def test_env_turns_it_off(server, monkeypatch):
     start, run = server
     start("-f", "/dev/null")
     monkeypatch.setenv("LTE_TMUX_DEFAULTS", "0")
-    assert starter.apply(run) is False
+    assert lte_defaults.apply(run) is False
     assert not _applied(run)

@@ -37,8 +37,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from lte_run import wrap
 from lte_run.proc import alive, comm, pane_pids
 from .tmuxcmd import option, tmux as _tmux
-from .dash.control import Control, describe, read_status
-from .dash.options import (
+from .lte_dash.control import Control, describe, read_status
+from .lte_dash.options import (
     HOME_KIND_OPTION,
     HOME_OPTION,
     SIDEBAR_OPTION,

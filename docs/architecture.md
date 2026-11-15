@@ -12,13 +12,13 @@ Two packages: `lte_run` (stdlib only, never imports `libtmux_easy`) and
 | `watcher.py` | psutil | `_PaneWatcher`: one thread per session; pidfds plus the wrap socket |
 | `lte_run/proc.py` | stdlib; psutil on use | processes: `/proc` readers for the commands, psutil ones for the library |
 | `lte_run/wrap.py` | stdlib | `lte-run`; pipe guards and plain text, below |
-| `dash/` | stdlib | `options` (state in tmux options), `window` (`open_window`), `viewport` (`Viewport`), `control` (`Control`, `read_status`), `winhook` (window-change hook), `cli` (`lte-dash`) |
-| `dash/app.py` | Textual | the sidebar UI |
-| `dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
-| `dash/homelog.py` | - | stdout/logging copy behind `log_home()` |
-| `launch.py` | stdlib | `lte-session` |
+| `lte_dash/` | stdlib | `options` (state in tmux options), `window` (`open_window`), `viewport` (`Viewport`), `control` (`Control`, `read_status`), `winhook` (window-change hook), `cli` (`lte-dash`) |
+| `lte_dash/app.py` | Textual | the sidebar UI |
+| `lte_dash/keys.py` | stdlib | `lte-key`: borrow a prefix key |
+| `lte_dash/homelog.py` | - | stdout/logging copy behind `log_home()` |
+| `lte_session.py` | stdlib | `lte-session` |
 | `close.py` | stdlib | `lte-close`: graceful close, close actions |
-| `starter.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
+| `lte_defaults.py` | stdlib | `lte-defaults`: starter tmux settings for a server with no config |
 | `output.py` | stdlib | output capture (`pipe-pane` files), `OutputReader` (tails them), `Capture`, watches |
 | `processes.py` | the library | `ProcessGroup`: a process group, its backends (subprocess, tmux, adopted), health; no pytest |
 | `testing.py` | pytest | pytest plugin: `Processes` with a test owner, on top of `processes.py` |

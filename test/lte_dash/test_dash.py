@@ -15,8 +15,8 @@ import time
 import pytest
 
 from helpers import fmt as _fmt, pane_text, wait_until as _wait_until
-from libtmux_easy import PANE_MODE_WRAP, dash
-from libtmux_easy.dash import window as dash_window
+from libtmux_easy import PANE_MODE_WRAP, lte_dash
+from libtmux_easy.lte_dash import window as dash_window
 from libtmux_easy.tmuxcmd import option, tmux
 from lte_run.wrap import SOCKET_NAME
 
@@ -47,13 +47,13 @@ def viewport(session):
         "split-window", "-h", "-b", "-d", "-l", "30", "-t", home, "-P", "-F", "#{pane_id}", "cat"
     )[0].strip()
     for name, value in (
-        (dash.HOME_OPTION, home),
-        (dash.VIEW_OPTION, home),
-        (dash.HOME_CMD_OPTION, "cat"),
-        (dash.WIDTH_OPTION, "30"),
+        (lte_dash.HOME_OPTION, home),
+        (lte_dash.VIEW_OPTION, home),
+        (lte_dash.HOME_CMD_OPTION, "cat"),
+        (lte_dash.WIDTH_OPTION, "30"),
     ):
         run("set-option", "-wq", "-t", window, name, value)
-    return dash.Viewport(window, run=run, sidebar=sidebar)
+    return lte_dash.Viewport(window, run=run, sidebar=sidebar)
 
 
 class TestViewport:
@@ -205,11 +205,11 @@ class TestControl:
     def test_stop_respawn_stop_all(self, session, tmp_path):
         """Actions over the control socket; unknown ones are ignored, and a
         socket that isn't there is offline."""
-        assert dash.Control(str(tmp_path / "nope.sock")).online() is False
-        assert dash.Control(None).send("stop", "%0") is False
+        assert lte_dash.Control(str(tmp_path / "nope.sock")).online() is False
+        assert lte_dash.Control(None).send("stop", "%0") is False
         pane = session.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
         other = session.new_pane("y", "sleep 60", mode=PANE_MODE_WRAP)
-        control = dash.Control(os.path.join(session._wrap_dir, SOCKET_NAME))
+        control = lte_dash.Control(os.path.join(session._wrap_dir, SOCKET_NAME))
         assert control.online()
 
         assert control.send("stop", pane.id)
@@ -237,7 +237,7 @@ class TestControl:
         pane = sess.new_pane("x", "sleep 60", mode=PANE_MODE_WRAP)
         statuses = []
         sess.watch_pane(pane, statuses.append)
-        control = dash.Control(os.path.join(sess._wrap_dir, SOCKET_NAME))
+        control = lte_dash.Control(os.path.join(sess._wrap_dir, SOCKET_NAME))
 
         assert control.send("shutdown", None)
 
@@ -249,7 +249,7 @@ class TestControl:
 @needs_textual
 def test_sidebar_labels():
     """A pane's status label, and a command clipped to the sidebar's width."""
-    from libtmux_easy.dash.app import clip, describe, describe_long
+    from libtmux_easy.lte_dash.app import clip, describe, describe_long
 
     exit2 = {"code": None, "signal": 2, "inferred": False}
     assert describe({"running": True}) == ("running", "running")
@@ -297,17 +297,19 @@ class TestDashboard:
         a = session.new_pane("a", "sleep 60", mode=PANE_MODE_WRAP)
         session.dashboard(select=False)
         window = session._dash_window
-        assert session._tmux_run("show-options", "-qv", "-t", session.id, dash.WINDOW_OPTION) == [
-            window
-        ]
+        assert session._tmux_run(
+            "show-options", "-qv", "-t", session.id, lte_dash.WINDOW_OPTION
+        ) == [window]
         assert _wait_until(lambda: "main" in pane_text(session.get_pane(session._dash_sidebar)))
 
-        dash.Viewport(window, run=session._tmux_run).show(a.id)
+        lte_dash.Viewport(window, run=session._tmux_run).show(a.id)
         session.close_dashboard()
 
         assert window not in [w.id for w in session.windows]
         assert session.get_pane_name(a) == "main:a"
-        assert session._tmux_run("show-options", "-qv", "-t", session.id, dash.WINDOW_OPTION) == []
+        assert (
+            session._tmux_run("show-options", "-qv", "-t", session.id, lte_dash.WINDOW_OPTION) == []
+        )
         assert _fmt(session, a.id, "#{window_name}") == "main"
 
     def test_is_the_first_window(self, make_session):
@@ -332,17 +334,17 @@ def test_open_window_from_outside_a_session_object(tmp_path):
     subprocess.run(["tmux", "new-session", "-d", "-s", "lte-test-ext"], check=True)
     try:
         home_log = tmp_path / "home.log"
-        window, sidebar = dash.open_window(
+        window, sidebar = lte_dash.open_window(
             "lte-test-ext",
             str(tmp_path / "status.json"),
             str(home_log),
             str(tmp_path / "ctl.sock"),
             sidebar_cmd="cat",
         )
-        assert option("lte-test-ext", dash.WINDOW_OPTION) == window
-        assert option("lte-test-ext", dash.SIDEBAR_OPTION) == sidebar
-        home = option(window, dash.HOME_OPTION, "-wq")
-        assert option(window, dash.VIEW_OPTION, "-wq") == home
+        assert option("lte-test-ext", lte_dash.WINDOW_OPTION) == window
+        assert option("lte-test-ext", lte_dash.SIDEBAR_OPTION) == sidebar
+        home = option(window, lte_dash.HOME_OPTION, "-wq")
+        assert option(window, lte_dash.VIEW_OPTION, "-wq") == home
 
         home_log.write_text("hello from outside\n")
         assert _wait_until(
@@ -415,10 +417,10 @@ def entry(pane_id, name, running=False, code=None, stopped=None):
 def _run_app(viewport, status, scenario=None):
     """Run DashApp under Textual's test driver; 'scenario(app, pilot)' is
     awaited after it settles, and its result returned."""
-    from libtmux_easy.dash.app import DashApp
+    from libtmux_easy.lte_dash.app import DashApp
 
     async def main():
-        app = DashApp(viewport, status, dash.Control(None))
+        app = DashApp(viewport, status, lte_dash.Control(None))
         async with app.run_test() as pilot:
             await pilot.pause(0.2)
             return await scenario(app, pilot) if scenario else None
@@ -476,9 +478,9 @@ def test_sidebar_summary_counts():
 @pytest.mark.parametrize(
     "names, width, window_width, expect",
     [
-        (["w:a_rather_long_pane_name_here", "w:x"], dash.AUTO, 200, 7 + 28 + 12),
-        ([], dash.AUTO, 200, dash.MIN_WIDTH),  # nothing listed yet
-        (["w:" + "n" * 80], dash.AUTO, 100, 50),  # at most half the window
+        (["w:a_rather_long_pane_name_here", "w:x"], lte_dash.AUTO, 200, 7 + 28 + 12),
+        ([], lte_dash.AUTO, 200, lte_dash.MIN_WIDTH),  # nothing listed yet
+        (["w:" + "n" * 80], lte_dash.AUTO, 100, 50),  # at most half the window
         (["w:x"], "30", 200, None),  # a fixed width is left alone
     ],
 )
@@ -486,14 +488,21 @@ def test_sidebar_autosizes_once(tmp_path, names, width, window_width, expect):
     """Width "auto": fit the longest name plus the longest status, at start."""
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry(f"%{i + 5}", n, True) for i, n in enumerate(names)]))
-    viewport = FakeViewport(options={dash.WIDTH_OPTION: width}, window_width=window_width)
+    viewport = FakeViewport(options={lte_dash.WIDTH_OPTION: width}, window_width=window_width)
 
     _run_app(viewport, str(status))
     if expect is None:
         assert not [c for c in viewport.calls if c[0] == "resize-pane"]
     else:
         assert ("resize-pane", "-t", "%0", "-x", str(expect)) in viewport.calls
-        assert ("set-option", "-wq", "-t", "@0", dash.WIDTH_OPTION, str(expect)) in viewport.calls
+        assert (
+            "set-option",
+            "-wq",
+            "-t",
+            "@0",
+            lte_dash.WIDTH_OPTION,
+            str(expect),
+        ) in viewport.calls
 
 
 @needs_textual
@@ -527,7 +536,7 @@ def test_sidebar_shows_subprocess_tree(tmp_path):
             await pilot.pause(0.1)
             assert not procs.display
 
-        viewport = FakeViewport(("%5", "%6"), options={dash.INITIAL_OPTION: "%5"})
+        viewport = FakeViewport(("%5", "%6"), options={lte_dash.INITIAL_OPTION: "%5"})
         _run_app(viewport, str(status), scenario)
     finally:
         proc.terminate()
@@ -538,7 +547,7 @@ def test_sidebar_shows_subprocess_tree(tmp_path):
 def test_sidebar_starts_on_initial_pane(tmp_path):
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry("%5", "w:one", True), entry("%6", "w:two", True)]))
-    viewport = FakeViewport(("%5", "%6"), options={dash.INITIAL_OPTION: "%6"})
+    viewport = FakeViewport(("%5", "%6"), options={lte_dash.INITIAL_OPTION: "%6"})
 
     async def scenario(app, pilot):
         return app._selected()
@@ -594,7 +603,7 @@ def test_sidebar_copies_command(tmp_path):
 class TestWinHook:
     def test_signals_on_window_change_in_its_session_only(self, session, make_session):
         import signal as _signal
-        from libtmux_easy.dash import winhook
+        from libtmux_easy.lte_dash import winhook
 
         got = []
         old = _signal.signal(_signal.SIGUSR1, lambda *_: got.append(1))
@@ -624,7 +633,7 @@ class TestWinHook:
             _signal.signal(_signal.SIGUSR1, old)
 
     def test_sweeps_dead_entries(self, session):
-        from libtmux_easy.dash import winhook
+        from libtmux_easy.lte_dash import winhook
 
         run = session._tmux_run
         dead = subprocess.Popen(["true"])
@@ -647,7 +656,7 @@ def test_sidebar_follows_window(tmp_path):
 
     status = tmp_path / "s.json"
     status.write_text(json.dumps([entry("%5", "w:one", True)]))
-    viewport = FakeViewport(("%5",), options={dash.INITIAL_OPTION: "%5"})
+    viewport = FakeViewport(("%5",), options={lte_dash.INITIAL_OPTION: "%5"})
 
     async def scenario(app, pilot):
         await pilot.pause(0.3)
@@ -673,7 +682,7 @@ def test_launcher_uses_this_python(monkeypatch):
     site dirs (the .deb's bundle) goes on it too, or the sidebar couldn't
     import it."""
     cmd = dash_window.launcher()
-    assert cmd.endswith(f"{sys.executable} -m libtmux_easy.dash")
+    assert cmd.endswith(f"{sys.executable} -m libtmux_easy.lte_dash")
     assert ":" not in cmd.split()[1]
     monkeypatch.setattr(dash_window, "_site_dirs", lambda: set())
     textual = os.path.dirname(os.path.dirname(importlib.util.find_spec("textual").origin))
