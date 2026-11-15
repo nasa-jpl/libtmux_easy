@@ -10,9 +10,9 @@ class ExitStatus:
 
     When known, exactly one of 'code' and 'signal' is set.
 
-    @param code: the process exited normally with this status
-    @param signal: the process was killed by this signal number
-    @param inferred: True when 'signal' was derived from a shell's 128+N
+    :param code: the process exited normally with this status
+    :param signal: the process was killed by this signal number
+    :param inferred: True when 'signal' was derived from a shell's 128+N
         convention (shell-mode panes) rather than reported directly by tmux or
         lte-run. In that case a genuine 'exit 130' cannot be distinguished from
         'killed by SIGINT'. Exec- and wrap-mode panes never have this ambiguity.

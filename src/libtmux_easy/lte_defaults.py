@@ -45,8 +45,8 @@ set -g mouse on
 def has_config(run=_tmux) -> bool:
     """Whether the server loaded a config file. /dev/null counts as none.
 
-    @param run: runs tmux (a stub, in tests)
-    @return: True if it loaded one
+    :param run: runs tmux (a stub, in tests)
+    :return: True if it loaded one
     """
     out = run("display-message", "-p", "#{config_files}")
     files = [f for f in (out[0].split(",") if out else []) if f.strip()]
@@ -57,8 +57,8 @@ def apply(run=_tmux) -> bool:
     """Source CONF into the server once, if it loaded no config and
     $LTE_TMUX_DEFAULTS isn't 0.
 
-    @param run: runs tmux (a stub, in tests)
-    @return: True if sourced by this call
+    :param run: runs tmux (a stub, in tests)
+    :return: True if sourced by this call
     """
     if os.environ.get(ENV, "").strip() == "0" or _option(None, DONE_OPTION, "-gq", run=run):
         return False

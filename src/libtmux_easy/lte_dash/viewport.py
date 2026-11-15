@@ -22,11 +22,11 @@ class Viewport:
     slot (in window FROM). show() always swaps the occupant home first, so at
     most one pane is ever away from its window.
 
-    @param window: the dashboard window
-    @param run: executes a tmux command and returns its stdout lines. The
+    :param window: the dashboard window
+    :param run: executes a tmux command and returns its stdout lines. The
         default uses the tmux binary (right for a process inside the
         session); the library passes its own server's cmd()
-    @param sidebar: the sidebar pane's id; None: from the window's options
+    :param sidebar: the sidebar pane's id; None: from the window's options
     """
 
     def __init__(self, window, run=_tmux, sidebar: Optional[str] = None):
@@ -38,7 +38,7 @@ class Viewport:
     def option(self, name):
         """A window option of the dashboard window.
 
-        @return: the value, or ''
+        :return: the value, or ''
         """
         return option(self.window, name, "-wq", run=self.run)
 
@@ -59,7 +59,7 @@ class Viewport:
     def panes(self) -> Dict[str, str]:
         """Every pane in the session.
 
-        @return: pane id -> window id
+        :return: pane id -> window id
         """
         out = self.run("list-panes", "-s", "-t", self.window, "-F", "#{pane_id} #{window_id}")
         return dict(line.split() for line in out if len(line.split()) == 2)
@@ -67,7 +67,7 @@ class Viewport:
     def active(self) -> bool:
         """Whether the dashboard window is the session's current one.
 
-        @return: False when another window is; True if unknown, so a failed
+        :return: False when another window is; True if unknown, so a failed
             query never moves panes
         """
         out = self.run("display-message", "-p", "-t", self.window, "#{window_active}")

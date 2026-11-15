@@ -146,9 +146,9 @@ SKIP_ENV = frozenset(
 def pane_env(env: Optional[Mapping[str, object]]) -> Dict[str, Optional[str]]:
     """'env' as it may go into a pane: SKIP_ENV left out, values as strings.
 
-    @param env: a mapping, e.g. os.environ, or None. A None value stays None:
+    :param env: a mapping, e.g. os.environ, or None. A None value stays None:
         removed from the pane's environment (see TmuxSession.new_pane(env=))
-    @return: the variables, name -> str or None
+    :return: the variables, name -> str or None
     """
     return {k: None if v is None else str(v) for k, v in (env or {}).items() if k not in SKIP_ENV}
 
@@ -270,7 +270,7 @@ _server = libtmux.Server()
 def set_server(**kwargs):
     """Make create() use a tmux server of its own.
 
-    @param kwargs: for libtmux.Server(), e.g. socket_name="test"
+    :param kwargs: for libtmux.Server(), e.g. socket_name="test"
     """
     global _server
     _server = libtmux.Server(**kwargs)
@@ -279,9 +279,9 @@ def set_server(**kwargs):
 def tmux_command(cmd: str) -> List[str]:
     """Run 'tmux CMD' on the default server.
 
-    @param cmd: one string, shell-split
-    @return: its stdout lines
-    @raise libtmux.exc.LibTmuxException: tmux printed an error
+    :param cmd: one string, shell-split
+    :return: its stdout lines
+    :raises libtmux.exc.LibTmuxException: tmux printed an error
     """
     proc = tmux_cmd(*shlex.split(cmd))
     if proc.stderr:
@@ -292,7 +292,7 @@ def tmux_command(cmd: str) -> List[str]:
 def session_exists(session_name: str) -> bool:
     """Whether a tmux session of that name exists, on create()'s server.
 
-    @return: True if it does
+    :return: True if it does
     """
     return _server.has_session(session_name)
 
@@ -392,31 +392,31 @@ class TmuxSession(Session):
     ) -> "TmuxSession":
         """The primary entry point to create a managed TmuxSession.
 
-        @param session_name: the session's name
-        @param kill_existing: replace a session of that name; False: raise
-        @param title_status: keep each pane's border title updated with its
+        :param session_name: the session's name
+        :param kill_existing: replace a session of that name; False: raise
+        :param title_status: keep each pane's border title updated with its
             running/exit state (see new_pane()'s on_exit, and
             _refresh_pane_title) -- a zero-infrastructure visual monitor. False:
             pristine titles.
-        @param status_file: a path that gets the output of status() written to
+        :param status_file: a path that gets the output of status() written to
             it as JSON on every pane state transition, so an external process
             can monitor pane state without any libtmux knowledge
-        @param env: goes into every pane, on top of this process's os.environ;
+        :param env: goes into every pane, on top of this process's os.environ;
             see copy_environment() and docs/environment.md
-        @param pane_capture: True, or a directory: save every pane's output to
+        :param pane_capture: True, or a directory: save every pane's output to
             a file: capture()
-        @param mode: new_pane()'s default mode: set_default_mode()
-        @param rc: the rc file a shell or wrap pane's bash runs, for aliases
+        :param mode: new_pane()'s default mode: set_default_mode()
+        :param rc: the rc file a shell or wrap pane's bash runs, for aliases
             and a prompt; the environment is put back afterwards. None: no rc
             file.
-        @param history: save what a shell or wrap pane's bash runs to
+        :param history: save what a shell or wrap pane's bash runs to
             $HISTFILE (~/.bash_history); False: the library's commands stay
             out of it (HISTFILE=/dev/null after the rc file)
-        @param wait_start: new_pane()'s default: False types each wrap pane's
+        :param wait_start: new_pane()'s default: False types each wrap pane's
             command without waiting for its shell, like a tmux shell script
-        @param kwargs: for libtmux's Server.new_session()
-        @return: the TmuxSession
-        @raise ValueError: a session of that name exists and not
+        :param kwargs: for libtmux's Server.new_session()
+        :return: the TmuxSession
+        :raises ValueError: a session of that name exists and not
             'kill_existing'; or an unknown 'mode'
         """
         _check_mode(mode)
@@ -456,20 +456,20 @@ class TmuxSession(Session):
           - kill() closes only the windows this object made
           - an open dashboard (lte-session's, say) is reused, not replaced
 
-        @param title_status: as for create()
-        @param status_file: as for create(); None: one in the control dir when
+        :param title_status: as for create()
+        :param status_file: as for create(); None: one in the control dir when
             the session has a dashboard, so its sidebar lists this object's
             panes
-        @param env: as for create(); the session's own tmux environment is
+        :param env: as for create(); the session's own tmux environment is
             left alone
-        @param mode: new_pane()'s default mode: set_default_mode()
-        @param rc: as for create()
-        @param history: as for create()
-        @param wait_start: as for create()
-        @return: the TmuxSession
-        @raise RuntimeError: not running inside tmux, or no session for this
+        :param mode: new_pane()'s default mode: set_default_mode()
+        :param rc: as for create()
+        :param history: as for create()
+        :param wait_start: as for create()
+        :return: the TmuxSession
+        :raises RuntimeError: not running inside tmux, or no session for this
             pane
-        @raise ValueError: an unknown 'mode'
+        :raises ValueError: an unknown 'mode'
         """
         _check_mode(mode)
         pane_id = os.environ.get("TMUX_PANE")
@@ -640,15 +640,15 @@ class TmuxSession(Session):
         """A new window named 'name', holding only a placeholder pane until
         the first new_pane(). It becomes the current window.
 
-        @param layout: re-applied after each split; None: tmux's own
-        @param env: goes into every pane new_pane() makes in this window, on top
+        :param layout: re-applied after each split; None: tmux's own
+        :param env: goes into every pane new_pane() makes in this window, on top
             of the session's (copy_environment()); None removes a variable. tmux
             has no window environment, so panes made by hand in it don't get it.
-        @param pane_capture: True, or a directory: save the output of every pane
+        :param pane_capture: True, or a directory: save the output of every pane
             in it to a file: capture()
-        @param window_kwargs: for libtmux's Session.new_window()
-        @return: the Window
-        @raise ValueError: a window of that name exists
+        :param window_kwargs: for libtmux's Session.new_window()
+        :return: the Window
+        :raises ValueError: a window of that name exists
         """
 
         if self.unnamed_window:
@@ -695,10 +695,10 @@ class TmuxSession(Session):
         the setup's status: exec mode by '&&', wrap mode by lte-run
         ($LTE_RUN_SETUP), shell mode by a '$?' probe (and a warning).
 
-        @param command: a shell command
-        @param window: for this window only (its replaces the session's); None:
+        :param command: a shell command
+        :param window: for this window only (its replaces the session's); None:
             the whole session
-        @raise ValueError: no such window
+        :raises ValueError: no such window
         """
         if window:
             window = self.resolve_target_window(window)
@@ -717,8 +717,8 @@ class TmuxSession(Session):
         environment that is already set up (an activated venv, a sourced ROS
         workspace). SKIP_ENV (TMUX, TERM, BASH_ENV, ...) is never copied.
 
-        @param env: the variables; a None value removes one. None: os.environ
-        @raise libtmux.exc.LibTmuxException: tmux refused the environment
+        :param env: the variables; a None value removes one. None: os.environ
+        :raises libtmux.exc.LibTmuxException: tmux refused the environment
         """
         env = pane_env(os.environ if env is None else env)
         self._session_env.update(env)
@@ -914,39 +914,39 @@ class TmuxSession(Session):
             reruns by hand are tracked automatically. Costs one ~13 MB helper
             process per pane.
 
-        @param name: the pane's name in the current window: 'window:name'
-        @param cmd: the command, shell text
-        @param enter: submit it; shell and wrap mode only (exec mode has no
+        :param name: the pane's name in the current window: 'window:name'
+        :param cmd: the command, shell text
+        :param enter: submit it; shell and wrap mode only (exec mode has no
             shell to submit to). False: nothing runs yet: the pane is not
             probed or tracked until a send_keys() with Enter submits the line.
-        @param mode: PANE_MODE_SHELL, _EXEC or _WRAP (above); None: the
+        :param mode: PANE_MODE_SHELL, _EXEC or _WRAP (above); None: the
             session's default, set_default_mode(), shell unless changed
-        @param on_exit: a callback fired with a PaneStatus the moment the
+        :param on_exit: a callback fired with a PaneStatus the moment the
             command exits for any reason (normal exit, crash, or a signal --
             including a Ctrl-C typed by a user who attached to the session).
             Equivalent to calling watch_pane(pane, on_exit) right after
             creation; see watch_pane() for callback-thread caveats.
-        @param target_pid_timeout: seconds (shell mode only) to wait for the
+        :param target_pid_timeout: seconds (shell mode only) to wait for the
             command's immediate child process(es) to appear -- the pids that
             is_running()/exit_status()/on_exit are actually judged on. See
             _capture_target_pids().
-        @param env: this pane's environment (e.g. os.environ, or a dict of your
+        :param env: this pane's environment (e.g. os.environ, or a dict of your
             own), on top of the window's (new_window(env=)) and the session's
             (copy_environment()) and this process's os.environ; later levels
             win, None removes. Exact: nothing from the tmux server's, and a
             shell pane's rc file can't change it (docs/environment.md).
-        @param on_output: {pattern: callback(OutputMatch)}: watches the pane's
+        :param on_output: {pattern: callback(OutputMatch)}: watches the pane's
             output from its first byte: watch_output() for each item
-        @param pane_capture: True, or a file: save everything the pane shows,
+        :param pane_capture: True, or a file: save everything the pane shows,
             raw, from its first byte: capture(). None follows a window or
             session capture; False opts out of one.
-        @param cmd_capture: a file (wrap mode only): save the command's output
+        :param cmd_capture: a file (wrap mode only): save the command's output
             only, as plain text: no rc output, prompt or typed line ('lte-run
             --tee'). Each run rewrites it (respawn_pane(), a
             send_keys(cmd_capture=)); complete when on_exit fires. While a run
             has it, the pane's capture and watches read that file. See
             docs/output.md.
-        @param wait_start: wrap mode; None: the session's, see create(). True
+        :param wait_start: wrap mode; None: the session's, see create(). True
             waits for the pane's shell to start, then for lte-run to report
             the command. False types the command at once and returns: tmux
             holds the keys until the shell reads them, so rc files of many
@@ -954,15 +954,15 @@ class TmuxSession(Session):
             status is 'starting'; wait_started() waits for that. The typed
             line shows twice (once above the rc file's output), and an rc file
             that reads stdin takes it.
-        @param restart: wrap mode: lte-run reruns the command when it fails
+        :param restart: wrap mode: lte-run reruns the command when it fails
             (exit not 0, or a signal), up to this many times; -1: no limit.
             Not after a stop. on_exit fires once, for the last run; each
             restart is logged and in PaneStatus.restarts ('lte-run --restart')
-        @param restart_delay: seconds before each restart
-        @param pane_kwargs: for split_window() (target, vertical, percent,
+        :param restart_delay: seconds before each restart
+        :param pane_kwargs: for split_window() (target, vertical, percent,
             size, start_directory, attach; 'shell' too, but not in exec mode)
-        @return: the Pane
-        @raise ValueError: no window yet (new_window() first), the name is
+        :return: the Pane
+        :raises ValueError: no window yet (new_window() first), the name is
             taken in the window, an unknown 'mode', 'cmd_capture' or 'restart'
             outside wrap mode, a bad 'restart' or 'restart_delay', or 'shell'
             in exec mode
@@ -1208,9 +1208,9 @@ class TmuxSession(Session):
         """Make 'mode' the mode of every later new_pane() that doesn't pass
         one. Panes already made keep theirs.
 
-        @param mode: PANE_MODE_SHELL, _EXEC or _WRAP
-        @return: the previous default
-        @raise ValueError: an unknown mode
+        :param mode: PANE_MODE_SHELL, _EXEC or _WRAP
+        :return: the previous default
+        :raises ValueError: an unknown mode
         """
         previous, self.default_mode = self.default_mode, _check_mode(mode)
         return previous
@@ -1230,17 +1230,17 @@ class TmuxSession(Session):
     ) -> Pane:
         """Add a pane to 'window', titled 'pane_name'; see _spawn().
 
-        @param env: exactly its process's environment; None: _pane_environment()
-        @param target: the pane to split; None: the window's last
-        @param shell: its command; None: an interactive shell
-        @param vertical: one above the other; False: side by side
-        @param percent: its size, a percentage of the target's
-        @param size: its size, in lines or columns, without 'percent'
-        @param start_directory: its working directory ('~' expanded)
-        @param attach: make it the active pane
-        @return: the Pane
-        @raise ValueError: no such 'target' in the session
-        @raise libtmux.exc.LibTmuxException: tmux couldn't split
+        :param env: exactly its process's environment; None: _pane_environment()
+        :param target: the pane to split; None: the window's last
+        :param shell: its command; None: an interactive shell
+        :param vertical: one above the other; False: side by side
+        :param percent: its size, a percentage of the target's
+        :param size: its size, in lines or columns, without 'percent'
+        :param start_directory: its working directory ('~' expanded)
+        :param attach: make it the active pane
+        :return: the Pane
+        :raises ValueError: no such 'target' in the session
+        :raises libtmux.exc.LibTmuxException: tmux couldn't split
         """
         target = self.resolve_target_pane(target).id if target else window.panes[-1].id
         args = ["split-window", "-P", "-F", "#{pane_id}", "-t", target, "-v" if vertical else "-h"]
@@ -1282,12 +1282,12 @@ class TmuxSession(Session):
         starts a new run (as respawn_pane() does). Keys typed into a running
         command are its input: nothing changes.
 
-        @param enter: press Enter after it
-        @param target_pane: a name, id or Pane; None: the last new_pane()
-        @param cmd_capture: a file (a wrap pane only): run 'command' under
+        :param enter: press Enter after it
+        :param target_pane: a name, id or Pane; None: the last new_pane()
+        :param cmd_capture: a file (a wrap pane only): run 'command' under
             lte-run, saving its output only: new_pane(cmd_capture=). It becomes
             the pane's, for later reruns too.
-        @raise ValueError: no pane yet, a pane not made by new_pane(), or
+        :raises ValueError: no pane yet, a pane not made by new_pane(), or
             'cmd_capture' for a pane that isn't a wrap pane
         """
         if self.unnamed_window or self.unnamed_pane[self.current_window.id]:
@@ -1349,8 +1349,8 @@ class TmuxSession(Session):
     def resolve_target_pane(self, identifier: Union[Pane, str]) -> Pane:
         """The Pane for a name ('window:pane'), an id ('%3') or a Pane.
 
-        @return: the Pane
-        @raise ValueError: no such pane in the session
+        :return: the Pane
+        :raises ValueError: no such pane in the session
         """
         if isinstance(identifier, str):
             pane = self.get_pane(identifier)
@@ -1364,8 +1364,8 @@ class TmuxSession(Session):
     def resolve_target_window(self, identifier: Union[Window, str]) -> Window:
         """The Window for a name, an id ('@1') or a Window.
 
-        @return: the Window
-        @raise ValueError: no such window in the session
+        :return: the Window
+        :raises ValueError: no such window in the session
         """
         if isinstance(identifier, str):
             window = self.get_window(identifier)
@@ -1379,7 +1379,7 @@ class TmuxSession(Session):
     def set_pane_title(self, pane: Pane, pane_name: str):
         """Set the pane's title and name it 'window:pane_name'.
 
-        @raise libtmux.exc.LibTmuxException: tmux refused the title
+        :raises libtmux.exc.LibTmuxException: tmux refused the title
         """
         _set_pane_title(pane, pane_name)
         self.pane_names[self._full_pane_name(pane, pane_name)] = pane
@@ -1402,9 +1402,9 @@ class TmuxSession(Session):
     def select_window(self, target_window: Union[Window, str]) -> Window:
         """Select a window and its last pane; later new_pane() calls go in it.
 
-        @param target_window: a name, id or Window
-        @return: the Window
-        @raise ValueError: no such window
+        :param target_window: a name, id or Window
+        :return: the Window
+        :raises ValueError: no such window
         """
         window = self.resolve_target_window(target_window)
         self.current_window = window
@@ -1416,9 +1416,9 @@ class TmuxSession(Session):
     def select_pane(self, target_pane: Union[Pane, str]) -> Pane:
         """Select a pane and its window.
 
-        @param target_pane: a name, id or Pane
-        @return: the Pane
-        @raise ValueError: no such pane
+        :param target_pane: a name, id or Pane
+        :return: the Pane
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         self.current_pane = pane
@@ -1430,7 +1430,7 @@ class TmuxSession(Session):
     def select_first(self):
         """Select the first pane in the first window, after the dashboard's.
 
-        @return: the Pane
+        :return: the Pane
         """
         window = next(w for w in self.windows if w.id != self._dash_window)
         self.current_window = window
@@ -1441,7 +1441,7 @@ class TmuxSession(Session):
         """Attach this terminal to the session. Under $LTE_HEADLESS (a test
         running the script): nothing.
 
-        @return: libtmux's Session.attach(); None under $LTE_HEADLESS
+        :return: libtmux's Session.attach(); None under $LTE_HEADLESS
         """
         if os.environ.get(HEADLESS_ENV):
             return None
@@ -1471,7 +1471,7 @@ class TmuxSession(Session):
         pids were recorded, which is the case for panes not created via
         new_pane().
 
-        @return: True while it runs; False once it ended, or the pane is gone
+        :return: True while it runs; False once it ended, or the pane is gone
         """
         try:
             pane = self.resolve_target_pane(target_pane)
@@ -1562,7 +1562,7 @@ class TmuxSession(Session):
         read '$?' and the loser would see the winner's own probe command's
         status (0) instead of the target's.
 
-        @return: its ExitStatus; an unknown one if it is still running (or the
+        :return: its ExitStatus; an unknown one if it is still running (or the
             pane is gone, e.g. the user typed 'exit')
         """
         try:
@@ -1667,10 +1667,10 @@ class TmuxSession(Session):
         """Poll until the pane's command is no longer running. Only polls --
         never sends a signal.
 
-        @param timeout: seconds to wait
-        @param poll_interval: seconds between polls
-        @return: True if it became idle, False on timeout
-        @raise ValueError: no such pane
+        :param timeout: seconds to wait
+        :param poll_interval: seconds between polls
+        :return: True if it became idle, False on timeout
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         end_time = time.time() + timeout
@@ -1686,10 +1686,10 @@ class TmuxSession(Session):
         """Wait until the command of every new_pane(wait_start=False) pane
         in 'target' has started.
 
-        @param target: a pane, a window, or None: the session
-        @param timeout: seconds to wait; None: forever
-        @return: the names of those still starting after 'timeout'
-        @raise ValueError: no such pane or window
+        :param target: a pane, a window, or None: the session
+        :param timeout: seconds to wait; None: forever
+        :return: the names of those still starting after 'timeout'
+        :raises ValueError: no such pane or window
         """
         kind, scope = self._resolve_scope(target)
         ids = set(self._wrap_starting)
@@ -1727,12 +1727,12 @@ class TmuxSession(Session):
         finalize its metadata). Call exit_status() afterwards for the outcome; it is
         captured here while it is still readable.
 
-        @param sigint_timeout: seconds SIGINT gets before SIGTERM
-        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL
-        @param sigkill_timeout: seconds to wait after SIGKILL
-        @param poll_interval: seconds between checks
-        @return: True if the pane ended up idle
-        @raise ValueError: no such pane
+        :param sigint_timeout: seconds SIGINT gets before SIGTERM
+        :param sigterm_timeout: seconds SIGTERM gets before SIGKILL
+        :param sigkill_timeout: seconds to wait after SIGKILL
+        :param poll_interval: seconds between checks
+        :return: True if the pane ended up idle
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         pane_name = self.get_pane_name(pane) or pane.id
@@ -1805,9 +1805,9 @@ class TmuxSession(Session):
         cached (see exit_status()) and the recorded target pid is the old, dead
         process.
 
-        @param command: the command to run; None: the pane's original one
-        @return: the Pane
-        @raise ValueError: no such pane
+        :param command: the command to run; None: the pane's original one
+        :return: the Pane
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         mode = self._pane_mode(pane)
@@ -1873,9 +1873,9 @@ class TmuxSession(Session):
         Callbacks run on the watcher thread and should return promptly. Safe to
         call more than once to register several callbacks.
 
-        @param on_exit: on_exit(PaneStatus); None just arms the internal
+        :param on_exit: on_exit(PaneStatus); None just arms the internal
             title/status-file tracking
-        @raise ValueError: no such pane
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         pane_id = pane.id
@@ -1944,7 +1944,7 @@ class TmuxSession(Session):
         """Stop firing on_exit callbacks for a pane. Does not affect
         is_running()/exit_status() -- only the push-callback mechanism.
 
-        @raise ValueError: no such pane
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         pane_id = pane.id
@@ -1960,9 +1960,9 @@ class TmuxSession(Session):
     ) -> ExitStatus:
         """Block until the pane's target command exits.
 
-        @param timeout: seconds to wait; None: forever
-        @return: its ExitStatus; an unknown one on timeout
-        @raise ValueError: no such pane
+        :param timeout: seconds to wait; None: forever
+        :return: its ExitStatus; an unknown one on timeout
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         done = threading.Event()
@@ -2202,8 +2202,8 @@ class TmuxSession(Session):
         Killing the session instead (kill(), or tmux's own
         kill-session / closing the last window) only sends SIGHUP.
 
-        @param stop_kwargs: for stop_pane(), e.g. sigint_timeout
-        @return: {pane name: stopped}
+        :param stop_kwargs: for stop_pane(), e.g. sigint_timeout
+        :return: {pane name: stopped}
         """
         panes = [
             p
@@ -2501,17 +2501,17 @@ class TmuxSession(Session):
         first byte. A run with a cmd_capture takes the pane's pipe for the
         run. Read with search_output() and output_text(). See docs/output.md.
 
-        @param target: a pane, a window, or None: the session
-        @param path: the file for a pane, the directory for a window or session
+        :param target: a pane, a window, or None: the session
+        :param path: the file for a pane, the directory for a window or session
             (files 'window.pane.log'); None: under
             $TMPDIR/lte_output_<uid>/<session> (appended: a file there already
             is kept)
-        @param keep: False: the files (a watch's) are deleted with the session
+        :param keep: False: the files (a watch's) are deleted with the session
             unless 'keep_output' is set
-        @param _snapshot: a pane, a list: filled with the pane's scrollback, read
+        :param _snapshot: a pane, a list: filled with the pane's scrollback, read
             with the pipe (see _pipe_many())
-        @return: a Capture: path(), panes(), stop()
-        @raise ValueError: no such pane or window
+        :return: a Capture: path(), panes(), stop()
+        :raises ValueError: no such pane or window
         """
         kind, obj = self._resolve_scope(target)
         if kind == "pane":
@@ -2655,8 +2655,8 @@ class TmuxSession(Session):
         """The file the pane's output goes (or last went) to: a capture's,
         or lte-run --tee's.
 
-        @return: the path; None if it was never captured
-        @raise ValueError: no such pane
+        :return: the path; None if it was never captured
+        :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         return self._pipe_info(pane.id)[2] or None
@@ -2668,10 +2668,10 @@ class TmuxSession(Session):
         only what comes after. A pane, window or session not captured yet is
         captured now (as a watch would), so nothing after the mark is lost.
 
-        @param target: a pane, a window, or None: the session
-        @return: an offset for a pane; {pane id: offset} for a window or the
+        :param target: a pane, a window, or None: the session
+        :return: an offset for a pane; {pane id: offset} for a window or the
             session, where a pane made later counts from its first byte
-        @raise ValueError: no such pane or window
+        :raises ValueError: no such pane or window
         """
         kind, obj = self._resolve_scope(target)
         self._ensure_captured(kind, obj, quiet=True)
@@ -2758,14 +2758,14 @@ class TmuxSession(Session):
         """Search a pane's, window's or the session's captured output. A pane
         never captured is searched in what tmux keeps (scrollback).
 
-        @param target: a pane, a window, or None: the session
-        @param pattern: re.search on plain text; a compiled one as it is
-        @param since: "start" (where the capture began), "now", or an
+        :param target: a pane, a window, or None: the session
+        :param pattern: re.search on plain text; a compiled one as it is
+        :param since: "start" (where the capture began), "now", or an
             output_mark()
-        @param regex: False: 'pattern' is a plain substring
-        @param flags: re flags, for a 'pattern' not compiled yet
-        @return: an OutputMatch per matching line
-        @raise ValueError: a bad 'since', or no such pane or window
+        :param regex: False: 'pattern' is a plain substring
+        :param flags: re flags, for a 'pattern' not compiled yet
+        :return: an OutputMatch per matching line
+        :raises ValueError: a bad 'since', or no such pane or window
         """
         since = self._check_since(since)
         kind, obj = self._resolve_scope(target)
@@ -2797,9 +2797,9 @@ class TmuxSession(Session):
         """The pane's captured output as plain text; its scrollback if never
         captured.
 
-        @param since: as search_output()'s
-        @return: the text
-        @raise ValueError: a bad 'since', or no such pane
+        :param since: as search_output()'s
+        :return: the text
+        :raises ValueError: a bad 'since', or no such pane
         """
         since = self._check_since(since)
         pane = self.resolve_target_pane(target_pane)
@@ -2827,21 +2827,21 @@ class TmuxSession(Session):
         Panes not yet captured are captured (keep=False) from now on. Works in
         every pane mode. See docs/output.md.
 
-        @param target: a pane, a window, or None: the session
-        @param pattern: re.search on plain text: colors and other escapes dropped
-        @param callback: callback(OutputMatch), on each match, on the reader's
+        :param target: a pane, a window, or None: the session
+        :param pattern: re.search on plain text: colors and other escapes dropped
+        :param callback: callback(OutputMatch), on each match, on the reader's
             thread: keep it short
-        @param once: stop after the first match
-        @param regex: False: 'pattern' is a plain substring
-        @param flags: re flags, for a 'pattern' not compiled yet
-        @param since: as search_output()'s: "start" also matches what was
+        :param once: stop after the first match
+        :param regex: False: 'pattern' is a plain substring
+        :param flags: re flags, for a 'pattern' not compiled yet
+        :param since: as search_output()'s: "start" also matches what was
             printed already (the capture so far, or the scrollback of a pane
             only captured now), "now" only new lines, a mark what came after it
-        @param skip_echo: commands the library types are not output
-        @return: the OutputWatch: wait(), cancel(), .matches
-        @raise ValueError: a bad 'since' (an offset for a window or session), or
+        :param skip_echo: commands the library types are not output
+        :return: the OutputWatch: wait(), cancel(), .matches
+        :raises ValueError: a bad 'since' (an offset for a window or session), or
             no such pane or window
-        @raise RuntimeError: the pane is piped by another tool (tmux has one pipe
+        :raises RuntimeError: the pane is piped by another tool (tmux has one pipe
             per pane)
         """
         since = self._check_since(since)
@@ -2880,8 +2880,8 @@ class TmuxSession(Session):
     def unwatch_output(self, target: Union[Pane, Window, str, None] = None):
         """Cancel every output watch on a pane, a window or the session.
 
-        @param target: a pane, a window, or None: the session's own watches
-        @raise ValueError: no such pane or window
+        :param target: a pane, a window, or None: the session's own watches
+        :raises ValueError: no such pane or window
         """
         kind, obj = self._resolve_scope(target)
         if self._reader is not None:
@@ -2900,16 +2900,16 @@ class TmuxSession(Session):
         """Block until a pane (or a window, or the session) prints a line
         matching 'pattern' (see watch_output()).
 
-        @param target: a pane, a window, or None: the session
-        @param timeout: seconds to wait; None: forever
-        @param since: as watch_output()'s; by default what it printed already
+        :param target: a pane, a window, or None: the session
+        :param timeout: seconds to wait; None: forever
+        :param since: as watch_output()'s; by default what it printed already
             counts too
-        @param regex: False: 'pattern' is a plain substring
-        @param flags: re flags, for a 'pattern' not compiled yet
-        @return: the OutputMatch
-        @raise TimeoutError: no match in time
-        @raise PaneExited: a pane's command ended first
-        @raise RuntimeError: the watch closed (the session is gone), or the pane
+        :param regex: False: 'pattern' is a plain substring
+        :param flags: re flags, for a 'pattern' not compiled yet
+        :return: the OutputMatch
+        :raises TimeoutError: no match in time
+        :raises PaneExited: a pane's command ended first
+        :raises RuntimeError: the watch closed (the session is gone), or the pane
             is piped by another tool
         """
         kind, obj = self._resolve_scope(target)
@@ -2935,14 +2935,14 @@ class TmuxSession(Session):
                 requests.get(url)
             e.match.line
 
-        @param target: a pane, a window, or None: the session
-        @param pattern: as wait_for_output()'s; only lines printed after entry
-        @param timeout: seconds to wait at exit; None: forever
-        @param regex: False: 'pattern' is a plain substring
-        @param flags: re flags, for a 'pattern' not compiled yet
-        @return: the OutputExpect; '.match' after the block
-        @raise TimeoutError: at exit, as wait_for_output()
-        @raise PaneExited: at exit, as wait_for_output()
+        :param target: a pane, a window, or None: the session
+        :param pattern: as wait_for_output()'s; only lines printed after entry
+        :param timeout: seconds to wait at exit; None: forever
+        :param regex: False: 'pattern' is a plain substring
+        :param flags: re flags, for a 'pattern' not compiled yet
+        :return: the OutputExpect; '.match' after the block
+        :raises TimeoutError: at exit, as wait_for_output()
+        :raises PaneExited: at exit, as wait_for_output()
         """
         return OutputExpect(self, target, pattern, timeout, regex, flags)
 
@@ -3028,12 +3028,12 @@ class TmuxSession(Session):
         (bind_close_key(), the dashboard's Q Q) or close(). See
         docs/session-close.md.
 
-        @param action: a callable, action(session), runs in this process, so only
+        :param action: a callable, action(session), runs in this process, so only
             while this script runs. A string is a shell command, kept in a
             session option: lte-close runs it in its window even after this
             script has gone.
-        @param when: "before" the panes are stopped, or "after"
-        @raise ValueError: 'when' is neither
+        :param when: "before" the panes are stopped, or "after"
+        :raises ValueError: 'when' is neither
         """
         if when not in _close.WHEN:
             raise ValueError(f"when must be one of {_close.WHEN}, not {when!r}")
@@ -3058,7 +3058,7 @@ class TmuxSession(Session):
         the 'after' actions, then kill(). Shell actions run with this process's
         stdout.
 
-        @param stop_kwargs: for stop_all()
+        :param stop_kwargs: for stop_all()
         """
         shell = _close.actions(self.id, run=self._tmux_run)
         for when in _close.WHEN:
@@ -3088,10 +3088,10 @@ class TmuxSession(Session):
         from ~/.tmux.conf); it is given back when this script lets go of the
         session (kill(), release()).
 
-        @param key: the key; None (create() does this): ~/.tmux.conf's
+        :param key: the key; None (create() does this): ~/.tmux.conf's
             @lte_key_close, else Q, and only if unbound
-        @return: the key bound, or None
-        @raise ValueError: tmux can't parse the binding
+        :return: the key bound, or None
+        :raises ValueError: tmux can't parse the binding
         """
         run = self._tmux_run
         if_free = key is None
@@ -3114,7 +3114,7 @@ class TmuxSession(Session):
         """libtmux's old name for kill(), which this class doesn't take: it
         would skip the cleanup.
 
-        @raise AttributeError: always
+        :raises AttributeError: always
         """
         raise AttributeError("TmuxSession.kill_session() is gone: use kill()")
 
@@ -3125,7 +3125,7 @@ class TmuxSession(Session):
         Only sends SIGHUP to what runs in the panes; stop_all() first for
         a clean shutdown.
 
-        @param args: for libtmux's Session.kill(), as are 'kwargs'
+        :param args: for libtmux's Session.kill(), as are 'kwargs'
         """
         if self._killed:
             return None
@@ -3141,11 +3141,11 @@ class TmuxSession(Session):
 
         Stop the panes first (stop_all()) if they should not keep running.
 
-        @param keep_windows: adopted (current()): leave the windows we made for
+        :param keep_windows: adopted (current()): leave the windows we made for
             inspection, instead of closing them. Created (create()): leave the
             whole session up, e.g. for 'tmux attach' after a failed test run,
             instead of killing it.
-        @param label: adopted, with 'keep_windows': rename our windows
+        :param label: adopted, with 'keep_windows': rename our windows
             '<label>/<name>', so a later new_window() can reuse the name
         """
         if self._killed:
@@ -3249,22 +3249,22 @@ class TmuxSession(Session):
         Calling it again reuses the open dashboard. Under $LTE_HEADLESS (a test
         running the script): nothing.
 
-        @param name: the window's name
-        @param width: the sidebar's width: columns, a percentage like "25%", or
+        :param name: the window's name
+        :param width: the sidebar's width: columns, a percentage like "25%", or
             "auto": sized once, at start, to fit the longest pane name and status
             listed then
-        @param select: switch attached clients to it
-        @param log_home: call log_home(), so the viewport's home entry shows this
+        :param select: switch attached clients to it
+        :param log_home: call log_home(), so the viewport's home entry shows this
             script's output
-        @param mouse: turn on tmux mouse support for the session (click the
+        :param mouse: turn on tmux mouse support for the session (click the
             sidebar, drag the border to resize)
-        @param key: the prefix key back to the dashboard ("" for none); None:
+        :param key: the prefix key back to the dashboard ("" for none); None:
             ~/.tmux.conf's @lte_key_dash, else g, if unbound
-        @param initial: a Pane or pane name: the pane the sidebar selects and
+        :param initial: a Pane or pane name: the pane the sidebar selects and
             shows first, instead of home
-        @return: the dashboard's Window; None under $LTE_HEADLESS
-        @raise RuntimeError: no Textual, with install instructions
-        @raise ValueError: no such 'initial' pane
+        :return: the dashboard's Window; None under $LTE_HEADLESS
+        :raises RuntimeError: no Textual, with install instructions
+        :raises ValueError: no such 'initial' pane
         """
         if os.environ.get(HEADLESS_ENV):
             return None
@@ -3337,13 +3337,13 @@ class TmuxSession(Session):
         new_pane(): it has no name, mode or status, and is not listed in the
         sidebar.
 
-        @param command: typed into its shell; None: just the shell
-        @param title: its border title
-        @param side: 'below' or 'right' of the viewport
-        @param size: rows/columns, or a percentage like "30%"; None: tmux's split
-        @return: the Pane
-        @raise ValueError: a bad 'side'
-        @raise RuntimeError: no dashboard open
+        :param command: typed into its shell; None: just the shell
+        :param title: its border title
+        :param side: 'below' or 'right' of the viewport
+        :param size: rows/columns, or a percentage like "30%"; None: tmux's split
+        :return: the Pane
+        :raises ValueError: a bad 'side'
+        :raises RuntimeError: no dashboard open
         """
         if side not in ("below", "right"):
             raise ValueError(f"side must be 'below' or 'right', got {side!r}")
@@ -3378,9 +3378,9 @@ class TmuxSession(Session):
 
         Undone by kill(). Idempotent.
 
-        @param stdout: tee sys.stdout and sys.stderr (Python-level writes only; a
+        :param stdout: tee sys.stdout and sys.stderr (Python-level writes only; a
             subprocess writing to the inherited fds is not copied)
-        @param logs: add a root logging handler, which sees records at the levels
+        :param logs: add a root logging handler, which sees records at the levels
             the root logger already allows
         """
         if self._home_log is not None:
@@ -3419,8 +3419,8 @@ class TmuxSession(Session):
     def pane_status(self, target_pane: Union[Pane, str]) -> PaneStatus:
         """A snapshot of a single pane.
 
-        @return: its PaneStatus
-        @raise ValueError: no such pane
+        :return: its PaneStatus
+        :raises ValueError: no such pane
         """
         with self._pane_snapshot():
             pane = self.resolve_target_pane(target_pane)
@@ -3429,7 +3429,7 @@ class TmuxSession(Session):
     def status(self) -> List[PaneStatus]:
         """A snapshot of every pane created via new_pane().
 
-        @return: a PaneStatus per pane
+        :return: a PaneStatus per pane
         """
         with self._pane_snapshot():
             return [
@@ -3527,8 +3527,8 @@ class TmuxSession(Session):
     def get_pane_name(self, pane: Pane) -> Optional[str]:
         """The pane's 'window:pane' name.
 
-        @return: the name; None if new_pane() didn't make it
-        @raise ValueError: the pane isn't in this session
+        :return: the name; None if new_pane() didn't make it
+        :raises ValueError: the pane isn't in this session
         """
         self._check_pane_membership(pane)
         return self._name_for_pane_id(pane.id)
@@ -3536,8 +3536,8 @@ class TmuxSession(Session):
     def get_window_name(self, window: Window) -> Optional[str]:
         """The window's name.
 
-        @return: the name
-        @raise ValueError: the window isn't in this session
+        :return: the name
+        :raises ValueError: the window isn't in this session
         """
         self._check_window_membership(window)
         return window.name
@@ -3545,7 +3545,7 @@ class TmuxSession(Session):
     def get_pane(self, identifier: str) -> Optional[Pane]:
         """The Pane for a 'window:pane' name or a '%id'.
 
-        @return: the Pane; None if there is none
+        :return: the Pane; None if there is none
         """
         if identifier[0] == "%":
             try:
@@ -3558,7 +3558,7 @@ class TmuxSession(Session):
     def get_window(self, identifier: str) -> Optional[Window]:
         """The Window for a name or an '@id'.
 
-        @return: the Window; None if there is none
+        :return: the Window; None if there is none
         """
         if identifier[0] == "@":
             ids = {w.id: w for w in self.windows}

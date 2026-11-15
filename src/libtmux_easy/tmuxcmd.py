@@ -10,9 +10,9 @@ from typing import List, Optional
 def tmux(*args, check: bool = False) -> List[str]:
     """Run 'tmux ARGS'.
 
-    @param check: raise if tmux fails
-    @return: its stdout lines
-    @raise RuntimeError: tmux failed, with 'check'
+    :param check: raise if tmux fails
+    :return: its stdout lines
+    :raises RuntimeError: tmux failed, with 'check'
     """
     proc = subprocess.run(["tmux", *args], capture_output=True, text=True)
     if check and proc.returncode:
@@ -23,10 +23,10 @@ def tmux(*args, check: bool = False) -> List[str]:
 def option(target: Optional[str], name: str, scope: str = "-q", run=tmux) -> str:
     """An option's value.
 
-    @param target: the session or window; None: the current one
-    @param scope: '-q' session, '-wq' window, '-gq' global
-    @param run: runs tmux (a stub, in tests)
-    @return: the value, or '' if unset
+    :param target: the session or window; None: the current one
+    :param scope: '-q' session, '-wq' window, '-gq' global
+    :param run: runs tmux (a stub, in tests)
+    :return: the value, or '' if unset
     """
     out = (
         run("show-options", f"{scope}v", "-t", target, name)

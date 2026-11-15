@@ -67,8 +67,8 @@ PAUSE = 1.5  # the summary stays up this long before the kill
 def actions(session, run=_tmux) -> List[Dict[str, str]]:
     """The session's close actions.
 
-    @param run: runs tmux (a stub, in tests)
-    @return: [{'cmd', 'cwd', 'when'}], [] if none
+    :param run: runs tmux (a stub, in tests)
+    :return: [{'cmd', 'cwd', 'when'}], [] if none
     """
     try:
         return json.loads(option(session, ACTIONS_OPTION, run=run) or "[]")
@@ -79,10 +79,10 @@ def actions(session, run=_tmux) -> List[Dict[str, str]]:
 def add_action(session, command: str, when: str = "after", cwd: Optional[str] = None, run=_tmux):
     """Store shell 'command' to run on close.
 
-    @param when: "before" the panes are stopped, or "after"
-    @param cwd: the directory to run it in; None: this one
-    @param run: runs tmux (a stub, in tests)
-    @raise ValueError: 'when' is neither
+    :param when: "before" the panes are stopped, or "after"
+    :param cwd: the directory to run it in; None: this one
+    :param run: runs tmux (a stub, in tests)
+    :raises ValueError: 'when' is neither
     """
     if when not in WHEN:
         raise ValueError(f"when must be one of {WHEN}, not {when!r}")
@@ -93,7 +93,7 @@ def add_action(session, command: str, when: str = "after", cwd: Optional[str] = 
 def clear_actions(session, run=_tmux):
     """Remove all of the session's close actions.
 
-    @param run: runs tmux (a stub, in tests)
+    :param run: runs tmux (a stub, in tests)
     """
     run("set-option", "-uq", "-t", session, ACTIONS_OPTION)
 
@@ -101,9 +101,9 @@ def clear_actions(session, run=_tmux):
 def run_actions(entries: List[Dict[str, str]], when: str, out: Callable[[str], None] = print):
     """Run the shell actions for one phase, in order; output goes to ours.
 
-    @param entries: actions(), of every phase
-    @param when: the phase, "before" or "after"
-    @param out: prints a progress line
+    :param entries: actions(), of every phase
+    :param when: the phase, "before" or "after"
+    :param out: prints a progress line
     """
     for entry in (e for e in entries if e.get("when", "after") == when):
         out(f"$ {entry['cmd']}")
@@ -123,10 +123,10 @@ class Closer:
     """Closes a session, printing its progress: before actions, stop the
     script and the panes, after actions, kill the session. Call it to run.
 
-    @param session: the session's id or name
-    @param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
-    @param out: prints a progress line
-    @param run: runs tmux (a stub, in tests)
+    :param session: the session's id or name
+    :param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
+    :param out: prints a progress line
+    :param run: runs tmux (a stub, in tests)
     """
 
     def __init__(
@@ -145,8 +145,8 @@ class Closer:
     def opt(self, name, target=None):
         """Option 'name' of 'target'.
 
-        @param target: None: the session
-        @return: the value, or ''
+        :param target: None: the session
+        :return: the value, or ''
         """
         return option(target or self.session, name, run=self.run)
 
@@ -268,7 +268,7 @@ class Closer:
 def self_command() -> str:
     """Shell text that runs lte-close from this install, PATH or not.
 
-    @return: the command line
+    :return: the command line
     """
     src = Path(__file__).resolve().parents[1]
     return f"env PYTHONPATH={shlex.quote(str(src))} {shlex.quote(sys.executable)} -m libtmux_easy.close"
@@ -277,7 +277,7 @@ def self_command() -> str:
 def key_command() -> str:
     """tmux command text for a key binding: close the session it's pressed in.
 
-    @return: the command
+    :return: the command
     """
     return f"run-shell -b \"{self_command()} -t '#{{session_id}}'\""
 
@@ -295,8 +295,8 @@ def open_close_window(
     """Run the close sequence in a new window of 'session' (or the one it
     already has), and show it.
 
-    @param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
-    @return: the window's id; None if tmux made none
+    :param timeouts: seconds for SIGINT, SIGTERM, SIGKILL
+    :return: the window's id; None if tmux made none
     """
     window = option(session, WINDOW_OPTION_CLOSE)
     if window and _tmux("list-panes", "-t", window, "-F", "#{pane_id}"):

@@ -46,7 +46,7 @@ _CROSS_LINE = re.compile(r"\\[AZ]|\(\?<?[=!]|\(\?>|[*+?}]\+")
 class PaneExited(RuntimeError):
     """wait_for_output(): the command ended before printing a match.
 
-    @param status: the pane's PaneStatus, kept as '.status'
+    :param status: the pane's PaneStatus, kept as '.status'
     """
 
     def __init__(self, status: "PaneStatus"):
@@ -58,13 +58,13 @@ class PaneExited(RuntimeError):
 class OutputMatch:
     """One line that matched a watch.
 
-    @param pane_id: the pane's id
-    @param name: its 'window:pane' name, or None
-    @param pattern: the watch's pattern
-    @param match: its re.Match on the line
-    @param line: the line as plain text, no newline
-    @param time: time.time() when the line was read
-    @param offset: where the line starts in the pane's file; -1: not from a file
+    :param pane_id: the pane's id
+    :param name: its 'window:pane' name, or None
+    :param pattern: the watch's pattern
+    :param match: its re.Match on the line
+    :param line: the line as plain text, no newline
+    :param time: time.time() when the line was read
+    :param offset: where the line starts in the pane's file; -1: not from a file
     """
 
     pane_id: str
@@ -79,7 +79,7 @@ class OutputMatch:
 def file_size(path: str) -> int:
     """The size of 'path'.
 
-    @return: bytes; 0 if it doesn't exist
+    :return: bytes; 0 if it doesn't exist
     """
     try:
         return os.stat(path).st_size
@@ -91,8 +91,8 @@ def typed_echo(line: str, typed: Iterable[str]) -> bool:
     """Whether 'line' is the shell echoing a typed command into its pane:
     prompt + command.
 
-    @param typed: the commands typed, stripped, non-empty
-    @return: True if it is
+    :param typed: the commands typed, stripped, non-empty
+    :return: True if it is
     """
     tail = line.rstrip()
     return any(tail.endswith(t) for t in typed)
@@ -102,7 +102,7 @@ def plain_lines(data: bytes) -> Iterator[Tuple[int, str]]:
     """The lines of raw pane output as plain text: escapes dropped, a
     CR-redrawn line as its last state. A trailing partial line counts.
 
-    @return: (offset, text) per non-empty line
+    :return: (offset, text) per non-empty line
     """
     pos = 0
     for raw in data.split(b"\n"):
@@ -114,13 +114,13 @@ def plain_lines(data: bytes) -> Iterator[Tuple[int, str]]:
 class OutputWatch:
     """One pattern on a pane, a window or the whole session.
 
-    @param target: a pane id, a window id, or None: the session
-    @param name: the target's name, for messages
-    @param pattern: the compiled regex, searched in plain text
-    @param callback: callback(OutputMatch), run on the reader's thread: keep
+    :param target: a pane id, a window id, or None: the session
+    :param name: the target's name, for messages
+    :param pattern: the compiled regex, searched in plain text
+    :param callback: callback(OutputMatch), run on the reader's thread: keep
         it short
-    @param once: the watch is done after a match
-    @param skip_echo: a typed command's echo isn't output
+    :param once: the watch is done after a match
+    :param skip_echo: a typed command's echo isn't output
     """
 
     def __init__(
@@ -161,7 +161,7 @@ class OutputWatch:
         """Whether this watch is on that pane: its pane, its window, or the
         whole session.
 
-        @return: True if it is
+        :return: True if it is
         """
         return self.target is None or self.target in (pane_id, window_id)
 
@@ -192,8 +192,8 @@ class OutputWatch:
     def wait(self, timeout: Optional[float] = None) -> Optional[OutputMatch]:
         """The next match not yet returned by wait().
 
-        @param timeout: seconds; None: forever
-        @return: the OutputMatch; None on timeout, or once the watch is done
+        :param timeout: seconds; None: forever
+        :return: the OutputMatch; None on timeout, or once the watch is done
         """
         with self._cond:
             if not self._cond.wait_for(lambda: self._unread or self.done, timeout):
@@ -302,12 +302,12 @@ class OutputReader(threading.Thread):
 
     Starts itself.
 
-    @param panes: panes() -> {pane_id: (window_id, piped, path, start, pipe
+    :param panes: panes() -> {pane_id: (window_id, piped, path, start, pipe
         id)} for the session's panes with a file
-    @param names: names(pane_id) -> its name or None
-    @param typed: typed(pane_id) -> texts typed into it (for typed_echo()),
+    :param names: names(pane_id) -> its name or None
+    :param typed: typed(pane_id) -> texts typed into it (for typed_echo()),
         for echoes in a replay
-    @param ignore: a compiled regex: lines that are never output (probes)
+    :param ignore: a compiled regex: lines that are never output (probes)
     """
 
     def __init__(
@@ -372,7 +372,7 @@ class OutputReader(threading.Thread):
     def add(self, watch: OutputWatch, since=None):
         """Start matching 'watch'.
 
-        @param since: None, from now on; "start", from where each pane's capture
+        :param since: None, from now on; "start", from where each pane's capture
             began; or {pane_id: offset}
         """
         watch._reader = self
@@ -404,7 +404,7 @@ class OutputReader(threading.Thread):
     def remove_target(self, target: Optional[str]):
         """Cancel every watch on a target.
 
-        @param target: a pane id, window id, or None: the session-wide ones
+        :param target: a pane id, window id, or None: the session-wide ones
         """
         with self._lock:
             gone = [w for w in self._watches if w.target == target]
@@ -414,7 +414,7 @@ class OutputReader(threading.Thread):
     def expect_echo(self, pane_id, text, echoes=1):
         """'text' is about to be typed into the pane: its echo isn't output.
 
-        @param echoes: how many echoes to expect. 2: typed before the shell reads
+        :param echoes: how many echoes to expect. 2: typed before the shell reads
             it, it may echo as typed (the bare line), then echoes at the prompt
         """
         with self._lock:
@@ -758,10 +758,10 @@ def _drain(fd):
 class Capture:
     """Output capture over a pane, a window or the session: TmuxSession.capture().
 
-    @param session: the TmuxSession
-    @param target: a pane id, a window id, or None: the session
-    @param path: the file (a pane) or the directory (a window or the session)
-    @param keep: keep the files after the session
+    :param session: the TmuxSession
+    :param target: a pane id, a window id, or None: the session
+    :param path: the file (a pane) or the directory (a window or the session)
+    :param keep: keep the files after the session
     """
 
     def __init__(self, session: "TmuxSession", target, path: str, keep: bool):
@@ -785,16 +785,16 @@ class Capture:
     def panes(self) -> Dict[str, str]:
         """The panes in scope that have a file.
 
-        @return: {pane id: file}
+        :return: {pane id: file}
         """
         return self.session._output_files(self.target)
 
     def path(self, pane=None) -> Optional[str]:
         """The file a pane's output goes to.
 
-        @param pane: a pane id or name; None: this capture's pane
-        @return: the path; None if the pane has no file
-        @raise ValueError: no 'pane', and the capture covers several panes; or
+        :param pane: a pane id or name; None: this capture's pane
+        :return: the path; None if the pane has no file
+        :raises ValueError: no 'pane', and the capture covers several panes; or
             no such pane
         """
         if pane is None:
@@ -816,9 +816,9 @@ class OutputExpect:
     Made by expect(), with its arguments. The wait happens as the block
     ends, unless it raised.
 
-    @raise TimeoutError: no match in time
-    @raise PaneExited: the pane's command ended first
-    @raise RuntimeError: the watch closed (the session is gone)
+    :raises TimeoutError: no match in time
+    :raises PaneExited: the pane's command ended first
+    :raises RuntimeError: the watch closed (the session is gone)
     """
 
     def __init__(self, session, target, pattern, timeout, regex, flags):

@@ -47,8 +47,8 @@ def _alive(pid):
 def install(session_id: str, pid: int, run=_tmux) -> Optional[int]:
     """Hook 'session_id''s window changes to SIGUSR1 for 'pid'.
 
-    @param run: runs tmux (a stub, in tests)
-    @return: the hook index, for remove(); None if tmux did not take it
+    :param run: runs tmux (a stub, in tests)
+    :return: the hook index, for remove(); None if tmux did not take it
     """
     entries = _entries(run)
     for index, command in entries.items():
@@ -68,6 +68,6 @@ def install(session_id: str, pid: int, run=_tmux) -> Optional[int]:
 def remove(index: int, run=_tmux):
     """Remove our hook entry at 'index'.
 
-    @param run: runs tmux (a stub, in tests)
+    :param run: runs tmux (a stub, in tests)
     """
     run("set-hook", "-gu", f"{HOOK}[{index}]")

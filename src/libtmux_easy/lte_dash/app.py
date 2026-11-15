@@ -104,9 +104,9 @@ def clip(text: str, width: int, lines: int = 2) -> str:
     """'text' wrapped to at most 'lines' lines of 'width' columns, '...'
     marking a cut.
 
-    @param width: columns; 3 or less (0: unknown, before the first layout):
+    :param width: columns; 3 or less (0: unknown, before the first layout):
         no wrap and no cut
-    @return: the wrapped text
+    :return: the wrapped text
     """
     text = " ".join(text.split())
     if width <= 3:
@@ -158,10 +158,10 @@ class DashApp(App):
     each one's status, details and process tree. Selecting a pane shows it
     in the viewport; keys stop, rerun, copy and close (see HELP_TEXT).
 
-    @param viewport: the dashboard window's Viewport
-    @param status_path: the status file, or a callable returning its path
+    :param viewport: the dashboard window's Viewport
+    :param status_path: the status file, or a callable returning its path
         (it may change: a new TmuxSession took over)
-    @param control: sends actions to the session's script
+    :param control: sends actions to the session's script
     """
 
     ENABLE_COMMAND_PALETTE = False

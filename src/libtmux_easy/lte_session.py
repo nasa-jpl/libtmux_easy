@@ -77,9 +77,9 @@ def run(run_dir: str, argv: List[str]):
     """Run 'argv' as the launching shell would have, under lte-run's
     supervision (Ctrl-C reaches it; the exact status is recorded).
 
-    @param run_dir: the run dir a Launch made: its saved environment and cwd
-    @param argv: the command
-    @return: lte-run's exit status, the command's
+    :param run_dir: the run dir a Launch made: its saved environment and cwd
+    :param argv: the command
+    :return: lte-run's exit status, the command's
     """
     with open(os.path.join(run_dir, ENV_FILE)) as f:
         saved = json.load(f)
@@ -102,11 +102,11 @@ class Launch:
     with the dashboard. Records the command's exit, transcript, environment
     and cwd in a run dir.
 
-    @param argv: the command
-    @param name: the session's name; None: lte_<command>_<pid>
-    @param width: the sidebar's columns, 'N%', or lte_dash.AUTO
-    @param dash_on: False: no dashboard, just the home pane
-    @raise RuntimeError: tmux could not make the session or its home pane
+    :param argv: the command
+    :param name: the session's name; None: lte_<command>_<pid>
+    :param width: the sidebar's columns, 'N%', or lte_dash.AUTO
+    :param dash_on: False: no dashboard, just the home pane
+    :raises RuntimeError: tmux could not make the session or its home pane
     """
 
     def __init__(
@@ -208,7 +208,7 @@ class Launch:
     def alive(self) -> bool:
         """Whether the session still exists.
 
-        @return: True if it does
+        :return: True if it does
         """
         return (
             subprocess.run(
@@ -220,7 +220,7 @@ class Launch:
     def exit_msg(self) -> Optional[dict]:
         """lte-run's 'exited' message for the command.
 
-        @return: the message; None if it hasn't exited (or the pane was closed)
+        :return: the message; None if it hasn't exited (or the pane was closed)
         """
         try:
             with open(self.exit_file) as f:
@@ -231,7 +231,7 @@ class Launch:
     def finished(self) -> bool:
         """Whether the command has ended.
 
-        @return: True if it exited, or can no longer report that it did
+        :return: True if it exited, or can no longer report that it did
         """
         if self.exit_msg() is not None or not self.alive():
             return True
@@ -240,7 +240,7 @@ class Launch:
     def exit_code(self) -> int:
         """The command's exit code.
 
-        @return: its code, a signal N as 128+N; 1, with a warning, if unknown
+        :return: its code, a signal N as 128+N; 1, with a warning, if unknown
         """
         msg = self.exit_msg()
         if msg is None:
@@ -253,7 +253,7 @@ class Launch:
     def describe_exit(self) -> str:
         """How the command ended, in words.
 
-        @return: e.g. 'exited 0', 'killed by SIGINT'
+        :return: e.g. 'exited 0', 'killed by SIGINT'
         """
         msg = self.exit_msg() or {}
         if msg.get("signal") is not None:
@@ -268,7 +268,7 @@ class Launch:
     def capture(self) -> Optional[str]:
         """The home pane's whole scrollback, colors included.
 
-        @return: the text; None if the pane is gone
+        :return: the text; None if the pane is gone
         """
         out = _tmux("capture-pane", "-p", "-e", "-J", "-S", "-", "-t", self.home)
         if not out:
@@ -280,7 +280,7 @@ class Launch:
     def follow(self, offset: int = 0):
         """Copy the transcript to stdout until the command ends.
 
-        @param offset: the byte to start from
+        :param offset: the byte to start from
         """
         out = sys.stdout.buffer
         with open(self.transcript, "rb") as f:
@@ -304,8 +304,8 @@ class Launch:
         entry. Then send everyone attached back out, so lte-session finishes.
         Watches in a daemon thread; returns at once.
 
-        @param notify: someone is attached: with 'keep', say that it ended
-        @param keep: stay in the session
+        :param notify: someone is attached: with 'keep', say that it ended
+        :param keep: stay in the session
         """
 
         def watch():
@@ -346,7 +346,7 @@ class Launch:
     def attached(self) -> bool:
         """Whether a client is attached to the session.
 
-        @return: True if one is
+        :return: True if one is
         """
         out = _tmux("display-message", "-p", "-t", self.session, "#{session_attached}")
         return bool(out and out[0].strip() not in ("", "0"))

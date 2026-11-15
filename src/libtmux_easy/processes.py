@@ -100,10 +100,10 @@ class Only(Generic[_T]):
         Only([r"ERROR", too_slow], name="sim:server")   # one process
         Only({2, 3}, name="pub:*")                      # exit codes
 
-    @param value: what start() would take: a Match or a list of them, or
+    :param value: what start() would take: a Match or a list of them, or
         ExitCodes
-    @param name: a glob on the process name, 'window:pane'
-    @param command: a glob on its command line; None: any. For an adopted
+    :param name: a glob on the process name, 'window:pane'
+    :param command: a glob on its command line; None: any. For an adopted
         pane, the command line it runs (from /proc), not what the script typed
     """
 
@@ -133,7 +133,7 @@ def _one_or_many(value, single):
 def _matches(value, where):
     """fail_on_output's checks as a list of Matches.
 
-    @raise TypeError: anything else, e.g. an Only given to start()"""
+    :raises TypeError: anything else, e.g. an Only given to start()"""
     found = []
     for m in _one_or_many(value, (str, re.Pattern, Only)):
         if isinstance(m, Only):
@@ -150,7 +150,7 @@ def _matches(value, where):
 def _exit_codes(value, where):
     """allowed_exit_codes as a tuple of ints.
 
-    @raise TypeError: anything else, e.g. an Only given to start()"""
+    :raises TypeError: anything else, e.g. an Only given to start()"""
     found = []
     for c in _one_or_many(value, (int, Only)):
         if isinstance(c, Only):
@@ -190,7 +190,7 @@ def _report(head, fields=(), tail=None):
     """A failure message: 'head', its labelled lines, then 'tail' (the last
     output lines), if any.
 
-    @param fields: (label, value) pairs; a None value is left out
+    :param fields: (label, value) pairs; a None value is left out
     """
     lines = [head] + [f"  {label + ':':<8} {value}" for label, value in fields if value is not None]
     if tail is not None:
@@ -557,8 +557,8 @@ def _running_command(pid, table):
     its first child's; through lte-run and 'sh -c' wrappers to what they run.
     '' if nothing runs.
 
-    @param pid: the pane's process
-    @param table: a proc_table()
+    :param pid: the pane's process
+    :param table: a proc_table()
     """
 
     def children(p):
@@ -1014,8 +1014,8 @@ class Process:
     for its name, and start() to start it again. It follows the name: still
     valid after a stop() and a start().
 
-    @param group: its ProcessGroup
-    @param name: its 'window:pane' name
+    :param group: its ProcessGroup
+    :param name: its 'window:pane' name
     """
 
     def __init__(self, group: "ProcessGroup", name: str):
@@ -1028,9 +1028,9 @@ class Process:
     def start(self) -> "Process":
         """Start it again: the same command and start() options.
 
-        @return: its Process
-        @raise ValueError: an adopted pane, or it is still running
-        @raise ProcessFailure: no 'ready' line in time
+        :return: its Process
+        :raises ValueError: an adopted pane, or it is still running
+        :raises ProcessFailure: no 'ready' line in time
         """
         if self.group._adopted:
             raise ValueError(
@@ -1048,13 +1048,13 @@ class Process:
     ) -> PaneStatus:
         """Stop it (SIGINT, then SIGTERM, SIGKILL): ProcessGroup.stop().
 
-        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
-        @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
+        :param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
+        :param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
+        :param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
-        @return: its PaneStatus
-        @raise ProcessFailure: with 'check', it did not stop cleanly
+        :return: its PaneStatus
+        :raises ProcessFailure: with 'check', it did not stop cleanly
         """
         return self.group.stop(
             self.name, check=check, sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout
@@ -1068,10 +1068,10 @@ class Process:
         """Wait for a line matching 'pattern': ProcessGroup.wait_for(). Lines
         it printed before the call count too.
 
-        @param pattern: a regex, searched in plain text
-        @param timeout: seconds to wait
-        @return: the re.Match
-        @raise ProcessFailure: no match in time, or it exited
+        :param pattern: a regex, searched in plain text
+        :param timeout: seconds to wait
+        :return: the re.Match
+        :raises ProcessFailure: no match in time, or it exited
         """
         return self.group.wait_for(self.name, pattern, timeout)
 
@@ -1081,41 +1081,41 @@ class Process:
         """Wait for lines matching 'patterns', in order:
         ProcessGroup.wait_for_in_order().
 
-        @param patterns: regexes, searched in plain text
-        @param timeout: seconds to wait; 0: check now
-        @return: the re.Matches
-        @raise ProcessFailure: a pattern unmatched in time, or a death
+        :param patterns: regexes, searched in plain text
+        :param timeout: seconds to wait; 0: check now
+        :return: the re.Matches
+        :raises ProcessFailure: a pattern unmatched in time, or a death
         """
         return self.group.wait_for_in_order(self.name, patterns, timeout)
 
     def wait_for_exit(self, timeout: float = 10.0) -> PaneStatus:
         """Wait for it to finish: ProcessGroup.wait_for_exit().
 
-        @param timeout: seconds to wait
-        @return: its PaneStatus
-        @raise ValueError: it was not started with exits=
-        @raise ProcessFailure: still running in time, or a death
+        :param timeout: seconds to wait
+        :return: its PaneStatus
+        :raises ValueError: it was not started with exits=
+        :raises ProcessFailure: still running in time, or a death
         """
         return self.group.wait_for_exit(self.name, timeout)
 
     def status(self) -> PaneStatus:
         """Its status: ProcessGroup.status().
 
-        @return: its PaneStatus
+        :return: its PaneStatus
         """
         return self.group.status(self.name)
 
     def log(self) -> str:
         """Its log file: ProcessGroup.log().
 
-        @return: the path
+        :return: the path
         """
         return self.group.log(self.name)
 
     def output(self) -> str:
         """What it printed: ProcessGroup.output().
 
-        @return: the text
+        :return: the text
         """
         return self.group.output(self.name)
 
@@ -1283,34 +1283,34 @@ class ProcessGroup:
         ...
         procs.close()
 
-    @param name: the group's name: its log dir and tmux window prefix by
+    :param name: the group's name: its log dir and tmux window prefix by
         default
-    @param tmux: a TmuxSession: each process in a wrap-mode pane, in windows
+    :param tmux: a TmuxSession: each process in a wrap-mode pane, in windows
         '<prefix>/<window>'. None: subprocesses, their output in their logs
-    @param prefix: tmux window prefix; None: 'name'; "": bare window names
-    @param log_dir: where the logs go; None: a new temp dir
-    @param echo: subprocesses: also print the output of names matching one
+    :param prefix: tmux window prefix; None: 'name'; "": bare window names
+    :param log_dir: where the logs go; None: a new temp dir
+    :param echo: subprocesses: also print the output of names matching one
         of these patterns ("*": all) to 'tty'
-    @param tty: where 'echo' prints; None: stdout
-    @param setup: a shell command run before each process
-    @param fail_on_output: stdout/stderr output that fails a process while
+    :param tty: where 'echo' prints; None: stdout
+    :param setup: a shell command run before each process
+    :param fail_on_output: stdout/stderr output that fails a process while
         it runs: a Match (a regex, or a function line -> problem message or
         None) for every process, an Only(...) rule for some, or a list of
         both. A hit counts as a death. E.g.
         [r"Traceback", Only(launch_death(), command="*ros2 launch*")]
-    @param allowed_exit_codes: nonzero exit codes a process may end with
+    :param allowed_exit_codes: nonzero exit codes a process may end with
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    @param on_exit: on_exit(name, PaneStatus, died) on each exit, from a
+    :param on_exit: on_exit(name, PaneStatus, died) on each exit, from a
         watcher thread; 'died': an exit nobody asked for
-    @param keep_open: close() stops nothing
-    @param scope: groups with the same scope share names; None: this one
-    @param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
+    :param keep_open: close() stops nothing
+    :param scope: groups with the same scope share names; None: this one
+    :param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
         it per process.
-    @param sigterm_timeout: seconds SIGTERM then gets before SIGKILL. start()
+    :param sigterm_timeout: seconds SIGTERM then gets before SIGKILL. start()
         can set it per process.
-    @param env: variables for every process (None unsets), over this
+    :param env: variables for every process (None unsets), over this
         process's environment; start(env=) wins. Never put in os.environ, so
         other groups don't see it. Fixed at creation: procs.env is read-only.
     """
@@ -1411,35 +1411,35 @@ class ProcessGroup:
         """Start 'command' as a process of the group. A stopped name can be
         started again.
 
-        @param name: 'window:name'; a name without ':' goes in a window of its own
-        @param command: a shell command
-        @param ready: a regex: wait for a line matching it, as wait_for() does
-        @param ready_timeout: seconds to wait for 'ready'
-        @param fail_on_output: more checks, on top of the group's: a Match
+        :param name: 'window:name'; a name without ':' goes in a window of its own
+        :param command: a shell command
+        :param ready: a regex: wait for a line matching it, as wait_for() does
+        :param ready_timeout: seconds to wait for 'ready'
+        :param fail_on_output: more checks, on top of the group's: a Match
             (a regex, or a function line -> problem message or None) or a
             list of them
-        @param exits: a code (or several) it finishes with on its own, so that
+        :param exits: a code (or several) it finishes with on its own, so that
             exit is no death; wait_for_exit() waits for it
-        @param allowed_exit_codes: more nonzero codes it may exit with when
+        :param allowed_exit_codes: more nonzero codes it may exit with when
             stopped, on top of the group's (ExitCodes)
-        @param env: variables to set (None: unset), over the group's env=, over
+        :param env: variables to set (None: unset), over the group's env=, over
             this process's environment
-        @param sigint_timeout: seconds SIGINT gets before SIGTERM when it is
+        :param sigint_timeout: seconds SIGINT gets before SIGTERM when it is
             stopped; None: the group's
-        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None: the
+        :param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None: the
             group's
-        @param restart: rerun it when it fails (exit not 0, or a signal), up
+        :param restart: rerun it when it fails (exit not 0, or a signal), up
             to this many times; -1: no limit. Not after a stop. Each restart
             is logged in its output; only the last run's exit counts. Runs it
             under 'lte-run --restart' (in subprocess mode too).
-        @param restart_delay: seconds before each restart
-        @return: its Process
-        @raise TypeError: a bad fail_on_output or allowed_exit_codes, e.g. an
+        :param restart_delay: seconds before each restart
+        :return: its Process
+        :raises TypeError: a bad fail_on_output or allowed_exit_codes, e.g. an
             Only(...)
-        @raise ValueError: it is already running, another open group of the same
+        :raises ValueError: it is already running, another open group of the same
             scope has the name, the group adopted a script, or a bad 'restart'
             or 'restart_delay'
-        @raise ProcessFailure: no 'ready' line in time, or it exited first
+        :raises ProcessFailure: no 'ready' line in time, or it exited first
         """
         if self._adopted:
             raise ValueError(
@@ -1521,12 +1521,12 @@ class ProcessGroup:
         Process, and procs.session the session build() got, for the script's
         other functions.
 
-        @param build: the script's function
-        @param args: passed on to it, as are 'kwargs'
-        @param exits: {pane name: code(s)} for panes that finish on their own,
+        :param build: the script's function
+        :param args: passed on to it, as are 'kwargs'
+        :param exits: {pane name: code(s)} for panes that finish on their own,
             as start()'s exits=
-        @return: what build() returns
-        @raise ValueError: start() was called first, or the group has no tmux
+        :return: what build() returns
+        :raises ValueError: start() was called first, or the group has no tmux
             session
         """
         if self._runs:
@@ -1564,16 +1564,16 @@ class ProcessGroup:
         '/usr/bin/python3 /opt/ros/.../ros2 launch ...', so glob
         "*ros2 launch*", not "ros2 launch*".
 
-        @param command: the script, a shell command
-        @param name: the script's process name
-        @param ready: a regex: the script prints a matching line, and is then a
+        :param command: the script, a shell command
+        :param name: the script's process name
+        :param ready: a regex: the script prints a matching line, and is then a
             process of the group too. None: it must exit 0 within 'timeout'
-        @param timeout: seconds, for 'ready' or the exit
-        @param exits: {pane name: code(s)} for panes that finish on their own,
+        :param timeout: seconds, for 'ready' or the exit
+        :param exits: {pane name: code(s)} for panes that finish on their own,
             as start()'s exits=
-        @return: the panes' Process objects
-        @raise ValueError: start() or build() was called first
-        @raise ProcessFailure: the script failed, timed out, or made no panes
+        :return: the panes' Process objects
+        :raises ValueError: start() or build() was called first
+        :raises ProcessFailure: the script failed, timed out, or made no panes
         """
         if self._runs:
             raise ValueError("adopt(): call it first, before start() or build()")
@@ -1629,8 +1629,8 @@ class ProcessGroup:
             with procs.expect_exit("nav:planner"):
                 procs["nav:planner"].kill()
 
-        @param timeout: seconds it may take to exit after the block
-        @raise ProcessFailure: it is still running then
+        :param timeout: seconds it may take to exit after the block
+        :raises ProcessFailure: it is still running then
         """
         name = self._name(name)
         run = self._runs[name]
@@ -1649,13 +1649,13 @@ class ProcessGroup:
     ) -> PaneStatus:
         """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
 
-        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
-        @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
+        :param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
+        :param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
+        :param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
-        @return: its PaneStatus
-        @raise ProcessFailure: with 'check', it did not stop cleanly
+        :return: its PaneStatus
+        :raises ProcessFailure: with 'check', it did not stop cleanly
         """
         name = self._name(name)
         run = self._runs[name]
@@ -1675,9 +1675,9 @@ class ProcessGroup:
         """Stop everything still running (SIGINT, then SIGTERM, SIGKILL).
         A second close() does nothing; nor does --keep-open.
 
-        @param check: fail unless each stopped cleanly: SIGINT was enough, with
+        :param check: fail unless each stopped cleanly: SIGINT was enough, with
             one of its allowed_exit_codes, and no fail_on_output line while stopping
-        @raise ProcessFailure: with 'check', one did not (the pytest subclass
+        :raises ProcessFailure: with 'check', one did not (the pytest subclass
             fails the test instead)
         """
         if self not in _open:
@@ -1758,10 +1758,10 @@ class ProcessGroup:
     def wait_for_exit(self, name: str, timeout: float = 10.0) -> PaneStatus:
         """Wait for a process started with 'exits' to finish.
 
-        @param timeout: seconds to wait
-        @return: its PaneStatus
-        @raise ValueError: it was not started with exits=
-        @raise ProcessFailure: it is still running after 'timeout', or exited
+        :param timeout: seconds to wait
+        :return: its PaneStatus
+        :raises ValueError: it was not started with exits=
+        :raises ProcessFailure: it is still running after 'timeout', or exited
             with a code not in 'exits' (or another process died)
         """
         name = self._name(name)
@@ -1836,12 +1836,12 @@ class ProcessGroup:
         printed before the call count too: it searches all of its output since
         its latest start.
 
-        @param name: the process, 'window:pane'; "*": any process (checking
+        :param name: the process, 'window:pane'; "*": any process (checking
             health while it waits)
-        @param pattern: a regex, searched in plain text
-        @param timeout: seconds to wait
-        @return: the re.Match
-        @raise ProcessFailure: no match in time, or it exited first
+        :param pattern: a regex, searched in plain text
+        :param timeout: seconds to wait
+        :return: the re.Match
+        :raises ProcessFailure: no match in time, or it exited first
         """
         if name == "*":
             regex = re.compile(pattern)
@@ -1885,10 +1885,10 @@ class ProcessGroup:
         """Wait for lines matching each of 'patterns', in that order, each on
         a later line than the one before.
 
-        @param patterns: regexes, searched in plain text
-        @param timeout: seconds to wait; 0: check now
-        @return: the re.Matches
-        @raise ProcessFailure: one is missing in time (the first missing one is
+        :param patterns: regexes, searched in plain text
+        :param timeout: seconds to wait; 0: check now
+        :return: the re.Matches
+        :raises ProcessFailure: one is missing in time (the first missing one is
             named), or a death
         """
         name = self._name(name)
@@ -1933,14 +1933,14 @@ class ProcessGroup:
 
             procs.wait_until(lambda: os.path.exists("/tmp/ready"), timeout=10)
 
-        @param condition: a function of no arguments, called every 'poll'
+        :param condition: a function of no arguments, called every 'poll'
             seconds; a truthy result ends the wait
-        @param timeout: seconds to wait
-        @param poll: seconds between calls
-        @param what: what it waits for, for the failure message; None: the
+        :param timeout: seconds to wait
+        :param poll: seconds between calls
+        :param what: what it waits for, for the failure message; None: the
             function's name
-        @return: what condition() returned
-        @raise ProcessFailure: 'timeout' passed first, or a death
+        :return: what condition() returned
+        :raises ProcessFailure: 'timeout' passed first, or a death
         """
         deadline = time.monotonic() + timeout
         while True:
@@ -1958,14 +1958,14 @@ class ProcessGroup:
     def status(self, name: str) -> PaneStatus:
         """The process's status: running, exit status, how it was stopped.
 
-        @return: its PaneStatus
+        :return: its PaneStatus
         """
         return self.backend.status(self._name(name))
 
     def log(self, name: str) -> str:
         """The file the process's output goes to, as plain text.
 
-        @return: the path
+        :return: the path
         """
         return os.path.join(
             self.log_dir, re.sub(r"[^A-Za-z0-9_.-]", ".", self._name(name)) + ".log"
@@ -1974,7 +1974,7 @@ class ProcessGroup:
     def output(self, name: str) -> str:
         """Everything the process has printed so far (its latest start).
 
-        @return: the text
+        :return: the text
         """
         return self.backend.output(self._name(name))
 
@@ -1983,7 +1983,7 @@ class ProcessGroup:
         check(). Each problem fails one test: the one it happened in. Runs
         after every test; call it while waiting to fail fast.
 
-        @raise ProcessFailure: an AssertionError, naming each problem
+        :raises ProcessFailure: an AssertionError, naming each problem
         """
         died = self.died[self._raised_died :]
         failed_on = self.failed_on[self._raised_failed_on :]

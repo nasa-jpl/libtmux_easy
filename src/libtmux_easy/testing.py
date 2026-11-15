@@ -98,7 +98,7 @@ def pytest_addoption(parser):
 def under_lte_session() -> bool:
     """Whether this runs inside a session with a dashboard, e.g. lte-session's.
 
-    @return: True if it does
+    :return: True if it does
     """
     pane = os.environ.get("TMUX_PANE")
     return bool(pane) and bool(option(pane, lte_dash.WINDOW_OPTION))
@@ -255,11 +255,11 @@ _args_read = set()
 def arg(name: str, default=None):
     """The value of --arg NAME=VALUE. Usable at import time.
 
-    @param name: NAME
-    @param default: the value without the option; its type converts VALUE
+    :param name: NAME
+    :param default: the value without the option; its type converts VALUE
         (bools take 1/0, true/false, yes/no). None: the option is required
-    @return: the value, as 'default''s type; a str without one
-    @raise pytest.UsageError: no option and no 'default', or a VALUE that
+    :return: the value, as 'default''s type; a str without one
+    :raises pytest.UsageError: no option and no 'default', or a VALUE that
         doesn't convert
     """
     _args_read.add(name)
@@ -330,35 +330,35 @@ class Processes(processes.ProcessGroup):
     test, but with close(check=False): nothing is checked. A death while a
     test runs fails that test either way.
 
-    @param owner: the test class (cls, in setup_class). None, in a test: that
+    :param owner: the test class (cls, in setup_class). None, in a test: that
         test. A failed test of the owner stops the group at once (on_test_failure()
         first); a class also skips its remaining tests. Names ('window:pane')
         are unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
-    @param fail_on_output: stdout/stderr output that fails a process while
+    :param fail_on_output: stdout/stderr output that fails a process while
         it runs: a Match (a regex, or a function line -> problem message or
         None) for every process, an Only(...) rule for some, or a list of
         both. A hit counts as a death: the running test fails. E.g.
         [r"Traceback", Only(launch_death(), command="*ros2 launch*")]
-    @param allowed_exit_codes: nonzero exit codes a process may end with
+    :param allowed_exit_codes: nonzero exit codes a process may end with
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    @param on_test_failure: called with no arguments when a test of the
+    :param on_test_failure: called with no arguments when a test of the
         owner fails, before the plugin stops the group: bring things down
         your own way first
-    @param log_dir: where the processes' logs go; None: a new temp dir named
+    :param log_dir: where the processes' logs go; None: a new temp dir named
         after the owner
-    @param on_exit: on_exit(name, PaneStatus, died), on every exit, from a
+    :param on_exit: on_exit(name, PaneStatus, died), on every exit, from a
         watcher thread. 'died': nobody asked for it.
-    @param sigint_timeout: seconds a stopped process gets after SIGINT before
+    :param sigint_timeout: seconds a stopped process gets after SIGINT before
         SIGTERM
-    @param sigterm_timeout: seconds it then gets after SIGTERM before SIGKILL
-    @param env: variables for every process of the group (None unsets);
+    :param sigterm_timeout: seconds it then gets after SIGTERM before SIGKILL
+    :param env: variables for every process of the group (None unsets);
         start(env=) wins. The group's only: never put in os.environ, so
         other classes and tests don't see it.
-    @raise RuntimeError: the plugin isn't enabled
-    @raise TypeError: no owner outside a test, or an owner that isn't a test
+    :raises RuntimeError: the plugin isn't enabled
+    :raises TypeError: no owner outside a test, or an owner that isn't a test
         class
     """
 
@@ -452,7 +452,7 @@ def check_health():
     """Fail if any open Processes saw a death. For helpers deep in test code
     that weren't handed one, e.g. a polling loop.
 
-    @raise ProcessFailure: an AssertionError, naming each problem
+    :raises ProcessFailure: an AssertionError, naming each problem
     """
     for procs in list(_open):
         procs.check()
@@ -463,7 +463,7 @@ def lte_pane_setup():
     """A fixture: a shell command run before each process. Override it in
     conftest.py.
 
-    @return: the command; None: nothing
+    :return: the command; None: nothing
     """
     return None
 
@@ -551,10 +551,10 @@ def parametrize(argnames: str, argvalues: Sequence[Any]) -> Callable[[type], typ
 
     Stacked decorators multiply.
 
-    @param argnames: the attribute's name; several, comma-separated ("a, b"),
+    :param argnames: the attribute's name; several, comma-separated ("a, b"),
         take values as tuples
-    @param argvalues: one value (or tuple) per run of the class
-    @return: the decorator
+    :param argvalues: one value (or tuple) per run of the class
+    :return: the decorator
     """
     names = [n.strip() for n in argnames.split(",") if n.strip()]
 

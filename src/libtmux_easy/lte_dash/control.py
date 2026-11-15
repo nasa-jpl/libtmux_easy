@@ -11,7 +11,7 @@ class Control:
     one lte-run reports to). A fresh connection per action: the script may
     have exited, or restarted, since the last one.
 
-    @param path: the socket's path, or a callable returning it (discovery);
+    :param path: the socket's path, or a callable returning it (discovery);
         None: no script, every send fails
     """
 
@@ -27,16 +27,16 @@ class Control:
     def online(self) -> bool:
         """Whether the session's script is listening.
 
-        @return: True if it is
+        :return: True if it is
         """
         return self._send(None)
 
     def send(self, cmd: str, pane_id: Optional[str]) -> bool:
         """Send a command to the script.
 
-        @param cmd: 'stop', 'respawn', ...
-        @param pane_id: the pane it is for; None: none
-        @return: False if no script is listening
+        :param cmd: 'stop', 'respawn', ...
+        :param pane_id: the pane it is for; None: none
+        :return: False if no script is listening
         """
         return self._send({"cmd": cmd, "pane": pane_id})
 
@@ -61,7 +61,7 @@ class Control:
 def read_status(path: str) -> Optional[List[dict]]:
     """The session's status file.
 
-    @return: a list of dicts (see PaneStatus); None when it can't be read
+    :return: a list of dicts (see PaneStatus); None when it can't be read
         (not written yet, or mid-rewrite)
     """
     try:
@@ -74,7 +74,7 @@ def read_status(path: str) -> Optional[List[dict]]:
 def describe(entry: dict) -> Tuple[str, str]:
     """How to show one status-file entry.
 
-    @return: (short label, color class)
+    :return: (short label, color class)
     """
     if entry.get("starting"):
         return "starting", "starting"
@@ -100,7 +100,7 @@ def describe(entry: dict) -> Tuple[str, str]:
 def describe_long(entry: dict) -> str:
     """A status entry's state in words, for the details box.
 
-    @return: e.g. 'running', 'exited 3', 'stopped, needed SIGTERM: ...'
+    :return: e.g. 'running', 'exited 3', 'stopped, needed SIGTERM: ...'
     """
     if entry.get("starting"):
         return "starting: typed, lte-run has not reported yet"

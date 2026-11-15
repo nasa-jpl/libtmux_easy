@@ -71,8 +71,8 @@ def _source(run, text):
 def current(key: str, run=_tmux) -> str:
     """The binding of 'key' in the prefix table.
 
-    @param run: runs tmux (a stub, in tests)
-    @return: its 'bind-key ...' line, or ''
+    :param run: runs tmux (a stub, in tests)
+    :return: its 'bind-key ...' line, or ''
     """
     for line in run("list-keys", "-T", TABLE, key):
         match = _LISTED.match(line)
@@ -89,10 +89,10 @@ def _escape(text):
 def chosen(role: str, default: str, run=_tmux) -> str:
     """The key for one of the library's roles.
 
-    @param role: "dash" or "close"
-    @param default: the key when ~/.tmux.conf picks none
-    @param run: runs tmux (a stub, in tests)
-    @return: the global option @lte_key_<role> if set ("" for none), else
+    :param role: "dash" or "close"
+    :param default: the key when ~/.tmux.conf picks none
+    :param run: runs tmux (a stub, in tests)
+    :return: the global option @lte_key_<role> if set ("" for none), else
         'default'
     """
     name = f"@lte_key_{role}"
@@ -112,14 +112,14 @@ def borrow(
     """Bind 'key' to run 'command' in sessions where 'option' is set, and its
     previous binding everywhere else.
 
-    @param option: a session option, e.g. @lte_dash_window
-    @param command: tmux command text
-    @param message: shown elsewhere if 'key' was unbound before; None: "KEY
+    :param option: a session option, e.g. @lte_dash_window
+    :param command: tmux command text
+    :param message: shown elsewhere if 'key' was unbound before; None: "KEY
         is not bound here"
-    @param run: runs tmux (a stub, in tests)
-    @param if_free: only if 'key' is unbound (or already borrowed)
-    @return: True if borrowed
-    @raise ValueError: tmux can't parse the binding made of 'command'
+    :param run: runs tmux (a stub, in tests)
+    :param if_free: only if 'key' is unbound (or already borrowed)
+    :return: True if borrowed
+    :raises ValueError: tmux can't parse the binding made of 'command'
     """
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)
@@ -145,8 +145,8 @@ def borrow(
 def give_back(key: str, run=_tmux):
     """Return a key borrowed with borrow(). The last borrower restores it.
 
-    @param run: runs tmux (a stub, in tests)
-    @raise ValueError: tmux can't parse the saved binding
+    :param run: runs tmux (a stub, in tests)
+    :raises ValueError: tmux can't parse the saved binding
     """
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)

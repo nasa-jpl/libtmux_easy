@@ -93,7 +93,7 @@ def record_run(**fields):
     process that didn't start it. A file, not a pane option: a tmux call
     from here loses the command's first output. Best effort.
 
-    @param fields: the JSON: target pid, then how it ended; the wrapper's pid
+    :param fields: the JSON: target pid, then how it ended; the wrapper's pid
         is added, alive while a restart is pending
     """
     directory, pane = os.environ.get(STATUS_DIR_ENV), os.environ.get("TMUX_PANE")
@@ -112,7 +112,7 @@ def tmux_literal(text: str) -> str:
     """'text' as itself in a pipe-pane command, which tmux expands as a
     format and with strftime: 'main.%4.log' would become 'main.'.
 
-    @return: the escaped text
+    :return: the escaped text
     """
     return text.replace("#", "##").replace("%", "%%")
 
@@ -122,8 +122,8 @@ def guarded_unpipe(pane: str, *then: str) -> List[str]:
     lte-run --tee has the pipe: checked in the same tmux call, so a run
     starting meanwhile keeps it.
 
-    @param then: tmux command strings
-    @return: the args
+    :param then: tmux command strings
+    :return: the args
     """
     commands = " ; ".join((f"pipe-pane -t {pane}", *then))
     return ["if", "-F", "-t", pane, f"#{{!=:#{{{PIPE_TEE_OPTION}}},1}}", commands]
@@ -137,10 +137,10 @@ def guarded_pipe(
     lte-run can't both see a free pane and pipe it. The call prints
     "<pane> 1" if it piped the pane, "<pane> " if not.
 
-    @param command: the pipe's shell command, formats escaped, as for pipe-pane
-    @param options: pane options to set with it, {name: value}
-    @param with_tee: also take a pipe lte-run --tee has
-    @return: the args
+    :param command: the pipe's shell command, formats escaped, as for pipe-pane
+    :param options: pane options to set with it, {name: value}
+    :param with_tee: also take a pipe lte-run --tee has
+    :return: the args
     """
     options = options or {}
     req = [(f"{_PIPE_REQ}_cmd", command)] + [
@@ -215,7 +215,7 @@ class _Stop:
     def wait(self, timeout: float) -> bool:
         """Up to 'timeout' s, until set().
 
-        @return: is_set()
+        :return: is_set()
         """
         if not self._set:
             select.select([self._r], [], [], timeout)  # retried after a handler (PEP 475)
@@ -225,7 +225,7 @@ class _Stop:
 def find_dir() -> Optional[str]:
     """The session's control directory.
 
-    @return: its path; None when unsupervised
+    :return: its path; None when unsupervised
     """
     if os.environ.get(DIR_ENV):
         return os.environ[DIR_ENV]
@@ -249,7 +249,7 @@ class Channel:
     no-op when unconnected, so supervised and unsupervised runs share one
     code path.
 
-    @param directory: the control directory (find_dir()); None, or no one
+    :param directory: the control directory (find_dir()); None, or no one
         listening there: unconnected
     """
 
@@ -272,7 +272,7 @@ class Channel:
         """Send one JSON message to the library; if it is gone, carry on
         unsupervised.
 
-        @param msg: the message's fields
+        :param msg: the message's fields
         """
         sock = self._sock
         if sock is None:
@@ -286,7 +286,7 @@ class Channel:
     def messages(self) -> Iterator[dict]:
         """Yield control messages until the connection closes.
 
-        @return: an iterator of dicts; empty when unconnected
+        :return: an iterator of dicts; empty when unconnected
         """
         sock = self._sock
         if sock is None:
@@ -315,7 +315,7 @@ def signal_target(sig: int, target: int):
     The descendant filter matters without job control (e.g. 'sh -c "lte-run
     ..."'), where our process group also contains whatever started us.
 
-    @param target: the command's pid
+    :param target: the command's pid
     """
     table = proc_table()
     if not table:  # no /proc: best effort
@@ -341,8 +341,8 @@ def plain_line(line: bytes) -> bytes:
     """One line of pane output as plain text: escapes dropped, a trailing CR
     dropped, and a line redrawn with CR kept as its last state.
 
-    @param line: the line, without its LF
-    @return: the plain line
+    :param line: the line, without its LF
+    :return: the plain line
     """
     if b"\x1b" not in line and b"\r" not in line:
         return line  # the usual case: nothing to do
@@ -356,7 +356,7 @@ _TO_LAST_CR = re.compile(rb"[^\n]*\r")
 def plain_text(data: bytes) -> bytes:
     """plain_line() for every line of 'data' at once.
 
-    @return: the plain text
+    :return: the plain text
     """
     if b"\x1b" in data:
         data = _ESCAPES.sub(b"", data)
@@ -375,9 +375,9 @@ def open_tee(path: str, append: bool) -> int:
     """'path' opened for writing. A FIFO must already have a reader: refusing
     beats blocking forever.
 
-    @param append: append to a file, rather than truncate it
-    @return: the fd
-    @raise OSError: it can't be opened; ENXIO for a FIFO with no reader
+    :param append: append to a file, rather than truncate it
+    :return: the fd
+    :raises OSError: it can't be opened; ENXIO for a FIFO with no reader
     """
     flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
     try:
@@ -395,10 +395,10 @@ class Tee:
     (the command keeps its terminal), else from a pipe the command writes to,
     passed on to our own stdout too.
 
-    @param fd: the file, open_tee()'d; closed by finish()
-    @param raw: keep it as is. Otherwise plain text: escapes dropped, CRLF
+    :param fd: the file, open_tee()'d; closed by finish()
+    :param raw: keep it as is. Otherwise plain text: escapes dropped, CRLF
         made LF, and a line redrawn with CR kept as its last state
-    @param path: the file's path, published as the pane's output file for
+    :param path: the file's path, published as the pane's output file for
         watches and searches; None: not published
     """
 
@@ -560,8 +560,8 @@ def parse(argv: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """Split lte-run's arguments. Options come before the command; '--' ends
     them.
 
-    @return: (options, command); (None, []) for -h/--help
-    @raise ValueError: an unknown option
+    :return: (options, command); (None, []) for -h/--help
+    :raises ValueError: an unknown option
     """
     opts = {"tee": None, "append": False, "raw": False, "restart": 0, "restart_delay": 1.0}
     i = 0
@@ -612,9 +612,9 @@ def parse(argv: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
 def main(argv: Optional[Sequence[str]] = None, channel=None):
     """lte-run.
 
-    @param channel: replaces the session socket: any object with send(**msg)
+    :param channel: replaces the session socket: any object with send(**msg)
         and messages(), like Channel (lte-session uses this)
-    @return: the command's exit status, 128+N for signal N if that signal
+    :return: the command's exit status, 128+N for signal N if that signal
         didn't kill us too; 2 for a usage error
     """
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -658,8 +658,8 @@ def main(argv: Optional[Sequence[str]] = None, channel=None):
         """Fork and exec the command; 'pid' is the new run. _STOP_SIGNALS are
         blocked meanwhile, so no handler sees a run half-made.
 
-        @param restart: not after a stop
-        @return: whether it started
+        :param restart: not after a stop
+        :return: whether it started
         """
         nonlocal pid
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, _STOP_SIGNALS)
