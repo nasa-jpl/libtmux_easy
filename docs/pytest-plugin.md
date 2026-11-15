@@ -111,7 +111,7 @@ same methods, no test owner, mode set by `tmux=`.
 | argument | meaning |
 |---|---|
 | `owner` | the test class (`cls` in `setup_class`); none in a test: that test. Its failed tests abort the group |
-| `output_checks` | output that fails a process while it runs: `{name or "*": checks}`. `checks` is one check or a list. A check is a regex (string or compiled), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `{"*": r"Traceback", "sim:server": [r"ERROR", my_check]}` |
+| `output_checks` | stdout/stderr output that fails a process while it runs: `{name or "*": checks}`. `checks` is one check or a list. A check is a regex (string or compiled), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `{"*": r"Traceback", "sim:server": [r"ERROR", my_check]}` |
 | `allowed_exit_codes` | exit codes a process may end with when stopped: `{name or "*": code or set of codes}`, default 0. Death by signal N is 128+N: `{"*": {0, 130}}` allows SIGINT |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |

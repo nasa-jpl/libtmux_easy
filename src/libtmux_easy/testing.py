@@ -335,8 +335,8 @@ class Processes(processes.ProcessGroup):
         first); a class also skips its remaining tests. Names ('window:pane')
         are unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
-    @param output_checks: output that fails a process while it runs, by
-        process name ("*": every process). Each value is an OutputCheck or a
+    @param output_checks: stdout/stderr output that fails a process while
+        it runs, by process name ("*": every process). Each value is an OutputCheck or a
         list of them: a regex (string or compiled), searched in each line; or
         a function that gets each line and returns a problem message, or None
         when the line is fine. A hit counts as a death: the running test
