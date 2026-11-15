@@ -29,12 +29,12 @@ class TestWeb:
     def test_get(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/") as reply:
             assert reply.status == 200
-        self.web.wait_for(r'"GET / HTTP/1\.\d" 200')
+        self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200')
 
     def test_not_found(self):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT}/nope")
         except urllib.error.HTTPError as err:
             assert err.code == 404
-        self.web.wait_for(r'"GET /nope HTTP/1\.\d" 404')
+        self.web.wait_for_line(r'"GET /nope HTTP/1\.\d" 404')
         print("server log:", self.web.log())

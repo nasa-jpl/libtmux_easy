@@ -28,7 +28,7 @@ class TestRun:
         cls.procs.close()
 
     def test_output(self):
-        self.procs.wait_for("w:ok", "hello_42", timeout=5)
+        self.procs.wait_for_line("w:ok", "hello_42", timeout=5)
         time.sleep(%s)
 """
 PASSES = TESTS % ("", 0)
@@ -132,10 +132,10 @@ class TestSrv:
 
     def test_ready(self):
         assert "listening on 8080" in self.procs.output("w:srv")
-        assert self.procs.wait_for("w:srv", r"tick (\\d)").group(1) == "1"
+        assert self.procs.wait_for_line("w:srv", r"tick (\\d)").group(1) == "1"
 
     def test_fail_on_output(self):
-        self.procs.wait_for("w:srv", "BOOM")
+        self.procs.wait_for_line("w:srv", "BOOM")
 """
 
 
@@ -179,7 +179,7 @@ def test_handle():
     procs = Processes()
     a = procs.start("w:a", CMD, ready=r"hello_42")
     assert a.name == "w:a" and a.status().running
-    assert a.wait_for(r"hello_([0-9]+)").group(1) == "42"
+    assert a.wait_for_line(r"hello_([0-9]+)").group(1) == "42"
     assert "hello_42" in a.output() and "hello_42" in open(a.log()).read()
     assert a.stop().exit_status.ok and not a.status().running
     procs.start("w:a", CMD, ready=r"hello_42")   # the handle follows the name
@@ -295,7 +295,7 @@ def test_unique_prefix():
     assert _unique_prefix(_FakeSession("module/w"), "mod") == "mod"
 
 
-# setup_class / teardown_class; fail_on_output functions; wait_until; Processes()
+# setup_class / teardown_class; fail_on_output functions; wait_for_condition; Processes()
 # in a test beside the class's group; LTE_LOG_DIR; BASH_ENV not sourced.
 CLASS_TESTS = """
 import os, sys, time
@@ -308,7 +308,7 @@ class TestA:
     def setup_class(cls):
         cls.procs = Processes(cls, fail_on_output=lambda line: "saw BAD" if "BAD" in line else None)
         cls.procs.start("w:a", CMD, ready=r"hello_42")
-        cls.procs.wait_until(lambda: "hello_42" in cls.procs.output("w:a"), timeout=5)
+        cls.procs.wait_for_condition(lambda: "hello_42" in cls.procs.output("w:a"), timeout=5)
         cls.procs.start("w:env", f"echo dir=$LTE_LOG_DIR bash_env=${{BASH_ENV_RAN:-no}}; exec {CMD}")
 
     @classmethod
@@ -316,7 +316,7 @@ class TestA:
         cls.procs.close()
 
     def test_one(self):
-        self.procs.wait_for("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")) + " bash_env=no")
+        self.procs.wait_for_line("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")) + " bash_env=no")
 
     def test_own_processes(self):
         procs = Processes()
@@ -401,8 +401,9 @@ def test_exits():
     procs = Processes()
     procs.start("w:job", "echo one; echo two; echo three; exit 4", exits=4)
     assert procs.wait_for_exit("w:job").exit_status.code == 4
-    procs.wait_for_in_order("w:job", ["one", "three"])
-    procs.wait_for("*", "two")
+    one = procs.wait_for_line("w:job", "one")
+    assert procs.wait_for_line("w:job", "three", since=one).index > one.index
+    assert procs.wait_for_line("*", "two").line == "two"
 
 def test_wrong_exit():
     procs = Processes()
@@ -412,7 +413,8 @@ def test_wrong_exit():
 def test_out_of_order():
     procs = Processes()
     procs.start("w:job", f"echo three; echo one; exec {CMD}")
-    procs.wait_for_in_order("w:job", ["one", "three"], timeout=1)
+    one = procs.wait_for_line("w:job", "one")
+    procs.wait_for_line("w:job", "three", timeout=1, since=one)
 
 def test_allowed_exit_codes():
     procs = Processes()
@@ -438,7 +440,7 @@ class TestParams:
         cls.procs.close()
 
     def test_n(self):
-        self.procs.wait_for("w:p", f"n={self.n}")
+        self.procs.wait_for_line("w:p", f"n={self.n}")
 
 @parametrize("n", [1, 2])
 class TestParamFails:
@@ -530,15 +532,15 @@ class TestWithEnv:
     def test_env(self):
         self.procs.start("w:a", SHOW)
         self.procs.start("w:b", SHOW, env={"LTE_T_B": "own"})
-        self.procs.wait_for("w:a", "A=group B=group")
-        self.procs.wait_for("w:b", "A=group B=own")
+        self.procs.wait_for_line("w:a", "A=group B=group")
+        self.procs.wait_for_line("w:b", "A=group B=own")
         assert "LTE_T_A" not in os.environ
 
 class TestWithout:
     def test_no_leak(self):
         with Processes(allowed_exit_codes=130) as procs:
             procs.start("w:c", SHOW)
-            procs.wait_for("w:c", "A=unset B=unset")
+            procs.wait_for_line("w:c", "A=unset B=unset")
 """
 
 

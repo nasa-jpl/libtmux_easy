@@ -108,7 +108,7 @@ tmux): [wrap-mode.md](wrap-mode.md).
 ```python
 cls.procs = Processes(cls, fail_on_output=[r"Traceback", Only(r"ERROR", name="servers:web")])  # a match fails the test
 cls.procs.start("servers:web", cmd, ready=r"Serving HTTP")   # waits for it
-port = cls.procs.wait_for("servers:web", r"port (\d+)").group(1)
+port = cls.procs.wait_for_line("servers:web", r"port (\d+)").group(1)
 ```
 
 ## Limits

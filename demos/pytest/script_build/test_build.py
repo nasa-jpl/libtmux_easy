@@ -42,7 +42,7 @@ class TestSystem:
 
     def test_web(self):
         assert get("/") == 200
-        self.procs["servers:web"].wait_for(r'"GET / HTTP')
+        self.procs["servers:web"].wait_for_line(r'"GET / HTTP')
 
     def test_migrate_finished(self):
         assert self.procs["jobs:migrate"].wait_for_exit().exit_status.ok
@@ -66,7 +66,7 @@ class TestMonitoring:
     def test_alerts_on_a_crash(self):
         with self.procs.expect_exit("workers:ticker"):  # on purpose: no death
             self.procs["workers:ticker"].kill()
-        self.procs.wait_until(lambda: any("ticker" in a for a in self.alerts), timeout=5)
+        self.procs.wait_for_condition(lambda: any("ticker" in a for a in self.alerts), timeout=5)
         assert "signal 9" in self.alerts[-1]
 
     def test_alerts_on_a_404(self):
@@ -74,4 +74,4 @@ class TestMonitoring:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT + 1000}/nope", timeout=2)
         except urllib.error.HTTPError:
             pass
-        self.procs.wait_until(lambda: any("404" in a for a in self.alerts), timeout=5)
+        self.procs.wait_for_condition(lambda: any("404" in a for a in self.alerts), timeout=5)

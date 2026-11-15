@@ -45,7 +45,7 @@ class Checks:
         assert [n for n in self.procs.names if n != "script:script"] == ["sim:a", "sim:b", "ctl:job"]
 
     def test_output(self):
-        self.procs["sim:b"].wait_for("hello_42", timeout=10)
+        self.procs["sim:b"].wait_for_line("hello_42", timeout=10)
         assert "hello_42" in self.procs.output("sim:a")
         assert "hello_42" in open(self.procs.log("sim:a")).read()
 
@@ -145,18 +145,18 @@ class TestBuild:
 
     def test_names(self):
         assert self.procs.names == ["sim:a", "sim:b", "ctl:job"]
-        self.procs["sim:b"].wait_for("hello_42")
+        self.procs["sim:b"].wait_for_line("hello_42")
         assert "hello_42" in open(self.procs["sim:a"].log()).read()
 
     def test_monitor_sees_a_kill(self):
         with self.procs.expect_exit("sim:a"):
             self.procs["sim:a"].kill()
-        self.procs.wait_until(lambda: self.alerts, timeout=5)
+        self.procs.wait_for_condition(lambda: self.alerts, timeout=5)
         assert "signal 9" in self.alerts[0]
 
     def test_restart(self):
         self.procs["sim:a"].start()
-        self.procs["sim:a"].wait_for("hello_42")
+        self.procs["sim:a"].wait_for_line("hello_42")
 
     def test_names_unique_in_the_class(self):
         with pytest.raises(ValueError, match="sim:a is taken"):
@@ -194,7 +194,7 @@ class TestAdopt:
     def test_names(self):
         assert [p.name for p in self.panes] == ["sim:a", "sim:b", "ctl:job"]
         assert "built" in self.procs.output("script")
-        self.procs["sim:b"].wait_for("hello_42")
+        self.procs["sim:b"].wait_for_line("hello_42")
         assert self.procs["ctl:job"].wait_for_exit(5).exit_status.code == 4
 
     def test_shell_pane_stops(self):
@@ -237,8 +237,8 @@ class TestPlainTmux:
     def test_plain_panes(self):
         assert self.procs.names == ["script:script", "w:0", "loop:0"]
         assert [self.procs.status(n).mode for n in self.procs.names[1:]] == ["exec", "exec"]
-        self.procs["w:0"].wait_for("up_7")
-        self.procs["loop:0"].wait_for("tick")
+        self.procs["w:0"].wait_for_line("up_7")
+        self.procs["loop:0"].wait_for_line("tick")
         assert self.procs.status("w:0").running and self.procs.status("loop:0").running
 """
 
@@ -296,7 +296,7 @@ s.new_window("w")
 s.new_pane("x", "echo early_1; sleep 60")
 s.wait_for_output("w:x", "early_1", timeout=10)
 '''))
-        procs["w:x"].wait_for("early_1", timeout=5)
+        procs["w:x"].wait_for_line("early_1", timeout=5)
         assert procs.output("w:x").splitlines().count("early_1") == 1
         assert "early_1" in open(procs.log("w:x")).read()
 

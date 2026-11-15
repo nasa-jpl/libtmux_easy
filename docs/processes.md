@@ -10,7 +10,7 @@ from libtmux_easy.processes import ProcessFailure, ProcessGroup
 procs = ProcessGroup("bringup", fail_on_output=r"Traceback",
                      on_exit=lambda name, status, died: ...)
 procs.start("sim:server", "./server", ready=r"listening", env={"RATE": "10"})
-procs.wait_until(server_answers)     # raises ProcessFailure on any death
+procs.wait_for_condition(server_answers)     # raises ProcessFailure on any death
 procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 ```
 
@@ -25,7 +25,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 | `keep_open=` | `close()` stops nothing |
 | `env=` | Variables for every process of the group (None unsets); see below |
 
-Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for`, `wait_until`, `stop`,
+Same methods as the plugin's (`start`, `build`, `adopt`, `wait_for_line`, `mark`, `wait_for_condition`, `stop`,
 `check`, ...). Differences:
 
 | | `processes.ProcessGroup` | `testing.Processes` |

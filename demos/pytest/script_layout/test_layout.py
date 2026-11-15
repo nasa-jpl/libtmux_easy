@@ -41,4 +41,4 @@ class TestLayout:
         ticker = self.procs["workers:ticker"]
         ticker.stop()
         ticker.start()  # same command, ready= too
-        ticker.wait_for(r"tick 2")
+        ticker.wait_for_line(r"tick 2")

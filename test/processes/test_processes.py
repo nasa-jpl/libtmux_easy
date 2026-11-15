@@ -20,7 +20,7 @@ SLOW_STOP = (
 
 
 def test_subprocess_group(tmp_path):
-    """ready=, env=, exits=, a death raised from wait_until(), logs, on_exit;
+    """ready=, env=, exits=, a death raised from wait_for_condition(), logs, on_exit;
     build() needs a tmux session."""
     exits = []
     procs = ProcessGroup(
@@ -37,7 +37,7 @@ def test_subprocess_group(tmp_path):
     procs.wait_for_exit("w:oneshot")
     procs.start("w:dies", "sleep 0.2; exit 3")
     with pytest.raises(ProcessFailure, match=r"w:dies died\n  command: .*\n  exit:    3"):
-        procs.wait_until(lambda: False, timeout=5)
+        procs.wait_for_condition(lambda: False, timeout=5)
     assert ("w:oneshot", False) in exits and ("w:dies", True) in exits
     assert (tmp_path / "w.a.log").read_text().startswith("hello x")
     procs.close()
@@ -62,7 +62,7 @@ def test_only_rules(tmp_path):
         procs.start("b:x", "echo SLOW; sleep 60", ready="SLOW")
         procs.start("a:x", "echo up; sleep 0.3; echo SLOW; sleep 60", ready="up")
         with pytest.raises(ProcessFailure) as exc:
-            procs.wait_until(lambda: False, timeout=5)
+            procs.wait_for_condition(lambda: False, timeout=5)
         assert str(exc.value).splitlines() == [
             "a:x failed an output check",
             "  command: echo up; sleep 0.3; echo SLOW; sleep 60",
@@ -162,7 +162,7 @@ def test_per_process_sigint_timeout(tmp_path):
     procs = ProcessGroup("own2", log_dir=str(tmp_path / "2"), sigint_timeout=30)
     p = procs.start("w:quick", ignore, ready="up", sigint_timeout=0.3)
     p.stop(check=False)
-    p.start().wait_for("up")
+    p.start().wait_for_line("up")
     t = time.monotonic()
     p.stop(check=False)
     assert time.monotonic() - t < 3 and procs.status("w:quick").stopped == "SIGTERM"
@@ -198,7 +198,7 @@ def test_sigterm_timeout_adopted(tmp_path):
     procs.adopt(f"{sys.executable} {script}")
     # Its command: the command line it runs, through lte-run; printed.
     assert f"adopt(): w:x runs {sys.executable} -c " in tty.getvalue(), tty.getvalue()
-    procs.wait_for("w:x", "up", timeout=10)
+    procs.wait_for_line("w:x", "up", timeout=10)
     with pytest.raises(ProcessFailure, match=r"w:x failed an output check"):
         procs.check()
     t = time.monotonic()
@@ -247,18 +247,18 @@ def test_sigterm_timeout(group):
     procs = group("term2", sigint_timeout=0.2, sigterm_timeout=30)
     p = procs.start("w:deaf", DEAF, ready="up", sigterm_timeout=0.3)
     p.stop(check=False)
-    p.start().wait_for("up")  # a restart keeps it
+    p.start().wait_for_line("up")  # a restart keeps it
     t = time.monotonic()
     p.stop(check=False)
     assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
-    p.start().wait_for("up")
+    p.start().wait_for_line("up")
     t = time.monotonic()
     procs.stop("w:deaf", check=False, sigterm_timeout=0.1)  # stop()'s own
     assert time.monotonic() - t < 3 and procs.status("w:deaf").stopped == "SIGKILL"
 
 
 def shown(proc):
-    return proc.wait_for(r"A=\S+ B=\S+ I=\S+").group(0)
+    return proc.wait_for_line(r"A=\S+ B=\S+ I=\S+").group(0)
 
 
 def test_group_env(group):
@@ -293,6 +293,32 @@ def test_restart(group):
     procs.stop("w:s")
     time.sleep(0.3)
     assert not up.status().running and up.output().count("restart") == 0
+
+
+def test_marks(group, tmp_path):
+    """wait_for_line(since=): a mark() or a LineMatch, only later lines; a
+    mark from before a restart: all the new output."""
+    flag = tmp_path / "flag"
+    cmd = f"echo go 1; while [ ! -f {flag} ]; do sleep 0.05; done; echo go 2; sleep 60"
+    procs = group("marks")
+    p = procs.start("w:t", cmd)
+    first = p.wait_for_line(r"go (\d)")
+    assert (first.line, first[1]) == ("go 1", "1")
+    mark = p.mark()
+    with pytest.raises(ProcessFailure, match=r"within 0.3 s, after the mark: line \d+ on"):
+        p.wait_for_line("go", timeout=0.3, since=mark)
+    flag.touch()
+    assert p.wait_for_line("go", since=mark).line == "go 2"
+    assert p.wait_for_line("go", since=first).line == "go 2"
+    other = procs.start("w:o", "sleep 60")
+    with pytest.raises(ValueError, match="w:t's mark"):
+        other.wait_for_line("go", since=mark)
+    with pytest.raises(ValueError, match="no since="):
+        procs.wait_for_line("*", "go", since=mark)
+    p.stop()
+    flag.unlink()
+    p.start()
+    assert p.wait_for_line("go", since=mark).line == "go 1"  # a new run
 
 
 def test_build_panes_get_group_env(session, tmp_path):

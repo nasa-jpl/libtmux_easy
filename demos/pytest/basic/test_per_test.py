@@ -49,7 +49,7 @@ def test_server_restart():
 def test_workers():
     with Processes() as procs:
         w0, w1, w2 = (procs.start(f"workers:w{n}", WORKER, ready=r"tick 0") for n in range(3))
-        w2.wait_for(r"tick 5")
+        w2.wait_for_line(r"tick 5")
         w0.stop()  # the others keep going
-        w1.wait_for(r"tick 8")
+        w1.wait_for_line(r"tick 8")
         time.sleep(0.5)  # a death here fails the test at the 'with' end

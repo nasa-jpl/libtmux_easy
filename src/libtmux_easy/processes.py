@@ -7,7 +7,7 @@ The engine under the pytest plugin (testing.py), usable by any program:
     procs = ProcessGroup("bringup", fail_on_output=r"Traceback")
     procs.start("sim:server", "./server", ready=r"listening")
     procs.start("sim:client", "./client")
-    procs.wait_until(server_answers)
+    procs.wait_for_condition(server_answers)
     ...
     procs.close()          # SIGINT all at once, then SIGTERM, SIGKILL
 
@@ -116,6 +116,55 @@ class Only(Generic[_T]):
         return fnmatch.fnmatchcase(name, self.name) and (
             self.command is None or fnmatch.fnmatchcase(command, self.command)
         )
+
+
+@dataclass(frozen=True)
+class Mark:
+    """A place in a process's output, from mark(): wait_for_line(since=it)
+    searches only the lines printed after it.
+
+    :param name: the process, 'window:pane'
+    :param lines: how many lines it had printed then (its latest start)
+    """
+
+    name: str
+    lines: int
+    run: object = dataclasses.field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True)
+class LineMatch(Mark):
+    """A line wait_for_line() found. Also a Mark, just after that line:
+    wait_for_line(since=it) finds a later line.
+
+        port = procs.wait_for_line("sim:web", r"port (\\d+)")[1]
+
+    :param line: the line, plain text
+    :param match: its re.Match; m.group(1), or m[1], reads it
+    """
+
+    line: str = ""
+    match: Optional["re.Match"] = dataclasses.field(default=None, repr=False)
+
+    @property
+    def index(self) -> int:
+        """The line's number in the output, from 0."""
+        return self.lines - 1
+
+    def group(self, *groups):
+        """re.Match.group()."""
+        return self.match.group(*groups)
+
+    def groups(self, default=None):
+        """re.Match.groups()."""
+        return self.match.groups(default)
+
+    def groupdict(self, default=None):
+        """re.Match.groupdict()."""
+        return self.match.groupdict(default)
+
+    def __getitem__(self, group):
+        return self.match[group]
 
 
 def _one_or_many(value, single):
@@ -269,6 +318,8 @@ class _TmuxBackend:
         on_output = {_EVERY_LINE: lambda m: on_line(m.line)} if on_line else None
         env = dict(env or {}, **({"LTE_LOG_DIR": os.path.dirname(log)} if log else {})) or None
         if log:
+            # lte-run rewrites it once it runs: until then, the last run's lines
+            open(log, "w").close()
             self.logs[name] = log
         self.panes[name] = self.session.new_pane(
             pane_name,
@@ -296,21 +347,35 @@ class _TmuxBackend:
         self.runs[name] = 1
         self.logs[name] = log
 
-    def wait_for(self, name, regex, timeout):
-        """The first re.Match in the output; TimeoutError, or PaneExited."""
-        return self.session.wait_for_output(self.panes[name], regex, timeout).match
+    def wait_for(self, name, regex, timeout, start=0):
+        """The first (line number, re.Match) at line 'start' or later;
+        TimeoutError, or PaneExited."""
+        deadline = time.monotonic() + timeout
+        while True:
+            exited = not self.status(name).running  # first: its last lines are read after
+            lines = self.lines(name, complete=not exited)
+            for i in range(start, len(lines)):
+                m = regex.search(lines[i])
+                if m:
+                    return i, m
+            start = max(start, len(lines))
+            if exited:
+                raise PaneExited(self.status(name))
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"{name}: no line matching {regex.pattern!r}")
+            time.sleep(0.05)
 
     def output(self, name):
         """What the latest start printed, as one string."""
         return "\n".join(self.lines(name))
 
-    def lines(self, name):
+    def lines(self, name, complete=False):
         """What the latest start printed: from its log (a cmd_capture, or a
         pane_capture), else the pane, which also shows the shell's prompt and the
-        command."""
+        command. 'complete': not a last line still being printed."""
         if name not in self.logs:
             return _pane_cmd(self.panes[name], "capture-pane", "-p", "-J", "-S", "-").stdout
-        return _read_plain(self.logs[name])
+        return _read_plain(self.logs[name], complete)
 
     def kill(self, name):
         """SIGKILL the process the pane runs, once lte-run has reported its
@@ -338,13 +403,17 @@ class _TmuxBackend:
 _EVERY_LINE = re.compile("")
 
 
-def _read_plain(path):
-    """A log's lines as plain text (a capture keeps terminal escapes)."""
+def _read_plain(path, complete=False):
+    """A log's lines as plain text (a capture keeps terminal escapes).
+    'complete': without a last line that has no newline yet."""
     try:
         with open(path, "rb") as f:
-            return plain_text(f.read()).decode(errors="replace").splitlines()
+            data = f.read()
     except FileNotFoundError:
         return []
+    if complete:
+        data = data[: data.rfind(b"\n") + 1]
+    return plain_text(data).decode(errors="replace").splitlines()
 
 
 def _kill(pids):
@@ -450,17 +519,18 @@ class _Subprocess:
             stopped=self.stopped,
         )
 
-    def wait_for(self, regex, timeout):
-        """The first re.Match in the output; TimeoutError, or PaneExited."""
-        seen = 0
+    def wait_for(self, regex, timeout, start=0):
+        """The first (line number, re.Match) at line 'start' or later;
+        TimeoutError, or PaneExited."""
+        seen = start
         deadline = time.monotonic() + timeout
         with self.cond:
             while True:
-                for line in self.plain[seen:]:
-                    m = regex.search(line)
+                for i in range(seen, len(self.plain)):
+                    m = regex.search(self.plain[i])
                     if m:
-                        return m
-                seen = len(self.plain)
+                        return i, m
+                seen = max(seen, len(self.plain))
                 if self.done_reading:
                     self.proc.wait()
                     raise PaneExited(self.status())
@@ -520,16 +590,16 @@ class _SubprocessBackend:
         tty = self.tty if any(fnmatch.fnmatchcase(name, p) for p in self.echo) else None
         self.procs[name] = _Subprocess(name, command, on_exit, tty, self.lock, on_line, log, env)
 
-    def wait_for(self, name, regex, timeout):
-        """The first re.Match of 'regex' in its output; TimeoutError, or
-        PaneExited."""
-        return self.procs[name].wait_for(regex, timeout)
+    def wait_for(self, name, regex, timeout, start=0):
+        """The first (line number, re.Match) at line 'start' or later;
+        TimeoutError, or PaneExited."""
+        return self.procs[name].wait_for(regex, timeout, start)
 
     def output(self, name):
         """What it printed, raw, as one string."""
         return "".join(self.procs[name].lines)
 
-    def lines(self, name):
+    def lines(self, name, complete=False):
         """What it printed, as plain-text lines."""
         return list(self.procs[name].plain)
 
@@ -781,18 +851,26 @@ class _AdoptedBackend:
         """The script's _Subprocess or the _AdoptedPane named 'name'."""
         return self.script.get(name) or self.panes[name]
 
-    def wait_for(self, name, regex, timeout):
-        """The first re.Match of 'regex' in its output; TimeoutError, or
-        PaneExited."""
+    def wait_for(self, name, regex, timeout, start=0):
+        """The first (line number, re.Match) at line 'start' or later;
+        TimeoutError, or PaneExited."""
         if name in self.script:
-            return self.script[name].wait_for(regex, timeout)
+            return self.script[name].wait_for(regex, timeout, start)
         pane = self.panes[name]
         deadline = time.monotonic() + timeout
         with self.cond:
             while True:
-                m = next((m for line in pane.lines for m in [regex.search(line)] if m), None)
-                if m:
-                    return m
+                found = next(
+                    (
+                        (i, m)
+                        for i in range(start, len(pane.lines))
+                        for m in [regex.search(pane.lines[i])]
+                        if m
+                    ),
+                    None,
+                )
+                if found:
+                    return found
                 if pane.exited and pane.read_after_exit:
                     raise PaneExited(pane.status())
                 left = deadline - time.monotonic()
@@ -804,7 +882,7 @@ class _AdoptedBackend:
         """What it printed, as one string."""
         return "\n".join(self.lines(name))
 
-    def lines(self, name):
+    def lines(self, name, complete=False):
         """What it printed, as plain-text lines."""
         if name in self.script:
             return list(self.script[name].plain)
@@ -1064,29 +1142,29 @@ class Process:
         """SIGKILL it: a death, unless in an expect_exit() block."""
         self.group.kill(self.name)
 
-    def wait_for(self, pattern: Union[str, "re.Pattern"], timeout: float = 10.0) -> "re.Match":
-        """Wait for a line matching 'pattern': ProcessGroup.wait_for(). Lines
-        it printed before the call count too.
+    def wait_for_line(
+        self,
+        pattern: Union[str, "re.Pattern"],
+        timeout: float = 10.0,
+        since: Optional[Mark] = None,
+    ) -> LineMatch:
+        """Wait for a line matching 'pattern': ProcessGroup.wait_for_line().
+        Lines it printed before the call count too, unless 'since'.
 
         :param pattern: a regex, searched in plain text
         :param timeout: seconds to wait
-        :return: the re.Match
+        :param since: a mark() or an earlier LineMatch: only lines after it
+        :return: the LineMatch
         :raises ProcessFailure: no match in time, or it exited
         """
-        return self.group.wait_for(self.name, pattern, timeout)
+        return self.group.wait_for_line(self.name, pattern, timeout, since)
 
-    def wait_for_in_order(
-        self, patterns: Sequence[Union[str, "re.Pattern"]], timeout: float = 10.0
-    ) -> List["re.Match"]:
-        """Wait for lines matching 'patterns', in order:
-        ProcessGroup.wait_for_in_order().
+    def mark(self) -> Mark:
+        """Where its output is now: ProcessGroup.mark().
 
-        :param patterns: regexes, searched in plain text
-        :param timeout: seconds to wait; 0: check now
-        :return: the re.Matches
-        :raises ProcessFailure: a pattern unmatched in time, or a death
+        :return: the Mark, for wait_for_line(since=)
         """
-        return self.group.wait_for_in_order(self.name, patterns, timeout)
+        return self.group.mark(self.name)
 
     def wait_for_exit(self, timeout: float = 10.0) -> PaneStatus:
         """Wait for it to finish: ProcessGroup.wait_for_exit().
@@ -1476,7 +1554,7 @@ class ProcessGroup:
             restart=(restart, restart_delay) if restart else None,
         )
         if ready is not None:
-            self.wait_for(name, ready, ready_timeout)
+            self.wait_for_line(name, ready, ready_timeout)
         return Process(self, name)
 
     def _env_for(self, env):
@@ -1583,7 +1661,7 @@ class ProcessGroup:
         on_exit, on_line = self._begin(name, command, exits=None if ready else 0)
         backend.run_script(name, command, on_exit, on_line, self.log(name), self.env)
         if ready is not None:
-            self.wait_for(name, ready, timeout)
+            self.wait_for_line(name, ready, timeout)
         else:
             self.wait_for_exit(name, timeout)
         adopted = []
@@ -1829,28 +1907,54 @@ class ProcessGroup:
             exit_ += f" (allowed: {', '.join(map(str, run.allowed_exit_codes))})"
         return self._failure(name, "did not stop cleanly", ("stopped", stopped), ("exit", exit_))
 
-    def wait_for(
-        self, name: str, pattern: Union[str, "re.Pattern"], timeout: float = 10.0
-    ) -> "re.Match":
+    def mark(self, name: str) -> Mark:
+        """Where the process's output is now. Pass it as wait_for_line(since=)
+        to match only what it prints after: mark, act, wait.
+
+            m = procs.mark("sim:server")
+            send_request()
+            procs.wait_for_line("sim:server", r"GET /", since=m)
+
+        :param name: the process, 'window:pane'
+        :return: the Mark
+        """
+        name = self._name(name)
+        return Mark(name, len(self.backend.lines(name, complete=True)), self._runs.get(name))
+
+    def wait_for_line(
+        self,
+        name: str,
+        pattern: Union[str, "re.Pattern"],
+        timeout: float = 10.0,
+        since: Optional[Mark] = None,
+    ) -> LineMatch:
         """Wait for the process to print a line matching 'pattern'. Lines it
         printed before the call count too: it searches all of its output since
-        its latest start.
+        its latest start, or only after 'since'. For lines in order, chain:
+
+            one = procs.wait_for_line("w:job", r"one")
+            procs.wait_for_line("w:job", r"three", since=one)
 
         :param name: the process, 'window:pane'; "*": any process (checking
-            health while it waits)
+            health while it waits; no 'since')
         :param pattern: a regex, searched in plain text
         :param timeout: seconds to wait
-        :return: the re.Match
+        :param since: a mark() or an earlier LineMatch of this process: only
+            lines after it. From before a restart: all of the new output
+        :return: the LineMatch: .line, .match, m[1]
+        :raises ValueError: 'since' is another process's, or with "*"
         :raises ProcessFailure: no match in time, or it exited first
         """
+        regex = re.compile(pattern)
         if name == "*":
-            regex = re.compile(pattern)
-            return self.wait_until(
+            if since is not None:
+                raise ValueError("wait_for_line('*'): no since=; a mark is one process's")
+            return self.wait_for_condition(
                 lambda: next(
                     (
-                        m
+                        LineMatch(n, i + 1, self._runs.get(n), line, m)
                         for n in self.names
-                        for line in self.backend.lines(n)
+                        for i, line in enumerate(self.backend.lines(n, complete=True))
                         for m in [regex.search(line)]
                         if m
                     ),
@@ -1861,14 +1965,27 @@ class ProcessGroup:
                 what=f"a line matching {pattern!r}",
             )
         name = self._name(name)
-        regex = re.compile(pattern)
+        start = 0
+        if since is not None:
+            if since.name != name:
+                raise ValueError(f"wait_for_line({name!r}): since= is {since.name}'s mark")
+            if since.run is self._runs.get(name):
+                start = since.lines
         try:
-            return self.backend.wait_for(name, regex, timeout)
+            i, m = self.backend.wait_for(name, regex, timeout, start)
+            return LineMatch(name, i + 1, self._runs.get(name), m.string, m)
         except TimeoutError:
+            after = ""
+            if start:
+                after = (
+                    f", after {since.line!r}"
+                    if isinstance(since, LineMatch)
+                    else f", after the mark: line {start + 1} on"
+                )
             message = self._failure(
                 name,
                 "printed no matching line",
-                ("wanted", f"{_pattern(regex)} (within {timeout:g} s)"),
+                ("wanted", f"{_pattern(regex)} (within {timeout:g} s{after})"),
             )
         except PaneExited as exc:
             message = self._failure(
@@ -1879,47 +1996,7 @@ class ProcessGroup:
             )
         raise ProcessFailure(message)
 
-    def wait_for_in_order(
-        self, name: str, patterns: Sequence[Union[str, "re.Pattern"]], timeout: float = 10.0
-    ) -> List["re.Match"]:
-        """Wait for lines matching each of 'patterns', in that order, each on
-        a later line than the one before.
-
-        :param patterns: regexes, searched in plain text
-        :param timeout: seconds to wait; 0: check now
-        :return: the re.Matches
-        :raises ProcessFailure: one is missing in time (the first missing one is
-            named), or a death
-        """
-        name = self._name(name)
-        regexes = [re.compile(p) for p in patterns]
-        found = []
-
-        def matched():
-            found.clear()
-            lines = iter(self.backend.lines(name))
-            for regex in regexes:
-                m = next((m for line in lines for m in [regex.search(line)] if m), None)
-                if m is None:
-                    return False
-                found.append(m)
-            return True
-
-        deadline = time.monotonic() + timeout
-        while not matched():
-            if time.monotonic() >= deadline:
-                which = f"{len(found) + 1} of {len(regexes)}"
-                if found:
-                    which += f", after {found[-1].string!r}"
-                wanted = f"{_pattern(regexes[len(found)])} ({which}) (within {timeout:g} s)"
-                raise ProcessFailure(
-                    self._failure(name, "printed no matching line", ("wanted", wanted))
-                )
-            self.check()
-            time.sleep(0.1)
-        return list(found)
-
-    def wait_until(
+    def wait_for_condition(
         self,
         condition: Callable[[], Any],
         timeout: float = 30.0,
@@ -1931,7 +2008,7 @@ class ProcessGroup:
         Between calls it checks the group's health, so a death fails at once,
         not at the timeout.
 
-            procs.wait_until(lambda: os.path.exists("/tmp/ready"), timeout=10)
+            procs.wait_for_condition(lambda: os.path.exists("/tmp/ready"), timeout=10)
 
         :param condition: a function of no arguments, called every 'poll'
             seconds; a truthy result ends the wait

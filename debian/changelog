@@ -19,7 +19,11 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * Breaking: Processes(on_abort=) is now on_test_failure=, and only on
     Processes. start(timeout=) is now ready_timeout=. start() and stop()
     options are keyword-only; sigint_timeout sits next to sigterm_timeout.
-  * wait_until(condition): a readable signature and docstring.
+  * Breaking: wait_for() is now wait_for_line(), wait_until() is now
+    wait_for_condition(); wait_for_in_order() is gone. wait_for_line()
+    returns a LineMatch (.line, .match, m[1], .group()); since= a mark()
+    or an earlier LineMatch matches only later lines: mark, act, wait, or
+    lines in order.
   * Breaking: modules named after their commands: dash/ is lte_dash/,
     launch is lte_session, starter is lte_defaults.
   * SIGINT's default grace is 5 s (was 10): stop_pane(), ProcessGroup,

@@ -47,11 +47,11 @@ class TestDashboard:
         cls.procs.close()
 
     def test_web_server_answers(self):
-        self.procs.wait_until(answers, timeout=5)  # a dead process fails it now
+        self.procs.wait_for_condition(answers, timeout=5)  # a dead process fails it now
         assert '"GET / HTTP' in self.web.output()
 
     def test_ticker_keeps_ticking(self):
-        self.ticker.wait_for(r"tick 6", timeout=10)
+        self.ticker.wait_for_line(r"tick 6", timeout=10)
 
     def test_inspect(self):
         """A process of this test's own, to poke at in pdb."""

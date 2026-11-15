@@ -24,9 +24,9 @@ process die mid-test.
 ```
 setup_class      cls.procs = Processes(cls, fail_on_output=)  an empty group
                  web = procs.start(name, cmd, ready=)  start; wait for a line; a handle
-                 procs.wait_until(fn)                  a gate: any code
+                 procs.wait_for_condition(fn)                  a gate: any code
 each test        a new instance of the class: state lives on cls
-                 web.wait_for/output/stop, procs.start
+                 web.wait_for_line/output/stop, procs.start
                  check_health()                        in long loops: fail now
 after each test  plugin checks every group             a death fails THIS test
 teardown_class   procs.close()                         stop; fail unless exit 0 on Ctrl-C
@@ -53,7 +53,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
   supervisor's "process died" lines.
 - **Health**: each death or `fail_on_output` hit fails one test: the one running
   when it happened. Between checks it is only recorded, so long tests call
-  `check_health()` (or wait with `wait_until`, or a probe that checks).
+  `check_health()` (or wait with `wait_for_condition`, or a probe that checks).
 - **On failure**: a failed test stops its class's processes at once and
   skips the rest; pass `on_test_failure=` to bring them down your way first.
   `--keep-open` keeps them instead.
@@ -61,7 +61,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
   Stopped and checked at the end of the `with`; the class's keep running.
   Names are unique within a class.
 - **Also**: `exits=0` for a process that finishes (`wait_for_exit`),
-  `allowed_exit_codes`, `wait_for("*", ...)`, `wait_for_in_order`, `arg()` for
+  `allowed_exit_codes`, `wait_for_line("*", ...)`, `mark()` and `since=`, `arg()` for
   `--arg NAME=VALUE`, `@parametrize` for a class per value.
 
 ## All demos

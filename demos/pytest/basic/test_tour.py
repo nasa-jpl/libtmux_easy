@@ -13,8 +13,9 @@ What it shows:
                    for some processes
   env=, on_exit=   variables for every process; a callback on every exit
   every test       checked after it ran: a death fails it, not a later one
-  wait_for()       a line of one process's output ("*": any process)
-  wait_until()     any condition, e.g. the server answers
+  wait_for_line()  a line of one process's output ("*": any process)
+  mark(), since=   only lines after a mark: mark, act, wait; lines in order
+  wait_for_condition()  any condition, e.g. the server answers
   exits=           a process that finishes on its own: wait_for_exit()
   expect_exit()    an exit the test causes on purpose (kill()) is no death
   allowed_exit_codes  a process that exits 2 on SIGINT, stopped cleanly
@@ -76,10 +77,10 @@ class TestTour:
             on_test_failure=lambda: print("a test failed: saving state first"),
         )
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
-        # start() returns a handle: cls.web.wait_for(...), cls.web.stop().
+        # start() returns a handle: cls.web.wait_for_line(...), cls.web.stop().
         cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
-        # Gate: any code. wait_until() fails at once if something died.
-        cls.procs.wait_until(server_answers, timeout=10)
+        # Gate: any code. wait_for_condition() fails at once if something died.
+        cls.procs.wait_for_condition(server_answers, timeout=10)
         # Stage 2.
         cls.w0, cls.w1 = (
             cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0") for n in range(2)
@@ -93,15 +94,27 @@ class TestTour:
 
     def test_server(self):
         assert server_answers()
-        self.web.wait_for(r'"GET / HTTP/1\.\d" 200')  # its output
+        self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200')  # its output
+
+    def test_after_a_mark(self):
+        # Mark, act, wait: only what it printed after the mark counts.
+        mark = self.web.mark()
+        assert server_answers()
+        self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200', since=mark)
+
+    def test_lines_in_order(self):
+        # since= an earlier match: a later line, so the order is checked.
+        first = self.w0.wait_for_line(r"tick (\d+)")
+        later = self.w0.wait_for_line(r"tick (\d+)", since=first)
+        assert int(later[1]) > int(first[1])
 
     def test_output_and_logs(self):
-        self.w0.wait_for(r"tick 5")
+        self.w0.wait_for_line(r"tick 5")
         assert "w0 tick 0" in self.w0.output()
         assert "w0 tick 0" in open(self.w0.log()).read()
 
     def test_any_process(self):
-        self.procs.wait_for("*", r"tick 3")  # a line from any process
+        self.procs.wait_for_line("*", r"tick 3")  # a line from any process
         assert self.procs["workers:w0"].name == self.w0.name  # a handle by name
 
     def test_one_shot(self):

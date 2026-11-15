@@ -14,7 +14,7 @@ teardown_class:
         def setup_class(cls):
             cls.procs = Processes(cls, fail_on_output=r"Traceback")
             cls.procs.start("sim:server", "./server", ready=r"listening")
-            cls.procs.wait_until(server_answers)   # any gate
+            cls.procs.wait_for_condition(server_answers)   # any gate
 
         @classmethod
         def teardown_class(cls):
@@ -52,7 +52,7 @@ from . import lte_dash
 from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
-from .processes import ExitCodes, Match, OneOrMany, Only  # noqa: F401
+from .processes import ExitCodes, LineMatch, Mark, Match, OneOrMany, Only  # noqa: F401
 from .status import PaneStatus
 from .tmux_lib import TmuxSession
 

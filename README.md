@@ -255,7 +255,7 @@ class TestWeb:
         cls.procs.close()      # errors unless each exits 0 on SIGINT
 
     def test_serves(self):
-        ...      # self.web.output(), .wait_for(pattern), .stop()
+        ...      # self.web.output(), .wait_for_line(pattern), .stop()
 ```
 
 pytest makes a new instance of the class for every test, so what the tests

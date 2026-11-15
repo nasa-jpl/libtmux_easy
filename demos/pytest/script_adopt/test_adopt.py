@@ -40,10 +40,10 @@ class TestAdopt:
     def test_web(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2) as reply:
             assert reply.status == 200
-        self.procs["servers:web"].wait_for(r'"GET / HTTP')
+        self.procs["servers:web"].wait_for_line(r'"GET / HTTP')
 
     def test_ticker(self):
-        self.procs["workers:ticker"].wait_for(r"tick 3")
+        self.procs["workers:ticker"].wait_for_line(r"tick 3")
 
     def test_migrate_finished(self):
         assert self.procs["jobs:migrate"].wait_for_exit().exit_status.ok

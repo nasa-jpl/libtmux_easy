@@ -61,7 +61,7 @@ Demo: `script_build/`.
 ```python
 cls.procs = Processes(cls)
 cls.procs.adopt(f"{sys.executable} launch.py --port {PORT}", exits={"jobs:migrate": 0})
-cls.procs["servers:web"].wait_for(r"GET / HTTP")
+cls.procs["servers:web"].wait_for_line(r"GET / HTTP")
 ```
 
 `adopt(cmd, name="script", ready=None, timeout=60, exits=None)`, called
@@ -100,7 +100,7 @@ Demo: `script_adopt/`. A plain tmux script works too:
 # up.sh:  tmux new-session -d -s app -n web 'web'; tmux new-window -t app -n worker 'worker'
 cls.procs = Processes(cls, allowed_exit_codes=130)
 cls.procs.adopt("sh up.sh")
-cls.procs["web:0"].wait_for(r"listening")
+cls.procs["web:0"].wait_for_line(r"listening")
 ```
 
 ## Making a script easy to test

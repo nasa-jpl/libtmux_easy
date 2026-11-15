@@ -17,7 +17,7 @@ class TestSystem:
     def setup_class(cls):
         cls.procs = Processes(cls, fail_on_output=r"Traceback")   # empty; logs in a tmp dir
         cls.procs.start("sim:server", "./server", ready=r"listening")
-        cls.procs.wait_until(server_answers, timeout=30)   # a gate: any code
+        cls.procs.wait_for_condition(server_answers, timeout=30)   # a gate: any code
         cls.procs.start("test:client", "./client")
         cls.procs.start("test:migrate", "./migrate", exits=0)  # finishes on its own
 
@@ -32,7 +32,7 @@ class TestSystem:
     def test_helper(self):
         with Processes() as procs:            # processes for this test only
             probe = procs.start("tools:probe", "./probe", ready=r"up")
-            probe.wait_for(r"done")           # start() returns a Process handle
+            probe.wait_for_line(r"done")           # start() returns a Process handle
 ```
 
 ## Options
@@ -124,10 +124,10 @@ same methods, no test owner, mode set by `tmux=`.
 | `start(name, cmd, *, ready=, ready_timeout=30, fail_on_output=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on_output`, `allowed_exit_codes`: more for it, on top of the group's; plain values, no `Only`. `exits`: codes it may finish with on its own (no death). `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
 | `stop(name, *, check=True, sigint_timeout=, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
-| `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
-| `wait_for_in_order(name, [regex, ...], timeout)` | lines in that order, each later than the last |
+| `wait_for_line(name, regex, timeout, since=)` | a line matching, printed already or later (a `LineMatch`: `.line`, `m[1]`); `since`: only after a `mark()` or an earlier `LineMatch`; name `"*"`: any process |
+| `mark(name)` | where its output is now, for `since=`: mark, act, wait |
 | `wait_for_exit(name, timeout)` | an `exits=` process finishing; fails on a wrong code |
-| `wait_until(fn, timeout)` | `fn()` until truthy, checking health between calls |
+| `wait_for_condition(fn, timeout)` | `fn()` until truthy, checking health between calls |
 | `output(name)`, `log(name)`, `status(name)` | what it printed (latest start), its log file, its `PaneStatus` |
 | `check()` | raise if anything died or hit `fail_on_output` since the last check |
 | `build(fn, ..., exits=)`, `adopt(cmd, ...)` | a session script's processes: see below |
@@ -136,7 +136,7 @@ same methods, no test owner, mode set by `tmux=`.
 | `with expect_exit(name, timeout=10):` | an exit you cause on purpose (a kill, a bad input) is no death; fails if it hasn't exited by the end |
 
 `Process`, from `start()` or `procs[name]`: the methods above for its name,
-without it: `stop()`, `kill()`, `wait_for(regex)`, `wait_for_in_order()`,
+without it: `stop()`, `kill()`, `wait_for_line(regex)`, `mark()`,
 `wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`; `start()`
 starts it again with the same command and options. It follows the name, so
 it stays valid after a stop and a new start.
@@ -197,7 +197,7 @@ default)`, `parametrize(names, values)`.
 |---|---|---|
 | a process exits, not stopped and not an expected `exits=` code | recorded (exit watch) | a death |
 | a `fail_on_output` hit | recorded (output watch) | a death |
-| in the test: `check()`, `check_health()`, `wait_until`, `wait_for*` | checked | FAILED now |
+| in the test: `check()`, `check_health()`, `wait_for_condition`, `wait_for*` | checked | FAILED now |
 | after each test | `pytest_runtest_call` checks every open group | FAILED, with the last output and the log's path |
 | a test (or `setup_class`) fails | `pytest_runtest_makereport`: `on_test_failure()`, then `close(check=False)` on the class's and the test's groups | stopped at once, no checks; the rest of the class SKIPPED |
 | `teardown_class`: `close()` | SIGINT, escalating, in parallel | ERROR unless each stopped with an `allowed_exit_codes` code; nothing to do after an abort |
