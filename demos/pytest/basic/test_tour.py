@@ -9,8 +9,8 @@ run tests against it, shut it down.
 What it shows:
   setup_class      start in stages: a server, a gate (any code), then workers
   ready=           wait for a line in a process's output before going on
-  fail_on_output   a line that fails the test (a regex, or a function); Only()
-                   for some processes
+  fail_on_output   a line that fails the test (a regex, or a function);
+                   Only(..., name="workers:*"): every worker, even later ones
   env=             variables for every process of the group
   every test       checked after it ran: a death fails it, not a later one
   waits            each fails at once if something died:
@@ -58,11 +58,9 @@ def server_answers():
         return False
 
 
-# A line that fails the test: a regex, or a function line -> problem or None.
-FAIL_ON = [
-    r"Traceback",  # any process
-    Only(lambda line: "w1 is sad" if "sad" in line else None, name="workers:w1"),
-]
+def worker_error(line):
+    """An output check: a line -> a problem message, or None: fine."""
+    return f"a worker reported an error: {line}" if "ERROR" in line else None
 
 
 class TestTour:
@@ -73,7 +71,10 @@ class TestTour:
     def setup_class(cls):
         cls.procs = Processes(  # empty; logs in a tmp dir of its own
             cls,
-            fail_on_output=FAIL_ON,
+            fail_on_output=[
+                r"Traceback",  # any process
+                Only(worker_error, name="workers:*"),  # every worker, now or later
+            ],
             env={"TOUR": "1"},  # for every process of the group
             on_test_failure=lambda: print("a test failed: saving state first"),
         )
