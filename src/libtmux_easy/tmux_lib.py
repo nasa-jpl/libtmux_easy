@@ -1,3 +1,29 @@
+"""TmuxSession: a libtmux Session with named panes and exact exit status.
+
+    session = TmuxSession.create("demo", mode=PANE_MODE_WRAP)
+    session.new_window("main")
+    session.new_pane("server", "python3 -m http.server", on_exit=print)
+    session.wait_for_output("main:server", r"Serving HTTP")
+    session.close()
+
+What it adds to libtmux:
+  - sessions: create() a new one, or current() to adopt the one this process
+    runs in; kill(), release(), close() (stop everything, then kill)
+  - panes by 'window:pane' name, in one of three modes: shell (typed into an
+    interactive shell, '$?' scraped), exec (the pane's own process), wrap
+    (typed under lte-run, which reports pid and status over a socket)
+  - exit status and lifecycle: exit_status(), on_exit callbacks (a watcher
+    thread), stop_pane() (SIGINT -> SIGTERM -> SIGKILL), respawn_pane(),
+    stop_all(), status() and a JSON status_file
+  - each pane's environment exactly as given (env=, copy_environment())
+  - output: capture() to files, watch_output(), wait_for_output(), expect(),
+    search_output()
+  - the lte-dash sidebar: dashboard(), home_log()
+
+Also: set_server(), session_exists(), tmux_command(), pane_env().
+See docs/architecture.md, docs/wrap-mode.md, docs/output.md.
+"""
+
 import collections
 import json
 import logging
