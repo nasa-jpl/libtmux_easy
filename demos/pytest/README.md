@@ -55,7 +55,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
   when it happened. Between checks it is only recorded, so long tests call
   `check_health()` (or wait with `wait_until`, or a probe that checks).
 - **On failure**: a failed test stops its class's processes at once and
-  skips the rest; pass `on_abort=` to bring them down your way first.
+  skips the rest; pass `on_test_failure=` to bring them down your way first.
   `--keep-open` keeps them instead.
 - **Processes for one test**: `with Processes() as procs:` in the test.
   Stopped and checked at the end of the `with`; the class's keep running.

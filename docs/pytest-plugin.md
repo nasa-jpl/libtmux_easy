@@ -102,7 +102,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, sigint_timeout=5, on_abort=None, log_dir=None, sigterm_timeout=5, env=None)`
+`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, on_test_failure=None, log_dir=None, on_exit=None, sigint_timeout=5, sigterm_timeout=5, env=None)`
 
 Tests use this one. `libtmux_easy.processes.ProcessGroup` is the engine it
 subclasses, for programs that aren't tests ([processes.md](processes.md)):
@@ -115,14 +115,14 @@ same methods, no test owner, mode set by `tmux=`.
 | `allowed_exit_codes` | nonzero exit codes a process may end with when stopped; 0 always may. An int for every process, an `Only(...)` rule for some, or a list of both. Death by signal N is 128+N: `130` allows SIGINT |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
-| `on_abort` | called with no arguments when a test fails, before everything is stopped: bring things down your own way |
+| `on_test_failure` | called with no arguments when a test of the owner fails, before the plugin stops the group: bring things down your own way first |
 | `log_dir` | where the logs go; default `<basetemp>/<Class>N/`, `<Class>.<test>N/` or `<test>N/` |
 | `env` | variables for each of its processes (None unsets); `start(env=)` wins. The group's only: never `os.environ` ([processes.md](processes.md#environment)) |
 
 | method | does |
 |---|---|
-| `start(name, cmd, ready=, timeout=30, fail_on_output=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on_output`, `allowed_exit_codes`: more for it, on top of the group's; plain values, no `Only`. `exits`: codes it may finish with on its own (no death). `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
-| `stop(name, sigint_timeout=, check=True, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
+| `start(name, cmd, *, ready=, ready_timeout=30, fail_on_output=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on_output`, `allowed_exit_codes`: more for it, on top of the group's; plain values, no `Only`. `exits`: codes it may finish with on its own (no death). `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
+| `stop(name, *, check=True, sigint_timeout=, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
 | `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
 | `wait_for(name, regex, timeout)` | a line matching (`re.Match`); name `"*"`: any process |
 | `wait_for_in_order(name, [regex, ...], timeout)` | lines in that order, each later than the last |
@@ -199,7 +199,7 @@ default)`, `parametrize(names, values)`.
 | a `fail_on_output` hit | recorded (output watch) | a death |
 | in the test: `check()`, `check_health()`, `wait_until`, `wait_for*` | checked | FAILED now |
 | after each test | `pytest_runtest_call` checks every open group | FAILED, with the last output and the log's path |
-| a test (or `setup_class`) fails | `pytest_runtest_makereport`: `on_abort()`, then `close(check=False)` on the class's and the test's groups | stopped at once, no checks; the rest of the class SKIPPED |
+| a test (or `setup_class`) fails | `pytest_runtest_makereport`: `on_test_failure()`, then `close(check=False)` on the class's and the test's groups | stopped at once, no checks; the rest of the class SKIPPED |
 | `teardown_class`: `close()` | SIGINT, escalating, in parallel | ERROR unless each stopped with an `allowed_exit_codes` code; nothing to do after an abort |
 
 Each problem is reported once, by the first check after it happened.

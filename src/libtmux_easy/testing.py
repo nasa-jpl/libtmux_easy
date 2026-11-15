@@ -331,7 +331,7 @@ class Processes(processes.ProcessGroup):
     test runs fails that test either way.
 
     @param owner: the test class (cls, in setup_class). None, in a test: that
-        test. A failed test of the owner stops the group at once (on_abort()
+        test. A failed test of the owner stops the group at once (on_test_failure()
         first); a class also skips its remaining tests. Names ('window:pane')
         are unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
@@ -344,14 +344,15 @@ class Processes(processes.ProcessGroup):
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    @param sigint_timeout: seconds a stopped process gets after SIGINT before
-        SIGTERM
-    @param on_abort: called with no arguments when a test of the owner fails,
-        before everything is stopped: bring things down your own way
+    @param on_test_failure: called with no arguments when a test of the
+        owner fails, before the plugin stops the group: bring things down
+        your own way first
     @param log_dir: where the processes' logs go; None: a new temp dir named
         after the owner
     @param on_exit: on_exit(name, PaneStatus, died), on every exit, from a
         watcher thread. 'died': nobody asked for it.
+    @param sigint_timeout: seconds a stopped process gets after SIGINT before
+        SIGTERM
     @param sigterm_timeout: seconds it then gets after SIGTERM before SIGKILL
     @param env: variables for every process of the group (None unsets);
         start(env=) wins. The group's only: never put in os.environ, so
@@ -367,10 +368,10 @@ class Processes(processes.ProcessGroup):
         *,
         fail_on_output: Optional[OneOrMany[Union[Match, Only]]] = None,
         allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
-        sigint_timeout: float = 5.0,
-        on_abort: Optional[Callable[[], None]] = None,
+        on_test_failure: Optional[Callable[[], None]] = None,
         log_dir: Union[str, os.PathLike, None] = None,
         on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
+        sigint_timeout: float = 5.0,
         sigterm_timeout: float = 5.0,
         env: Optional[Mapping[str, Optional[str]]] = None,
     ):
@@ -412,12 +413,12 @@ class Processes(processes.ProcessGroup):
             allowed_exit_codes=allowed_exit_codes,
             sigint_timeout=sigint_timeout,
             sigterm_timeout=sigterm_timeout,
-            on_abort=on_abort,
             on_exit=on_exit,
             keep_open=config.lte_keep_open,
             scope=scope,
             env=env,
         )
+        self.on_test_failure = on_test_failure
         config.lte_log_dirs.append(str(log_dir))
         self.owner = owner
 
@@ -504,17 +505,18 @@ _aborted = {}  # test class -> why its processes were stopped
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """A failed test (or setup) stops its class's and its own processes at
-    once, each group's on_abort() first. Not with --keep-open."""
+    once, each group's on_test_failure() first. Not with --keep-open."""
     report = (yield).get_result()
     if not report.failed or call.when == "teardown" or item.config.lte_keep_open:
         return
     why = f"{item.name} failed"
     for procs in [p for p in _open if p.owner in (item, item.cls)]:
-        if procs.on_abort is not None:
+        on_test_failure = getattr(procs, "on_test_failure", None)  # Processes only
+        if on_test_failure is not None:
             try:
-                procs.on_abort()
+                on_test_failure()
             except Exception as exc:  # noqa: BLE001 -- still stop them below
-                item.warn(pytest.PytestWarning(f"on_abort() raised {exc!r}"))
+                item.warn(pytest.PytestWarning(f"on_test_failure() raised {exc!r}"))
         procs._abort(why)
         if procs.owner is not item:
             _aborted[procs.owner] = why

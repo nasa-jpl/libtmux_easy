@@ -124,7 +124,7 @@ class TestSrv:
     @classmethod
     def setup_class(cls):
         cls.procs = Processes(cls, fail_on_output="BOOM")
-        cls.procs.start("w:srv", f"{sys.executable} srv.py", ready=%r, timeout=2)
+        cls.procs.start("w:srv", f"{sys.executable} srv.py", ready=%r, ready_timeout=2)
 
     @classmethod
     def teardown_class(cls):
@@ -352,7 +352,7 @@ class TestSetupFails:
     def setup_class(cls):
         cls.procs = Processes(cls)
         cls.procs.start("w:x", CMD)
-        cls.procs.start("w:y", CMD, ready="never", timeout=0.5)
+        cls.procs.start("w:y", CMD, ready="never", ready_timeout=0.5)
 
     def test_x(self):
         pass
@@ -460,7 +460,7 @@ class TestParamFails:
 class TestAbort:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, on_abort=lambda: open("abort_called", "w").close())
+        cls.procs = Processes(cls, on_test_failure=lambda: open("abort_called", "w").close())
         cls.procs.start("w:a", CMD, ready="hello_42")
 
     @classmethod

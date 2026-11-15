@@ -37,6 +37,7 @@ import types
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
+    Any,
     Callable,
     Generic,
     Iterable,
@@ -1040,30 +1041,32 @@ class Process:
 
     def stop(
         self,
-        sigint_timeout: Optional[float] = None,
+        *,
         check: bool = True,
+        sigint_timeout: Optional[float] = None,
         sigterm_timeout: Optional[float] = None,
     ) -> PaneStatus:
         """Stop it (SIGINT, then SIGTERM, SIGKILL): ProcessGroup.stop().
 
+        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
         @return: its PaneStatus
         @raise ProcessFailure: with 'check', it did not stop cleanly
         """
-        return self.group.stop(self.name, sigint_timeout, check, sigterm_timeout)
+        return self.group.stop(
+            self.name, check=check, sigint_timeout=sigint_timeout, sigterm_timeout=sigterm_timeout
+        )
 
     def kill(self):
         """SIGKILL it: a death, unless in an expect_exit() block."""
         self.group.kill(self.name)
 
     def wait_for(self, pattern: Union[str, "re.Pattern"], timeout: float = 10.0) -> "re.Match":
-        """Wait for a line matching 'pattern': ProcessGroup.wait_for().
-
-        What it printed already counts.
+        """Wait for a line matching 'pattern': ProcessGroup.wait_for(). Lines
+        it printed before the call count too.
 
         @param pattern: a regex, searched in plain text
         @param timeout: seconds to wait
@@ -1299,14 +1302,12 @@ class ProcessGroup:
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    @param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
-        it per process.
-    @param on_abort: called with no arguments before a failed test stops the
-        group (the pytest subclass)
     @param on_exit: on_exit(name, PaneStatus, died) on each exit, from a
         watcher thread; 'died': an exit nobody asked for
     @param keep_open: close() stops nothing
     @param scope: groups with the same scope share names; None: this one
+    @param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
+        it per process.
     @param sigterm_timeout: seconds SIGTERM then gets before SIGKILL. start()
         can set it per process.
     @param env: variables for every process (None unsets), over this
@@ -1326,11 +1327,10 @@ class ProcessGroup:
         setup: Optional[str] = None,
         fail_on_output: Optional[OneOrMany[Union[Match, Only]]] = None,
         allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
-        sigint_timeout: float = 5.0,
-        on_abort: Optional[Callable[[], None]] = None,
         on_exit: Optional[Callable[[str, PaneStatus, bool], None]] = None,
         keep_open: bool = False,
         scope=None,
+        sigint_timeout: float = 5.0,
         sigterm_timeout: float = 5.0,
         env: Optional[Mapping[str, Optional[str]]] = None,
     ):
@@ -1358,7 +1358,6 @@ class ProcessGroup:
         )
         self.sigint_timeout = sigint_timeout
         self.sigterm_timeout = sigterm_timeout
-        self.on_abort = on_abort
         self.on_exit = on_exit
         self.names = []
         self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
@@ -1390,15 +1389,16 @@ class ProcessGroup:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:  # else the test failed: the plugin stops it, after on_abort()
+        if exc_type is None:  # else the test failed: the plugin stops it, after on_test_failure()
             self.close()
 
     def start(
         self,
         name: str,
         command: str,
+        *,
         ready: Union[str, "re.Pattern", None] = None,
-        timeout: float = 30.0,
+        ready_timeout: float = 30.0,
         fail_on_output: Optional[OneOrMany[Match]] = None,
         exits: Optional[ExitCodes] = None,
         allowed_exit_codes: Optional[ExitCodes] = None,
@@ -1414,7 +1414,7 @@ class ProcessGroup:
         @param name: 'window:name'; a name without ':' goes in a window of its own
         @param command: a shell command
         @param ready: a regex: wait for a line matching it, as wait_for() does
-        @param timeout: seconds to wait for 'ready'
+        @param ready_timeout: seconds to wait for 'ready'
         @param fail_on_output: more checks, on top of the group's: a Match
             (a regex, or a function line -> problem message or None) or a
             list of them
@@ -1452,7 +1452,7 @@ class ProcessGroup:
             command,
             dict(
                 ready=ready,
-                timeout=timeout,
+                ready_timeout=ready_timeout,
                 fail_on_output=fail_on_output,
                 exits=exits,
                 allowed_exit_codes=allowed_exit_codes,
@@ -1476,7 +1476,7 @@ class ProcessGroup:
             restart=(restart, restart_delay) if restart else None,
         )
         if ready is not None:
-            self.wait_for(name, ready, timeout)
+            self.wait_for(name, ready, ready_timeout)
         return Process(self, name)
 
     def _env_for(self, env):
@@ -1610,8 +1610,9 @@ class ProcessGroup:
         self.backend.kill(self._name(name))
 
     def kill_all(self):
-        """SIGKILL everything still running, at once: no death, no grace.
-        For a second Ctrl-C while close() waits."""
+        """SIGKILL everything still running, now: no grace, and no death
+        recorded. E.g. a program's second Ctrl-C, while close() is still
+        waiting for processes to stop."""
         self.stopping = True
         for name, run in self._runs.items():
             run.stopping = True
@@ -1641,15 +1642,16 @@ class ProcessGroup:
     def stop(
         self,
         name: str,
-        sigint_timeout: Optional[float] = None,
+        *,
         check: bool = True,
+        sigint_timeout: Optional[float] = None,
         sigterm_timeout: Optional[float] = None,
     ) -> PaneStatus:
         """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
 
+        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
-        @param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
         @param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
         @return: its PaneStatus
@@ -1830,9 +1832,9 @@ class ProcessGroup:
     def wait_for(
         self, name: str, pattern: Union[str, "re.Pattern"], timeout: float = 10.0
     ) -> "re.Match":
-        """Wait for the process to print a line matching 'pattern'.
-
-        What it printed already counts.
+        """Wait for the process to print a line matching 'pattern'. Lines it
+        printed before the call count too: it searches all of its output since
+        its latest start.
 
         @param name: the process, 'window:pane'; "*": any process (checking
             health while it waits)
@@ -1919,29 +1921,35 @@ class ProcessGroup:
 
     def wait_until(
         self,
-        predicate: Callable[[], Optional[_T]],
+        condition: Callable[[], Any],
         timeout: float = 30.0,
         poll: float = 0.2,
         what: Optional[str] = None,
-    ) -> _T:
-        """Call predicate() until it returns something true; check() between
-        calls, so a death fails now, not at the timeout.
+    ) -> Any:
+        """Wait until condition() returns something truthy. For anything
+        other than a line of output: an HTTP reply, a file, a ROS topic.
+        Between calls it checks the group's health, so a death fails at once,
+        not at the timeout.
 
+            procs.wait_until(lambda: os.path.exists("/tmp/ready"), timeout=10)
+
+        @param condition: a function of no arguments, called every 'poll'
+            seconds; a truthy result ends the wait
         @param timeout: seconds to wait
         @param poll: seconds between calls
-        @param what: what it waits for, for the failure message; None:
-            predicate's name
-        @return: what predicate() returned
+        @param what: what it waits for, for the failure message; None: the
+            function's name
+        @return: what condition() returned
         @raise ProcessFailure: 'timeout' passed first, or a death
         """
         deadline = time.monotonic() + timeout
         while True:
             self.check()
-            result = predicate()
+            result = condition()
             if result:
                 return result
             if time.monotonic() >= deadline:
-                what = what or getattr(predicate, "__name__", "a condition")
+                what = what or getattr(condition, "__name__", "a condition")
                 raise ProcessFailure(
                     _report(f"timed out waiting for {what}", [("waited", f"{timeout:g} s")])
                 )

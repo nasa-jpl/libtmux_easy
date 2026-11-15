@@ -9,12 +9,20 @@ run tests against it, shut it down.
 What it shows:
   setup_class      start in stages: a server, a gate (any code), then workers
   ready=           wait for a line in a process's output before going on
-  fail_on_output         a line that fails the test (a regex, or a function)
+  fail_on_output   a line that fails the test (a regex, or a function); Only()
+                   for some processes
+  env=, on_exit=   variables for every process; a callback on every exit
   every test       checked after it ran: a death fails it, not a later one
+  wait_for()       a line of one process's output ("*": any process)
+  wait_until()     any condition, e.g. the server answers
+  exits=           a process that finishes on its own: wait_for_exit()
+  expect_exit()    an exit the test causes on purpose (kill()) is no death
+  allowed_exit_codes  a process that exits 2 on SIGINT, stopped cleanly
   test_long_run    a long test calling check_health(), so a death fails it
                    within half a second, not at the end
   Processes()      in a test: a process just that test needs, stopped after it
-  teardown_class   close(): stop everything, fail unless each exits 0 on SIGINT
+  on_test_failure  bring things down your own way when a test fails
+  teardown_class   close(): stop everything, fail unless each stopped cleanly
   logs             each process's output in a file: 'process logs:' at the end
 """
 
@@ -59,7 +67,14 @@ class TestTour:
 
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, fail_on_output=FAIL_ON)  # empty; logs in a tmp dir of its own
+        cls.exits = []  # (name, died) of every exit, from on_exit
+        cls.procs = Processes(  # empty; logs in a tmp dir of its own
+            cls,
+            fail_on_output=FAIL_ON,
+            env={"TOUR": "1"},  # for every process of the group
+            on_exit=lambda name, status, died: cls.exits.append((name, died)),
+            on_test_failure=lambda: print("a test failed: saving state first"),
+        )
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
         # start() returns a handle: cls.web.wait_for(...), cls.web.stop().
         cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
@@ -84,6 +99,30 @@ class TestTour:
         self.w0.wait_for(r"tick 5")
         assert "w0 tick 0" in self.w0.output()
         assert "w0 tick 0" in open(self.w0.log()).read()
+
+    def test_any_process(self):
+        self.procs.wait_for("*", r"tick 3")  # a line from any process
+        assert self.procs["workers:w0"].name == self.w0.name  # a handle by name
+
+    def test_one_shot(self):
+        # exits=: it finishes on its own, so its exit is no death.
+        job = self.procs.start("jobs:once", "echo TOUR=$TOUR", exits=0)
+        status = job.wait_for_exit()
+        assert status.exit_status.code == 0 and "TOUR=1" in job.output()
+
+    def test_kill_on_purpose(self):
+        # A kill the test causes: no death inside expect_exit().
+        with self.procs.expect_exit("workers:w0"):
+            self.w0.kill()
+        assert self.w0.status().exit_status.signal == 9
+        assert ("workers:w0", False) in self.exits  # on_exit heard it: not a death
+        self.w0.start()
+
+    def test_allowed_exit_code(self):
+        # It exits 2 on SIGINT: allowed, so stop() counts it as clean.
+        cmd = "trap 'exit 2' INT; echo up; while :; do sleep 0.1; done"
+        tool = self.procs.start("tools:quirky", cmd, ready="up", allowed_exit_codes=2)
+        assert tool.stop().exit_status.code == 2
 
     def test_stop_and_restart(self):
         status = self.w1.stop()  # fails unless it exits 0 on SIGINT

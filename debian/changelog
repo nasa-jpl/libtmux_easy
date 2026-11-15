@@ -16,6 +16,10 @@ libtmux-easy (0.6.0) noble; urgency=medium
     matched or check and msg, exit, stopped, wanted, log, last output).
   * adopt(): a pane's command is the command line it runs, printed at
     adoption.
+  * Breaking: Processes(on_abort=) is now on_test_failure=, and only on
+    Processes. start(timeout=) is now ready_timeout=. start() and stop()
+    options are keyword-only; sigint_timeout sits next to sigterm_timeout.
+  * wait_until(condition): a readable signature and docstring.
   * Breaking: modules named after their commands: dash/ is lte_dash/,
     launch is lte_session, starter is lte_defaults.
   * SIGINT's default grace is 5 s (was 10): stop_pane(), ProcessGroup,
