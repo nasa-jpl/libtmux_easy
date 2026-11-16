@@ -102,25 +102,25 @@ class Only(Generic[_T]):
     """'value', for only the processes both globs match. For the group's
     fail_on_output= and allowed_exit_codes=; start() takes plain values.
 
-        Only(launch_death(), command="*ros2 launch*")   # launch processes
+        Only(launch_death(), cmd="*ros2 launch*")   # launch processes
         Only([r"ERROR", too_slow], name="sim:server")   # one process
         Only({2, 3}, name="pub:*")                      # exit codes
 
     :param value: what start() would take: a Match or a list of them, or
         ExitCodes
     :param name: a glob on the process name, 'window:pane'
-    :param command: a glob on its command line; None: any. For an adopted
+    :param cmd: a glob on its command line; None: any. For an adopted
         pane, the command line it runs (from /proc), not what the script typed
     """
 
     value: _T
     name: str = "*"
-    command: Optional[str] = None
+    cmd: Optional[str] = None
 
-    def applies(self, name: str, command: str) -> bool:
-        """Whether it is for process 'name', running 'command'."""
+    def applies(self, name: str, cmd: str) -> bool:
+        """Whether it is for process 'name', running 'cmd'."""
         return fnmatch.fnmatchcase(name, self.name) and (
-            self.command is None or fnmatch.fnmatchcase(command, self.command)
+            self.cmd is None or fnmatch.fnmatchcase(cmd, self.cmd)
         )
 
 
@@ -314,7 +314,7 @@ class _TmuxBackend:
             self.session.current_pane = w.panes[-1]
         return w
 
-    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
+    def start(self, name, cmd, setup, on_exit, on_line=None, log=None, env=None, restart=None):
         """Start 'name' in a new wrap-mode pane in its group window (made on
         first use); starting it again gets a new pane, '<pane>~N'. 'log':
         lte-run --tee's file, the command's output only. 'restart': (count,
@@ -332,7 +332,7 @@ class _TmuxBackend:
             self.logs[name] = log
         self.panes[name] = self.session.new_pane(
             pane_name,
-            command,
+            cmd,
             mode=PANE_MODE_WRAP,
             on_exit=lambda s: on_exit(name, s),
             on_output=on_output,
@@ -447,9 +447,9 @@ class _Subprocess:
     stdin a pty. A thread reads its output (kept, logged, echoed, passed to
     on_line); another waits for its exit and calls on_exit."""
 
-    def __init__(self, name, command, on_exit, tty, lock, on_line=None, log=None, env=None):
+    def __init__(self, name, cmd, on_exit, tty, lock, on_line=None, log=None, env=None):
         self.name = name
-        self.command = command
+        self.command = cmd
         self.lines = []
         self.plain = []  # the lines as plain text, for matching
         self.cond = threading.Condition()
@@ -466,7 +466,7 @@ class _Subprocess:
             if k != "BASH_ENV" and v is not None
         }
         self.proc = subprocess.Popen(
-            ["bash", "-c", command],
+            ["bash", "-c", cmd],
             stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -584,20 +584,20 @@ class _SubprocessBackend:
         self.lock = threading.Lock()
         self.procs = {}
 
-    def start(self, name, command, setup, on_exit, on_line=None, log=None, env=None, restart=None):
+    def start(self, name, cmd, setup, on_exit, on_line=None, log=None, env=None, restart=None):
         """Start 'name' as a _Subprocess ('setup' first, in the same shell),
         replacing an old one. 'restart': (count, delay): under 'lte-run
         --restart', which a stop (SIGINT to the group) ends."""
         if restart:
             count, delay = restart
-            command = (
+            cmd = (
                 f"{WRAP_COMMAND} --restart {int(count)} --restart-delay {float(delay):g}"
-                f" -- bash -c {shlex.quote(command)}"
+                f" -- bash -c {shlex.quote(cmd)}"
             )
         if setup:
-            command = f"{setup} && {command}"
+            cmd = f"{setup} && {cmd}"
         tty = self.tty if any(fnmatch.fnmatchcase(name, p) for p in self.echo) else None
-        self.procs[name] = _Subprocess(name, command, on_exit, tty, self.lock, on_line, log, env)
+        self.procs[name] = _Subprocess(name, cmd, on_exit, tty, self.lock, on_line, log, env)
 
     def wait_for(self, name, regex, timeout, start=0):
         """The first (line number, re.Match) at line 'start' or later;
@@ -693,11 +693,11 @@ class _AdoptedBackend:
             ["tmux", "-S", self.socket, *args], capture_output=True, text=True, errors="replace"
         ).stdout.splitlines()
 
-    def run_script(self, name, command, on_exit, on_line, log, env=None):
+    def run_script(self, name, cmd, on_exit, on_line, log, env=None):
         """'env': the group's; env() wins."""
         self.script[name] = _Subprocess(
             name,
-            command,
+            cmd,
             on_exit,
             None,
             threading.Lock(),
@@ -1112,10 +1112,10 @@ class Process:
     def __repr__(self):
         return f"<Process {self.name}>"
 
-    def start(self, command: Optional[str] = None) -> "Process":
+    def start(self, cmd: Optional[str] = None) -> "Process":
         """Start it again, with the same start() options.
 
-        :param command: a new command; None: the same one
+        :param cmd: a new command; None: the same one
         :return: its Process
         :raises ValueError: an adopted pane, or it is still running
         :raises ProcessFailure: no 'ready' line in time
@@ -1125,7 +1125,7 @@ class Process:
                 f"start(): {self.name} is the script's pane; it can't be started again"
             )
         same, options = self.group._commands[self.name]
-        return self.group.start(self.name, same if command is None else command, **options)
+        return self.group.start(self.name, same if cmd is None else cmd, **options)
 
     def stop(
         self,
@@ -1333,13 +1333,13 @@ class _BuildSession:
         self._backend.register(full, pane, log)
         return pane
 
-    def send_command_before(self, command, window=None):
+    def send_command_before(self, cmd, window=None):
         """A setup command for the script's panes: in 'window', else in all its
         windows (and those made later). The group's setup runs first."""
         if window is not None:
-            command = " && ".join(c for c in (self._group.setup, command) if c)
-            return self._session.send_command_before(command, window=self._full(window))
-        self._before = command
+            cmd = " && ".join(c for c in (self._group.setup, cmd) if c)
+            return self._session.send_command_before(cmd, window=self._full(window))
+        self._before = cmd
         for name in self._windows:
             self._session.send_command_before(self._setup(), window=self._full(name))
 
@@ -1386,7 +1386,7 @@ class ProcessGroup:
         it runs: a Match (a regex, or a function line -> problem message or
         None) for every process, an Only(...) rule for some, or a list of
         both. A hit counts as a death. E.g.
-        [r"Traceback", Only(launch_death(), command="*ros2 launch*")]
+        [r"Traceback", Only(launch_death(), cmd="*ros2 launch*")]
     :param allowed_exit_codes: nonzero exit codes a process may end with
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
@@ -1483,7 +1483,7 @@ class ProcessGroup:
     def start(
         self,
         name: str,
-        command: str,
+        cmd: str,
         *,
         ready: Union[str, "re.Pattern", None] = None,
         ready_timeout: float = 30.0,
@@ -1496,11 +1496,11 @@ class ProcessGroup:
         restart: int = 0,
         restart_delay: float = 1.0,
     ) -> Process:
-        """Start 'command' as a process of the group. A stopped name can be
+        """Start 'cmd' as a process of the group. A stopped name can be
         started again.
 
         :param name: 'window:name'; a name without ':' goes in a window of its own
-        :param command: a shell command
+        :param cmd: a shell command
         :param ready: a regex: wait for a line matching it, as wait_for() does
         :param ready_timeout: seconds to wait for 'ready'
         :param fail_on_output: more checks, on top of the group's: a Match
@@ -1537,9 +1537,9 @@ class ProcessGroup:
             raise ValueError("start(): the group is closed")
         _check_restart(restart, restart_delay)
         name = self._name(name)
-        on_exit, on_line = self._begin(name, command, fail_on_output, exits, allowed_exit_codes)
+        on_exit, on_line = self._begin(name, cmd, fail_on_output, exits, allowed_exit_codes)
         self._commands[name] = (
-            command,
+            cmd,
             dict(
                 ready=ready,
                 ready_timeout=ready_timeout,
@@ -1557,7 +1557,7 @@ class ProcessGroup:
         self._sigterm_timeouts[name] = sigterm_timeout
         self.backend.start(
             name,
-            command,
+            cmd,
             self.setup,
             on_exit,
             on_line,
@@ -1573,7 +1573,7 @@ class ProcessGroup:
         """A process's env= over the group's: None if neither has any."""
         return {**self.env, **(env or {})} or None
 
-    def _begin(self, name, command, fail_on_output=None, exits=None, allowed_exit_codes=None):
+    def _begin(self, name, cmd, fail_on_output=None, exits=None, allowed_exit_codes=None):
         """A new run of 'name': checks, bookkeeping. Returns the backend's
         (on_exit, on_line) for it."""
         if name in self._runs and self.status(name).running:
@@ -1581,11 +1581,11 @@ class ProcessGroup:
         if any(name in p._runs for p in _open if p is not self and p.scope is self.scope):
             raise ValueError(f"{name} is taken: another open group of {self.prefix} has it")
         matches = [
-            m for rule in self.fail_on_output if rule.applies(name, command) for m in rule.value
+            m for rule in self.fail_on_output if rule.applies(name, cmd) for m in rule.value
         ] + _matches(fail_on_output, "start(fail_on_output=)")
         codes = {0, *_exit_codes(allowed_exit_codes, "start(allowed_exit_codes=)")}
         for rule in self.allowed_exit_codes:
-            if rule.applies(name, command):
+            if rule.applies(name, cmd):
                 codes.update(rule.value)
         allowed = tuple(sorted(c for c in codes if c != ANY_EXIT))
         if ANY_EXIT in codes:
@@ -1631,13 +1631,13 @@ class ProcessGroup:
 
     def adopt(
         self,
-        command: str,
+        cmd: str,
         name: str = "script",
         ready: Union[str, "re.Pattern", None] = None,
         timeout: float = 60.0,
         exits: Optional[Mapping[str, ExitCodes]] = None,
     ) -> List[Process]:
-        """Test a session script as it is: run 'command' (as process 'name'),
+        """Test a session script as it is: run 'cmd' (as process 'name'),
         then make every pane it made a process of this group, named
         'window:pane' (new_pane()'s name; else the pane's index). Its tmux
         server is its own: the script's session names can't clash with
@@ -1651,13 +1651,13 @@ class ProcessGroup:
         script gives them. Kept on failure: tmux -S <socket> attach. See
         docs/testing-scripts.md.
 
-        A pane's command, for Only(command=) globs and failure messages, is
+        A pane's command, for Only(cmd=) globs and failure messages, is
         the command line it runs at adoption (printed, one line per pane). It
         may differ from what the script typed: 'ros2 launch ...' can run as
         '/usr/bin/python3 /opt/ros/.../ros2 launch ...', so glob
         "*ros2 launch*", not "ros2 launch*".
 
-        :param command: the script, a shell command
+        :param cmd: the script, a shell command
         :param name: the script's process name
         :param ready: a regex: the script prints a matching line, and is then a
             process of the group too. None: it must exit 0 within 'timeout'
@@ -1673,14 +1673,14 @@ class ProcessGroup:
         self.backend = backend = _AdoptedBackend()
         self._adopted = True
         name = self._name(name)
-        on_exit, on_line = self._begin(name, command, exits=None if ready else 0)
-        backend.run_script(name, command, on_exit, on_line, self.log(name), self.env)
+        on_exit, on_line = self._begin(name, cmd, exits=None if ready else 0)
+        backend.run_script(name, cmd, on_exit, on_line, self.log(name), self.env)
         if ready is not None:
             self.wait_for_line(name, ready, timeout)
         else:
             self.wait_for_exit(name, timeout)
         adopted = []
-        self._commands[name] = (command, {})
+        self._commands[name] = (cmd, {})
         for pane, pane_id, mode, running in backend.discover():
             print(f"adopt(): {pane} runs {running or '(unknown)'}", file=self.tty, flush=True)
             self._commands[pane] = (running, {})

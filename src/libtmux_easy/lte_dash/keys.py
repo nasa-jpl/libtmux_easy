@@ -104,22 +104,22 @@ def chosen(role: str, default: str, run=_tmux) -> str:
 def borrow(
     key: str,
     option: str,
-    command: str,
+    cmd: str,
     message: Optional[str] = None,
     run=_tmux,
     if_free: bool = False,
 ) -> bool:
-    """Bind 'key' to run 'command' in sessions where 'option' is set, and its
+    """Bind 'key' to run 'cmd' in sessions where 'option' is set, and its
     previous binding everywhere else.
 
     :param option: a session option, e.g. @lte_dash_window
-    :param command: tmux command text
+    :param cmd: tmux command text
     :param message: shown elsewhere if 'key' was unbound before; None: "KEY
         is not bound here"
     :param run: runs tmux (a stub, in tests)
     :param if_free: only if 'key' is unbound (or already borrowed)
     :return: True if borrowed
-    :raises ValueError: tmux can't parse the binding made of 'command'
+    :raises ValueError: tmux can't parse the binding made of 'cmd'
     """
     users_option, saved_option = _options(key)
     users = int(_option(None, users_option, "-gq", run=run) or 0)
@@ -135,7 +135,7 @@ def borrow(
         _source(
             run,
             f"bind-key -T {TABLE} {key} if-shell -F '#{{{option}}}' "
-            f"{{ {command} }} {{ {fallback} }}",
+            f"{{ {cmd} }} {{ {fallback} }}",
         )
         run("set-option", "-gq", saved_option, saved)
     run("set-option", "-gq", users_option, str(users + 1))

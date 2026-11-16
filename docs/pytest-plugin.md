@@ -115,7 +115,7 @@ same methods, no test owner, mode set by `tmux=`.
 | argument | meaning |
 |---|---|
 | `owner` | the test class (`cls` in `setup_class`); none in a test: that test. A failed test of a class skips the rest of it |
-| `fail_on_output` | stdout/stderr output that fails a process while it runs: a check for every process, an `Only(...)` rule for some, or a list of both. A check is a regex (string, or compiled for flags), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `[r"Traceback", Only(launch_death(), command="*ros2 launch*")]` |
+| `fail_on_output` | stdout/stderr output that fails a process while it runs: a check for every process, an `Only(...)` rule for some, or a list of both. A check is a regex (string, or compiled for flags), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `[r"Traceback", Only(launch_death(), cmd="*ros2 launch*")]` |
 | `allowed_exit_codes` | nonzero exit codes a process may end with when stopped; 0 always may. An int for every process, an `Only(...)` rule for some, or a list of both. Death by signal N is 128+N: `130` allows SIGINT. `ANY_EXIT` (or `"any"`): any end is clean |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
@@ -142,13 +142,13 @@ same methods, no test owner, mode set by `tmux=`.
 `Process`, from `start()` or `procs[name]`: the methods above for its name,
 without it: `stop()`, `kill()`, `wait_for_line(regex)`, `mark()`,
 `wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`;
-`start(command=None)` starts it again with the same options, and the same
+`start(cmd=None)` starts it again with the same options, and the same
 command unless given a new one. It follows the name, so it stays valid
 after a stop and a new start.
 
 ### Targeting: `Only`
 
-`Only(value, name="*", command=None)`: `value` (what `start()` would take)
+`Only(value, name="*", cmd=None)`: `value` (what `start()` would take)
 for only the processes both globs match.
 
 ```python
@@ -157,7 +157,7 @@ from libtmux_easy.testing import ANY_EXIT, Only, Processes
 Processes(cls,
     fail_on_output=[
         r"Traceback",                                   # every process
-        Only(launch_death(), command="*ros2 launch*"),  # launch processes
+        Only(launch_death(), cmd="*ros2 launch*"),  # launch processes
         Only(r"(?i)fatal", name="sim:*"),               # the sim window's panes
         Only([r"ERROR", too_slow], name="sim:server"),  # one process, two checks
     ],

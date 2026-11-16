@@ -686,8 +686,8 @@ class TmuxSession(Session):
             self.capture(window, None if pane_capture is True else pane_capture)
         return window
 
-    def send_command_before(self, command: str, window: Union[str, Window, None] = None):
-        """Run 'command' in every new pane before its own command (cd, source
+    def send_command_before(self, cmd: str, window: Union[str, Window, None] = None):
+        """Run 'cmd' in every new pane before its own command (cd, source
         an environment). In exec mode it runs in the same process ('setup &&
         exec cmd'); in shell and wrap mode, in the pane's shell.
 
@@ -695,16 +695,16 @@ class TmuxSession(Session):
         the setup's status: exec mode by '&&', wrap mode by lte-run
         ($LTE_RUN_SETUP), shell mode by a '$?' probe (and a warning).
 
-        :param command: a shell command
+        :param cmd: a shell command
         :param window: for this window only (its replaces the session's); None:
             the whole session
         :raises ValueError: no such window
         """
         if window:
             window = self.resolve_target_window(window)
-            self.command_before[window.id] = command
+            self.command_before[window.id] = cmd
         else:
-            self.command_before["all"] = command
+            self.command_before["all"] = cmd
 
     def copy_environment(self, env: Optional[Mapping[str, str]] = None):
         """Give every pane started from now on 'env', added to and overriding
@@ -762,8 +762,8 @@ class TmuxSession(Session):
             raise exc.LibTmuxException(proc.stderr.decode(errors="replace").strip())
         return proc.stdout.decode(errors="replace").splitlines()
 
-    def _spawn(self, env, command):
-        """Run the tmux command 'command' (a split-window or respawn-pane line
+    def _spawn(self, env, cmd):
+        """Run the tmux command 'cmd' (a split-window or respawn-pane line
         of a tmux command file, maybe with others around it) so that the process it starts gets exactly
         'env', plus what tmux sets itself (TMUX, TMUX_PANE, TERM, SHELL, PWD,
         SHLVL, TERM_PROGRAM*). In one source-file call: the session's tmux
@@ -777,7 +777,7 @@ class TmuxSession(Session):
         names = set(saved) | set(server)
         lines = [f"set-environment {target} {word(k)} {word(v)}" for k, v in env.items()]
         lines += [f"set-environment {target} -r {word(k)}" for k in sorted(names - set(env))]
-        lines.append(command)
+        lines.append(cmd)
         for k in sorted(names | set(env)):
             if k in hidden:  # set without -h above: hidden again, as it was
                 if k in env:
@@ -1085,7 +1085,7 @@ class TmuxSession(Session):
     def _new_shell_pane(
         self,
         name,
-        command,
+        cmd,
         before,
         enter,
         mode,
@@ -1095,7 +1095,7 @@ class TmuxSession(Session):
         wait_start=True,
         **pane_kwargs,
     ):
-        """Shell and wrap mode: type 'command' into the pane's shell."""
+        """Shell and wrap mode: type 'cmd' into the pane's shell."""
         pane, env = self._claim_pane(name, env, **pane_kwargs)
         if _cmd_capture is not None:
             self._cmd_capture[pane.id] = _cmd_capture
@@ -1114,7 +1114,7 @@ class TmuxSession(Session):
                     self._wrap_starting.add(pane.id)
                     self.pane_targets[pane.id] = ()
             # Typed early, a line echoes twice: as it is typed, then at the prompt.
-            self._send_wrapped(pane, command, enter, 2 if early else 1, before)
+            self._send_wrapped(pane, cmd, enter, 2 if early else 1, before)
             if before and enter and not early:
                 # The setup runs first: as long as it takes, not the 5 s
                 # _capture_target_pids() gives lte-run.
@@ -1129,11 +1129,11 @@ class TmuxSession(Session):
             status = self._probe_shell_status(pane)
             if status.known and status.code != 0:
                 logger.warning(
-                    f"Pane {name}: setup {before!r} failed ({status}); " f"not running {command!r}"
+                    f"Pane {name}: setup {before!r} failed ({status}); " f"not running {cmd!r}"
                 )
                 self._exit_status[pane.id] = status
                 return pane
-        self._type(pane, command, enter)
+        self._type(pane, cmd, enter)
         return pane
 
     def _wait_shell_ready(self, pane, timeout=_SHELL_START):
@@ -1152,18 +1152,18 @@ class TmuxSession(Session):
             time.sleep(0.05)
         logger.debug(f"Pane {pane.id}: shell not ready within {timeout}s; typing anyway.")
 
-    def _new_exec_pane(self, name, command, before, env, **pane_kwargs):
+    def _new_exec_pane(self, name, cmd, before, env, **pane_kwargs):
         # A command_before still works here, but it has to run in the same process
         # that then becomes 'command' -- hence 'exec'. Without it the pane process
         # would be the setup shell, and tmux would report ITS status, not the
         # command's. This is the idiom for e.g. sourcing an environment
         # before launching.
-        """Exec mode: a pane whose own process is 'command' (after 'before', in
+        """Exec mode: a pane whose own process is 'cmd' (after 'before', in
         the same process via exec), so tmux records its exit status.
         remain-on-exit is on before it starts."""
-        shell_command = command
+        shell_command = cmd
         if before:
-            inner = f"{before} && exec {command}"
+            inner = f"{before} && exec {cmd}"
             shell_command = f"bash -c {shlex.quote(inner)}"
 
         # 'shell' is how this mode launches the command; a caller-supplied one
@@ -1187,12 +1187,12 @@ class TmuxSession(Session):
         self._set_remain_on_exit(pane)  # the pane's own, from now on
         return pane
 
-    def _respawn(self, pane, env, *command):
-        """respawn-pane -k: the pane's process replaced (by 'command', or a
+    def _respawn(self, pane, env, *cmd):
+        """respawn-pane -k: the pane's process replaced (by 'cmd', or a
         fresh shell), with exactly 'env' (see _spawn())."""
         if env is None:
             env = self._pane_environment(pane.window_id, None)
-        args = ["respawn-pane", "-k", "-t", pane.id, *(command or (self._shell_command(),))]
+        args = ["respawn-pane", "-k", "-t", pane.id, *(cmd or (self._shell_command(),))]
         self._spawn(env, " ".join(_tmux_word(a) for a in args))
         pane.refresh()  # pane_pid is a cached field: the old, dead pid otherwise
 
@@ -1269,12 +1269,12 @@ class TmuxSession(Session):
 
     def send_keys(
         self,
-        command: str,
+        cmd: str,
         enter: bool = True,
         target_pane: Union[Pane, str, None] = None,
         cmd_capture: Optional[str] = None,
     ):
-        """Type 'command' into a pane.
+        """Type 'cmd' into a pane.
 
         Shell pane, enter=False at the prompt: the line is left unsubmitted.
         The last run's status is read first ('$?' with a clean line); the pane
@@ -1284,7 +1284,7 @@ class TmuxSession(Session):
 
         :param enter: press Enter after it
         :param target_pane: a name, id or Pane; None: the last new_pane()
-        :param cmd_capture: a file (a wrap pane only): run 'command' under
+        :param cmd_capture: a file (a wrap pane only): run 'cmd' under
             lte-run, saving its output only: new_pane(cmd_capture=). It becomes
             the pane's, for later reruns too.
         :raises ValueError: no pane yet, a pane not made by new_pane(), or
@@ -1302,15 +1302,15 @@ class TmuxSession(Session):
         if pane_name is None:
             raise ValueError(f"Pane {pane} is not a named pane tracked by this session.")
 
-        logger.debug(f"Sending: {command}")
+        logger.debug(f"Sending: {cmd}")
         if cmd_capture is not None:
             if self._pane_mode(pane) != PANE_MODE_WRAP:
                 raise ValueError("cmd_capture needs a wrap pane (it is lte-run's --tee)")
             self._cmd_capture[pane.id] = os.path.abspath(cmd_capture)
-            self._send_wrapped(pane, command, enter)
+            self._send_wrapped(pane, cmd, enter)
             if enter:
                 self._run_typed[pane.id] = time.monotonic()  # see _command_running()
-            self.commands.setdefault(pane_name, []).append(command)
+            self.commands.setdefault(pane_name, []).append(cmd)
             return
         held = (
             not enter
@@ -1320,12 +1320,12 @@ class TmuxSession(Session):
         )
         if held:
             self.exit_status(pane)  # the probe's Enter would submit the line
-        self._type(pane, command, enter)
+        self._type(pane, cmd, enter)
         if held:
             self._unsubmitted.add(pane.id)
-        if enter and command.lstrip().startswith(WRAP_COMMAND + " "):
+        if enter and cmd.lstrip().startswith(WRAP_COMMAND + " "):
             self._run_typed[pane.id] = time.monotonic()  # see _command_running()
-        self.commands.setdefault(pane_name, []).append(command)
+        self.commands.setdefault(pane_name, []).append(cmd)
         if enter and pane.id in self._unsubmitted:
             self._submitted(pane)
 
@@ -1792,7 +1792,7 @@ class TmuxSession(Session):
             except psutil.NoSuchProcess:
                 pass
 
-    def respawn_pane(self, target_pane: Union[Pane, str], command: Optional[str] = None) -> Pane:
+    def respawn_pane(self, target_pane: Union[Pane, str], cmd: Optional[str] = None) -> Pane:
         """Rerun a pane's command in place, replacing whatever is running.
 
         Works in every mode: an exec pane's process is replaced via
@@ -1805,15 +1805,15 @@ class TmuxSession(Session):
         cached (see exit_status()) and the recorded target pid is the old, dead
         process.
 
-        :param command: the command to run; None: the pane's original one
+        :param cmd: the command to run; None: the pane's original one
         :return: the Pane
         :raises ValueError: no such pane
         """
         pane = self.resolve_target_pane(target_pane)
         mode = self._pane_mode(pane)
 
-        if command is None:
-            command = self.commands[self.get_pane_name(pane)][0]
+        if cmd is None:
+            cmd = self.commands[self.get_pane_name(pane)][0]
         self._exit_status.pop(pane.id, None)
         self._restarts.pop(pane.id, None)  # the old run's
         if self._reader is not None:
@@ -1821,7 +1821,7 @@ class TmuxSession(Session):
 
         if mode == PANE_MODE_EXEC:
             self._stopped_by.pop(pane.id, None)
-            self._respawn(pane, self._pane_env.get(pane.id), command)
+            self._respawn(pane, self._pane_env.get(pane.id), cmd)
         else:
             if self.is_running(pane):
                 self.stop_pane(pane)
@@ -1831,11 +1831,11 @@ class TmuxSession(Session):
             self._stopped_by.pop(pane.id, None)  # that was the old run
             self._unsubmitted.discard(pane.id)  # submitted with the command
             if mode == PANE_MODE_WRAP:
-                self._send_wrapped(pane, command)
+                self._send_wrapped(pane, cmd)
             else:
-                self._type(pane, command, enter=True)
+                self._type(pane, cmd, enter=True)
 
-        self.commands[self.get_pane_name(pane)] = [command]
+        self.commands[self.get_pane_name(pane)] = [cmd]
 
         # Target-pid tracking is per-run: the old pid is gone the moment the
         # command is replaced, so is_running()/the watcher must pick up the new
@@ -2165,13 +2165,13 @@ class TmuxSession(Session):
         cmds = self.commands.setdefault(name, [command])
         cmds[0] = command
 
-    def _send_wrapped(self, pane, command, enter=True, echoes=1, before=None):
-        """Type 'command' into a shell pane under lte-run. 'before' (a setup)
+    def _send_wrapped(self, pane, cmd, enter=True, echoes=1, before=None):
+        """Type 'cmd' into a shell pane under lte-run. 'before' (a setup)
         goes first on the same line, so a rerun by hand (up arrow) runs both;
         its '$?' tells lte-run not to run the command if it failed."""
-        target = command
-        if any(op in command for op in _SHELL_OPERATORS):
-            target = f"bash -c {shlex.quote(command)}"
+        target = cmd
+        if any(op in cmd for op in _SHELL_OPERATORS):
+            target = f"bash -c {shlex.quote(cmd)}"
         # Armed before sending, so a fast 'started' can't be missed. The mode
         # must be set first too, or 'started' would be ignored as untracked.
         self._wrap_started[pane.id] = threading.Event()
@@ -3325,7 +3325,7 @@ class TmuxSession(Session):
 
     def dashboard_pane(
         self,
-        command: Optional[str] = None,
+        cmd: Optional[str] = None,
         title: Optional[str] = None,
         side: str = "below",
         size: Optional[Union[int, str]] = None,
@@ -3333,11 +3333,11 @@ class TmuxSession(Session):
         """Add a persistent pane to the open dashboard, next to the viewport.
         Panes swap through the viewport around it; it stays put.
 
-        It is a shell with 'command' typed in, so Ctrl-C leaves it usable. Not a
+        It is a shell with 'cmd' typed in, so Ctrl-C leaves it usable. Not a
         new_pane(): it has no name, mode or status, and is not listed in the
         sidebar.
 
-        :param command: typed into its shell; None: just the shell
+        :param cmd: typed into its shell; None: just the shell
         :param title: its border title
         :param side: 'below' or 'right' of the viewport
         :param size: rows/columns, or a percentage like "30%"; None: tmux's split
@@ -3360,8 +3360,8 @@ class TmuxSession(Session):
         pane = self.get_pane(pane_id)
         if title:
             _set_pane_title(pane, title)
-        if command:
-            self._type(pane, command, enter=True)
+        if cmd:
+            self._type(pane, cmd, enter=True)
         return pane
 
     def _dash_open(self) -> bool:

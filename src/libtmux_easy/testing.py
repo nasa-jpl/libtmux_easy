@@ -341,7 +341,7 @@ class Processes(processes.ProcessGroup):
         it runs: a Match (a regex, or a function line -> problem message or
         None) for every process, an Only(...) rule for some, or a list of
         both. A hit counts as a death: the running test fails. E.g.
-        [r"Traceback", Only(launch_death(), command="*ros2 launch*")]
+        [r"Traceback", Only(launch_death(), cmd="*ros2 launch*")]
     :param allowed_exit_codes: nonzero exit codes a process may end with
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is

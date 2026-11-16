@@ -47,7 +47,7 @@ SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`
 |---|---|
 | `stop(name)` | SIGINT, then SIGTERM, SIGKILL; checked. A glob (`"sim:*"`): every running match at once, `{name: PaneStatus}` |
 | `stop_all()` | `stop()` on everything still running, in parallel, each on its own deadlines |
-| `Process.start(command=None)` | start it again after a stop; a new command if given |
+| `Process.start(cmd=None)` | start it again after a stop; a new command if given |
 | `close()` | the end: `stop_all()`, then the group lets go: names freed, out of `check_health()`, `adopt()`'s tmux server killed; `start()` raises after it. Again: nothing |
 | `kill_all()` | SIGKILL everything now, e.g. a second Ctrl-C while `stop_all()` waits; not a death, not checked |
 

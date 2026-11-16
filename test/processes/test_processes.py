@@ -57,7 +57,7 @@ def test_only_rules(tmp_path):
         fail_on_output=[
             r"Traceback",
             Only(too_slow, name="a:*"),
-            Only(r"BAD", command="echo BAD*"),
+            Only(r"BAD", cmd="echo BAD*"),
         ],
         allowed_exit_codes=[Only(3, name="b:*")],
     )
@@ -197,7 +197,7 @@ def test_sigterm_timeout_adopted(tmp_path):
         sigint_timeout=0.2,
         sigterm_timeout=0.3,
         tty=tty,
-        fail_on_output=Only("up", command=f"{sys.executable} -c *"),
+        fail_on_output=Only("up", cmd=f"{sys.executable} -c *"),
     )
     procs.adopt(f"{sys.executable} {script}")
     # Its command: the command line it runs, through lte-run; printed.

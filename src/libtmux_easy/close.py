@@ -76,8 +76,8 @@ def actions(session, run=_tmux) -> List[Dict[str, str]]:
         return []
 
 
-def add_action(session, command: str, when: str = "after", cwd: Optional[str] = None, run=_tmux):
-    """Store shell 'command' to run on close.
+def add_action(session, cmd: str, when: str = "after", cwd: Optional[str] = None, run=_tmux):
+    """Store shell 'cmd' to run on close.
 
     :param when: "before" the panes are stopped, or "after"
     :param cwd: the directory to run it in; None: this one
@@ -86,7 +86,7 @@ def add_action(session, command: str, when: str = "after", cwd: Optional[str] = 
     """
     if when not in WHEN:
         raise ValueError(f"when must be one of {WHEN}, not {when!r}")
-    entries = actions(session, run) + [{"cmd": command, "cwd": cwd or os.getcwd(), "when": when}]
+    entries = actions(session, run) + [{"cmd": cmd, "cwd": cwd or os.getcwd(), "when": when}]
     run("set-option", "-q", "-t", session, ACTIONS_OPTION, json.dumps(entries))
 
 

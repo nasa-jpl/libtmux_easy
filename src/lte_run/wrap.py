@@ -77,14 +77,14 @@ _FREE = (
 _FREE_WITH_TEE = f"#{{||:#{{==:#{{pane_pipe}},0}},#{{{PIPE_FILE_OPTION}}}}}"
 
 
-def _on_own_server(pane, commands):
-    """tmux args that run the tmux command strings 'commands' only on the
+def _on_own_server(pane, cmds):
+    """tmux args that run the tmux command strings 'cmds' only on the
     server this process started under. A server that exited and a new one
     reuse pane ids: our '%0' would be someone else's pane."""
     server_pid = (os.environ.get("TMUX", "").split(",") + ["", ""])[1]
     if not server_pid.isdigit():
-        return [part for c in commands for part in (*shlex.split(c), ";")][:-1]
-    return ["if", "-F", "-t", pane, f"#{{==:#{{pid}},{server_pid}}}", " ; ".join(commands)]
+        return [part for c in cmds for part in (*shlex.split(c), ";")][:-1]
+    return ["if", "-F", "-t", pane, f"#{{==:#{{pid}},{server_pid}}}", " ; ".join(cmds)]
 
 
 def record_run(**fields):
@@ -130,20 +130,20 @@ def guarded_unpipe(pane: str, *then: str) -> List[str]:
 
 
 def guarded_pipe(
-    pane: str, command: str, options: Optional[Mapping[str, str]] = None, with_tee: bool = False
+    pane: str, cmd: str, options: Optional[Mapping[str, str]] = None, with_tee: bool = False
 ) -> List[str]:
     """tmux args that pipe 'pane' and set pane options, but only if the pane
     is free. The check and the pipe are one tmux call, so the library and
     lte-run can't both see a free pane and pipe it. The call prints
     "<pane> 1" if it piped the pane, "<pane> " if not.
 
-    :param command: the pipe's shell command, formats escaped, as for pipe-pane
+    :param cmd: the pipe's shell command, formats escaped, as for pipe-pane
     :param options: pane options to set with it, {name: value}
     :param with_tee: also take a pipe lte-run --tee has
     :return: the args
     """
     options = options or {}
-    req = [(f"{_PIPE_REQ}_cmd", command)] + [
+    req = [(f"{_PIPE_REQ}_cmd", cmd)] + [
         (f"{_PIPE_REQ}_{i}", value) for i, value in enumerate(options.values())
     ]
     ok = f"{_PIPE_REQ}_ok"

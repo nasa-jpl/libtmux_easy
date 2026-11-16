@@ -89,7 +89,7 @@ first in the group:
 - A plain-tmux pane gone with no status reads as `unknown`: pass
   `allowed_exit_codes=130` or accept it with `exits=`.
 - On failure the server is kept: `tmux -S <socket> attach` is printed.
-- A pane's command, for `Only(command=)` and failure messages, is the command
+- A pane's command, for `Only(cmd=)` and failure messages, is the command
   line it runs at adoption, printed as `adopt(): w:x runs ...`. It may differ
   from what the script typed (`/usr/bin/python3 /opt/ros/.../ros2 launch
   ...`): glob `"*ros2 launch*"`.
