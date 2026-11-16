@@ -43,7 +43,6 @@ from libtmux_easy.testing import Only, Processes, check_health
 
 PY = sys.executable
 PORT = 8700 + os.getpid() % 500  # two runs at once don't share a port
-SERVER = f"{PY} -u -m http.server {PORT} --bind 127.0.0.1"
 CRASH_FILE = os.path.join(tempfile.gettempdir(), f"lte_tour_crash_{os.getpid()}")
 
 
@@ -51,6 +50,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def worker(name):
+    """Create a worker process with the given name"""
     return f"{PY} -u {HERE}/worker.py {name} {CRASH_FILE}"
 
 
@@ -67,101 +67,150 @@ def worker_error(line):
 
 
 class TestTour:
-    # pytest makes a new TestTour for every test: what the tests share goes
-    # on the class (cls.procs), set once in setup_class.
-
+    # pytest makes a new TestTour for every test. What the tests share goes
+    # on the class (e.g. cls.procs). Set once in setup_class.
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(  # empty; logs in a tmp dir of its own
+
+        # Create the Processes group object. This is used for creating and
+        # tracking processes we want to test against. We can set global test
+        # settings for all processes created in this group. E.g.
+        # fail_on_output rules that can be applied to all processes, or a
+        # selected subset.
+        cls.procs = Processes(
             cls,
             fail_on_output=[
                 r"Traceback",  # any process
-                Only(worker_error, name="workers:*"),  # every worker, now or later
+                # every worker, now or later
+                Only(worker_error, name="workers:*"),
             ],
-            env={"TOUR": "1"},  # for every process of the group
-        )
-        # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
-        # start() returns a handle: cls.web.wait_for_line(...), cls.web.stop().
-        cls.web = cls.procs.start("servers:web", SERVER, ready=r"Serving HTTP")
-        # Gate: any code. wait_for_condition() fails at once if something died.
-        cls.procs.wait_for_condition(server_answers, timeout=10)
-        # Stage 2.
-        cls.w0, cls.w1 = (
-            cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0") for n in range(2)
+            env={"TOUR": "1"},  # env variables for every process of the group
         )
 
+        # Create a process. A name is 'window:pane' in tmux. start() returns a
+        # handle that can be used directly (e.g. cls.web.stop()) or we can
+        # look up a process by name (e.g. cls.procs.stop('servers:web'))
+        cls.web = cls.procs.start(
+            name="servers:web",
+            cmd=f"{PY} -u -m http.server {PORT} --bind 127.0.0.1",
+            ready=r"Serving HTTP",
+        )
+
+        # Stop and wait for a condition to be true. Fails at once if
+        # something died.
+        cls.procs.wait_for_condition(server_answers, timeout=10)
+
+        # Create worker processes
+        cls.w0, cls.w1 = (
+            cls.procs.start(name=f"workers:w{n}", cmd=worker(f"w{n}"), ready=r"tick 0")
+            for n in range(2)
+        )
+
+    # Note - Nominally in pytest, tests run in the order they appear
+
     def test_wait_for_line(self):
-        # Any line since its start counts, even one printed before the call.
-        m = self.web.wait_for_line(r"Serving HTTP on (\S+) port (\d+)")
+        # Wait for a line to appear, and then check contents of that line.
+        # NOTE - In this approach, any line since process start counts, even
+        # one printed before the call.
+        m = self.web.wait_for_line(r"Serving HTTP on (\S+) port (\d+)", timeout=5)
         assert m[2] == str(PORT) and m.line.startswith("Serving HTTP")
 
     def test_after_a_mark(self):
-        # Mark, act, wait: only what it printed after the mark counts, so
-        # this is the reply to this request, not an earlier one.
+        # Wait for a line again. Except this time we only look for lines
+        # that occur after our mark. So this is the reply to this request,
+        # not an earlier one.
         mark = self.web.mark()
         assert server_answers()
         self.web.wait_for_line(r'"GET / HTTP/1\.\d" 200', since=mark)
 
     def test_lines_in_order(self):
-        # since= an earlier match: only later lines, so the order is checked.
+        # Another example. We wait for a line (first), which could have
+        # occurred anytime. Then we wait for the same line again (later),
+        # but it has to be after the first.
         first = self.w0.wait_for_line(r"tick (\d+)")
         later = self.w0.wait_for_line(r"tick (\d+)", since=first)
         assert int(later[1]) > int(first[1])
 
     def test_wait_for_condition(self):
-        # Anything that isn't a line: a reply, a file, a topic. Its result
-        # comes back.
+        # Waiting on a condition again. Assert the condition was met in the
+        # required time. Use for checking things besides process
+        # stdout/stderr. E.g. a reply, a file to exist, a topic.
         assert self.procs.wait_for_condition(server_answers, timeout=5)
 
     def test_output_and_logs(self):
+        # Read everything a process printed. output() is what it printed
+        # since its latest start, as one string. log() is the path of its log
+        # file on disk. Wait for a few ticks first, so there is output.
         self.w0.wait_for_line(r"tick 5")
         assert "w0 tick 0" in self.w0.output()
         assert "w0 tick 0" in open(self.w0.log()).read()
 
     def test_any_process(self):
-        m = self.procs.wait_for_line("*", r"tick 3")  # a line from any process
-        assert m.name in ("workers:w0", "workers:w1")  # which one
-        assert self.procs["workers:w0"].name == self.w0.name  # a handle by name
+        # Wait for a line from any process in the group. The first argument
+        # is a glob on the process name, so "*" is every process. The match
+        # says which process printed it. We can also look up a handle by name
+        # (e.g. self.procs["workers:w0"]).
+        m = self.procs.wait_for_line("*", r"tick 3")
+        assert m.name in ("workers:w0", "workers:w1")
+        assert self.procs["workers:w0"].name == self.w0.name
 
     def test_one_shot(self):
-        # exits=: it finishes on its own, so its exit is no death.
+        # Start a process that finishes on its own. exits=0 says it may exit
+        # with code 0 without that counting as a death. wait_for_exit() waits
+        # for it to end and returns its status. Its output also shows the
+        # group's env= reached it (TOUR=1).
         job = self.procs.start("jobs:once", "echo TOUR=$TOUR", exits=0)
         status = job.wait_for_exit()
         assert status.exit_status.code == 0 and "TOUR=1" in job.output()
 
     def test_kill_on_purpose(self):
-        # A kill the test causes: no death inside expect_exit().
+        # Kill a process on purpose. Inside expect_exit(), its exit is not a
+        # death, so the test doesn't fail. Then check how it ended (SIGKILL
+        # is signal 9), and start it again with the same command, so the
+        # tests after this one still have it.
         with self.procs.expect_exit("workers:w0"):
             self.w0.kill()
         assert self.w0.status().exit_status.signal == 9
         self.w0.start()
 
     def test_allowed_exit_code(self):
-        # It exits 2 on SIGINT: allowed, so stop() counts it as clean.
+        # By default, stop() sends Ctrl-C (SIGINT) and fails unless the
+        # process exits 0. This one exits 2 on SIGINT. allowed_exit_codes=2
+        # tells the plugin that is a clean stop too.
         cmd = "trap 'exit 2' INT; echo up; while :; do sleep 0.1; done"
         tool = self.procs.start("tools:quirky", cmd, ready="up", allowed_exit_codes=2)
         assert tool.stop().exit_status.code == 2
 
     def test_stop_and_restart(self):
-        status = self.w1.stop()  # fails unless it exits 0 on SIGINT
+        # Stop a process, then start it again. stop() fails unless it exits
+        # cleanly on SIGINT, and returns its status. start() with no
+        # arguments reruns the same command (start(cmd=...) takes a new one).
+        # Its output starts fresh.
+        status = self.w1.stop()
         assert status.exit_status.ok
-        self.w1.start()  # the same command again; fresh output
+        self.w1.start()
 
     def test_restart_a_set(self):
-        # A glob stops every match at once; each starts again, output fresh.
+        # Stop a set of processes at once with a glob on their names. stop()
+        # returns {name: status} for every match, so we can start each one
+        # again. Then wait for a worker to be up before moving on.
         for name in self.procs.stop("workers:*"):
             self.procs[name].start()
         self.w0.wait_for_line(r"tick 0")
 
     def test_a_process_of_its_own(self):
-        # A second group, for this test only: stopped and checked at the end
-        # of the 'with'. The class's processes keep running. Names are
-        # unique within the class: "workers:w0" here would be an error.
+        # Create a second Processes group, for this test only. Its processes
+        # are stopped and checked at the end of the 'with'. The class's
+        # processes keep running. NOTE - Names are unique within the class,
+        # so "workers:w0" here would be an error.
         with Processes() as procs:
             procs.start("tools:helper", worker("helper"), ready=r"tick 0")
 
     def test_long_run(self):
-        """10 s of work. With LTE_DEMO_CRASH=1, the workers die at 3 s."""
+        # A long test. Without help, a process that dies mid-test is only
+        # noticed when the test ends. Calling check_health() in the loop
+        # fails the test within half a second of a death. With
+        # LTE_DEMO_CRASH=1, the workers die at 3 s to show this.
         start = time.monotonic()
         while time.monotonic() - start < 10:
             if os.environ.get("LTE_DEMO_CRASH") and time.monotonic() - start > 3:
@@ -171,11 +220,16 @@ class TestTour:
 
     @classmethod
     def teardown_class(cls):
-        # Optional. After a failure everything is still up: look around.
+        # teardown_class is optional. The pytest plugin automatically calls
+        # cls.procs.stop_all() after this function, which will stop all
+        # processes and check their exit codes. Use teardown_class to inspect
+        # after failure, do a controlled bringdown, etc.
+
+        # After a failure everything is still up. We can look around.
         if cls.procs.failed:
             up = [n for n in cls.procs.names if cls.procs.status(n).running]
             print(f"{cls.procs.failed}; still running: {', '.join(up)}")
         if os.path.exists(CRASH_FILE):
             os.remove(CRASH_FILE)
-        cls.procs.stop("workers:*")  # your order: the workers first
+        cls.procs.stop("workers:*")  # bringdown order: the workers first
         # The plugin stops the rest (the server) after this, checked.

@@ -9,7 +9,7 @@ libtmux-easy (0.6.0) noble; urgency=medium
     imports its names directly. libtmux_easy._tmux is now tmuxcmd.
   * Breaking: fail_on= is now fail_on_output=, stop_codes= is now
     allowed_exit_codes=. Both take plain values for every process, or
-    Only(value, name=, command=) rules (globs) for some; no more
+    Only(value, name=, cmd=) rules (globs) for some; no more
     {"*": ...} dicts. start()'s add to the group's. Exit code 0 is always
     allowed. Wrong types raise TypeError.
   * Failure messages name the process, then labelled lines (command, line,
@@ -36,11 +36,14 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * Breaking: stop_all() stops every running process and the group stays
     usable; close() ends it (the plugin's job in tests; start() raises
     after). stop() takes a glob ("sim:*") and returns {name: PaneStatus}
-    for one. Process.start(command) reruns with a new command.
+    for one. Process.start(cmd) reruns with a new command.
     --keep-open makes teardown_class's stops do nothing.
   * allowed_exit_codes=ANY_EXIT (or "any"): any end of a stopped process
     is clean.
   * TESTING.md: a plain-language overview of the test tools.
+  * Breaking: every command parameter is now cmd: start(name, cmd),
+    Only(cmd=), send_command_before(cmd), respawn_pane(pane, cmd),
+    dashboard_pane(cmd), add_action(session, cmd).
   * Breaking: modules named after their commands: dash/ is lte_dash/,
     launch is lte_session, starter is lte_defaults.
   * SIGINT's default grace is 5 s (was 10): stop_pane(), ProcessGroup,
@@ -60,7 +63,7 @@ libtmux-easy (0.6.0) noble; urgency=medium
   * Fix wait_for() and wait_for_output() missing a line printed right after
     a watch began on a pane with scrollback (tmux mode, a fast shell).
 
- -- Spencer Diehl <docdiehl@gmail.com>  Tue, 10 Nov 2026 11:57:08 -0800
+ -- Spencer Diehl <docdiehl@gmail.com>  Sun, 15 Nov 2026 21:12:28 -0800
 
 libtmux-easy (0.5.0) noble; urgency=medium
 
