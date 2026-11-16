@@ -27,7 +27,7 @@ class TestAdopt:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()  # Ctrl-C each pane; fail unless each exits 0
+        cls.procs.stop_all()  # Ctrl-C each pane; fail unless each exits 0
 
     def test_panes(self):
         assert self.procs.names == [

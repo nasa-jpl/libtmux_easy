@@ -9,7 +9,8 @@ The engine under the pytest plugin (testing.py), usable by any program:
     procs.start("sim:client", "./client")
     procs.wait_for_condition(server_answers)
     ...
-    procs.close()          # SIGINT all at once, then SIGTERM, SIGKILL
+    procs.stop_all()       # SIGINT all at once, then SIGTERM, SIGKILL
+    procs.close()          # the end: stop what still runs, let go of the group
 
 A death (an exit nobody asked for, or an output check's line) is recorded; check()
 raises ProcessFailure for it, and every wait calls check(). on_exit()
@@ -39,10 +40,12 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Dict,
     Generic,
     Iterable,
     Iterator,
     List,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -86,9 +89,12 @@ Match = Union[str, "re.Pattern", Callable[[str], Optional[str]]]
 """A regex (a string, or compiled: for flags), searched in each line of
 output; or a function that gets each line and returns a problem message, or
 None when the line is fine."""
-ExitCodes = Union[int, Iterable[int]]
-"""Nonzero exit codes that are also fine (0 always is): one, or several.
-Death by signal N is 128+N: 130 is SIGINT."""
+ANY_EXIT = "any"
+"""allowed_exit_codes=ANY_EXIT (or "any"): any end of a stopped process is
+clean, any code, even after SIGTERM or SIGKILL."""
+ExitCodes = Union[int, Iterable[int], Literal["any"]]
+"""Nonzero exit codes that are also fine (0 always is): one, or several;
+or ANY_EXIT. Death by signal N is 128+N: 130 is SIGINT."""
 
 
 @dataclass(frozen=True)
@@ -197,17 +203,20 @@ def _matches(value, where):
 
 
 def _exit_codes(value, where):
-    """allowed_exit_codes as a tuple of ints.
+    """allowed_exit_codes as a tuple of ints, and ANY_EXIT.
 
     :raises TypeError: anything else, e.g. an Only given to start()"""
     found = []
     for c in _one_or_many(value, (int, Only)):
+        if c == ANY_EXIT:
+            found.append(ANY_EXIT)
+            continue
         if isinstance(c, Only):
             raise TypeError(f"{where}: Only(...) is for the group; pass {c.value!r} itself")
         if not isinstance(c, int) or isinstance(c, bool):
             raise TypeError(
                 f"{where}: {c!r} is not an exit code, e.g. "
-                f"allowed_exit_codes=[130, Only({{2, 3}}, name='pub:*')]"
+                f"allowed_exit_codes=[130, Only({{2, 3}}, name='pub:*')], or ANY_EXIT"
             )
         found.append(c)
     return tuple(found)
@@ -1103,9 +1112,10 @@ class Process:
     def __repr__(self):
         return f"<Process {self.name}>"
 
-    def start(self) -> "Process":
-        """Start it again: the same command and start() options.
+    def start(self, command: Optional[str] = None) -> "Process":
+        """Start it again, with the same start() options.
 
+        :param command: a new command; None: the same one
         :return: its Process
         :raises ValueError: an adopted pane, or it is still running
         :raises ProcessFailure: no 'ready' line in time
@@ -1114,8 +1124,8 @@ class Process:
             raise ValueError(
                 f"start(): {self.name} is the script's pane; it can't be started again"
             )
-        command, options = self.group._commands[self.name]
-        return self.group.start(self.name, command, **options)
+        same, options = self.group._commands[self.name]
+        return self.group.start(self.name, same if command is None else command, **options)
 
     def stop(
         self,
@@ -1359,7 +1369,8 @@ class ProcessGroup:
         procs = ProcessGroup("bringup", fail_on_output=r"Traceback")
         procs.start("sim:server", "./server", ready=r"listening")
         ...
-        procs.close()
+        procs.stop_all()   # the group stays usable: start() again
+        procs.close()      # the end: stop what still runs, let go of the group
 
     :param name: the group's name: its log dir and tmux window prefix by
         default
@@ -1380,7 +1391,8 @@ class ProcessGroup:
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
         128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    :param keep_open: close() stops nothing
+    :param keep_open: close() stops nothing, nor do the plugin's
+        teardown and the stops in teardown_class
     :param scope: groups with the same scope share names; None: this one
     :param sigint_timeout: seconds SIGINT gets before SIGTERM. start() can set
         it per process.
@@ -1438,7 +1450,8 @@ class ProcessGroup:
         self.died = []  # (name, PaneStatus, _Run) of each exit nobody asked for
         self.failed_on = []  # (problem, during a stop) of each fail_on_output hit
         self.stopping = False
-        self._aborted = None  # why a failed test stopped everything
+        self.failed = None  # why a test failed (the plugin sets it): stops aren't checked then
+        self._ending = False  # close() runs, or the plugin's teardown: keep_open stops nothing
         self._runs = {}  # name -> _Run of its latest start
         self._commands = {}  # name -> (command, start()'s options): for Process.start()
         self._sigint_timeouts = {}  # name -> its own sigint_timeout, from start()
@@ -1464,7 +1477,7 @@ class ProcessGroup:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:  # else the test failed: the plugin stops it, after on_test_failure()
+        if exc_type is None:  # else the test failed: the plugin stops it, unchecked
             self.close()
 
     def start(
@@ -1520,6 +1533,8 @@ class ProcessGroup:
             raise ValueError(
                 "start(): this group adopted a script's session; start more in another group"
             )
+        if self not in _open:
+            raise ValueError("start(): the group is closed")
         _check_restart(restart, restart_delay)
         name = self._name(name)
         on_exit, on_line = self._begin(name, command, fail_on_output, exits, allowed_exit_codes)
@@ -1572,7 +1587,10 @@ class ProcessGroup:
         for rule in self.allowed_exit_codes:
             if rule.applies(name, command):
                 codes.update(rule.value)
-        run = self._runs[name] = _Run(_codes(exits), tuple(sorted(codes)))
+        allowed = tuple(sorted(c for c in codes if c != ANY_EXIT))
+        if ANY_EXIT in codes:
+            allowed += (ANY_EXIT,)
+        run = self._runs[name] = _Run(_codes(exits), allowed)
         if name not in self.names:
             self.names.append(name)
         return (
@@ -1686,7 +1704,7 @@ class ProcessGroup:
 
     def kill_all(self):
         """SIGKILL everything still running, now: no grace, and no death
-        recorded. E.g. a program's second Ctrl-C, while close() is still
+        recorded. E.g. a program's second Ctrl-C, while stop_all() is still
         waiting for processes to stop."""
         self.stopping = True
         for name, run in self._runs.items():
@@ -1721,65 +1739,101 @@ class ProcessGroup:
         check: bool = True,
         sigint_timeout: Optional[float] = None,
         sigterm_timeout: Optional[float] = None,
-    ) -> PaneStatus:
-        """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death.
+    ) -> Union[PaneStatus, Dict[str, PaneStatus]]:
+        """Stop it (SIGINT, then SIGTERM, SIGKILL); its exit is no death. A
+        glob stops every running match at once. A stopped process can
+        start() again.
 
-        :param check: fail unless SIGINT stopped it, with one of its allowed_exit_codes
+            procs.stop("sim:server")     # its PaneStatus
+            procs.stop("sim:*")          # {name: PaneStatus}
+
+        :param name: 'window:pane', or a glob on it ("*": every process)
+        :param check: fail unless each stopped cleanly: SIGINT was enough,
+            with one of its allowed_exit_codes, and no fail_on_output line
+            while stopping. Never checked after a failure (see 'failed')
         :param sigint_timeout: seconds SIGINT gets before SIGTERM; None:
             start()'s, else the group's
         :param sigterm_timeout: seconds SIGTERM gets before SIGKILL; None:
             start()'s, else the group's
-        :return: its PaneStatus
-        :raises ProcessFailure: with 'check', it did not stop cleanly
+        :return: its PaneStatus; for a glob, {name: PaneStatus} of those it
+            stopped (already stopped or exited: left out)
+        :raises ValueError: a glob that matches no process
+        :raises ProcessFailure: with 'check', one did not stop cleanly
         """
-        name = self._name(name)
-        run = self._runs[name]
-        run.stopping = True
-        default_int, default_term = self._timeouts(name)
-        sigint_timeout = default_int if sigint_timeout is None else sigint_timeout
-        self.backend.stop(
-            name, sigint_timeout, default_term if sigterm_timeout is None else sigterm_timeout
-        )
-        run.exited.wait(5)
-        status = self.backend.status(name)
-        if check and not run.finished and not self._clean(status, run):
-            raise ProcessFailure(self._unclean(name, status, run, sigint_timeout))
-        return status
+        if not any(c in name for c in "*?["):
+            name = self._name(name)
+            self._runs[name]  # KeyError: no such process
+            return self._stop([name], check, sigint_timeout, sigterm_timeout)[name]
+        names = [n for n in self.names if fnmatch.fnmatchcase(n, name)]
+        if not names:
+            raise ValueError(
+                f"stop({name!r}): no process matches; there are {', '.join(self.names) or 'none'}"
+            )
+        running = [n for n in names if self.backend.status(n).running]
+        return self._stop(running, check, sigint_timeout, sigterm_timeout)
+
+    def stop_all(self, check: bool = True) -> Dict[str, PaneStatus]:
+        """Stop everything still running, all at once: stop() on each. The
+        group stays usable: start() works after it.
+
+        :param check: fail unless each stopped cleanly, as stop(); never
+            checked after a failure (see 'failed')
+        :return: {name: PaneStatus} of those it stopped
+        :raises ProcessFailure: with 'check', one did not stop cleanly (the
+            pytest subclass fails the test instead)
+        """
+        return self._stop([n for n in self.names if self.backend.status(n).running], check)
+
+    def _stop(self, names, check, sigint_timeout=None, sigterm_timeout=None):
+        """Stop 'names' at once and judge each: stop() and stop_all(). With
+        keep_open, once the group is ending: nothing."""
+        if self.keep_open and self._ending:
+            return {n: self.backend.status(n) for n in names}
+        runs = {n: self._runs[n] for n in names}
+        judged = [n for n, run in runs.items() if not (run.died or run.stopping or run.finished)]
+        timeouts = {}
+        for n, run in runs.items():
+            run.stopping = True
+            own_int, own_term = self._timeouts(n)
+            timeouts[n] = (
+                own_int if sigint_timeout is None else sigint_timeout,
+                own_term if sigterm_timeout is None else sigterm_timeout,
+            )
+        late = len(self.failed_on)
+        self.backend.stop_all(names, timeouts)
+        for run in runs.values():
+            run.exited.wait(5)
+        statuses = {n: self.backend.status(n) for n in names}
+        if check and not self.failed:
+            unclean = [
+                self._unclean(n, statuses[n], runs[n], timeouts[n][0])
+                for n in judged
+                if not runs[n].finished and not self._clean(statuses[n], runs[n])
+            ]
+            unclean += [what for what, hit_late in self.failed_on[late:] if hit_late]
+            if unclean:
+                self._fail("\n\n".join(unclean))
+        return statuses
 
     def close(self, check: bool = True):
-        """Stop everything still running (SIGINT, then SIGTERM, SIGKILL).
-        A second close() does nothing; nor does --keep-open.
+        """The end of the group: stop_all(), then let go of it. Its names
+        are free for other groups, no health check looks at it, adopt()'s
+        tmux server is killed (kept after a failure), and start() is
+        refused. A second close() does nothing; with keep_open, nothing is
+        stopped. Programs call it, or use 'with'; in tests, the plugin does.
 
-        :param check: fail unless each stopped cleanly: SIGINT was enough, with
-            one of its allowed_exit_codes, and no fail_on_output line while stopping
-        :raises ProcessFailure: with 'check', one did not (the pytest subclass
-            fails the test instead)
+        :param check: as stop_all()'s
+        :raises ProcessFailure: with 'check', one did not stop cleanly
         """
         if self not in _open:
             return
-        _open.remove(self)
-        if self.keep_open:
-            self._let_go(keep=True)
-            return
-        judged = [
-            (name, run)
-            for name, run in self._runs.items()
-            if not (run.died or run.stopping or run.finished)
-        ]
-        self.stopping = True
-        self.backend.stop_all(self.names, {n: self._timeouts(n) for n in self.names})
-        self._let_go(keep=self._aborted is not None)
-        if not check:
-            return
-        unclean = [
-            self._unclean(name, status, run, self._timeouts(name)[0])
-            for name, run in judged
-            for status in [self.backend.status(name)]
-            if not run.finished and not self._clean(status, run)
-        ]
-        unclean += [what for what, late in self.failed_on if late]
-        if unclean:
-            self._fail("\n\n".join(unclean))
+        self._ending = True
+        try:
+            self.stop_all(check=check)
+        finally:
+            self.stopping = True  # what exits from now on is no death
+            _open.remove(self)
+            self._let_go(keep=self.keep_open or self.failed is not None)
 
     def _timeouts(self, name):
         """(sigint_timeout, sigterm_timeout) for 'name': start()'s, else the
@@ -1798,11 +1852,6 @@ class ProcessGroup:
             if keep:
                 self._kept_server(self.backend.socket)
 
-    def _abort(self, why):
-        """A test failed: stop everything now, without checks."""
-        self._aborted = why
-        self.close(check=False)
-
     def _name(self, name):
         """'name' as 'window:pane'; a bare name is its own window: 'x' ->
         'x:x'."""
@@ -1811,7 +1860,10 @@ class ProcessGroup:
     @staticmethod
     def _clean(status, run):
         """Whether a stopped process stopped cleanly: SIGINT (or nothing) was
-        enough, and its exit code is one of the run's allowed_exit_codes."""
+        enough, and its exit code is one of the run's allowed_exit_codes.
+        Any end, with ANY_EXIT."""
+        if ANY_EXIT in run.allowed_exit_codes:
+            return True
         if status.stopped not in (None, "SIGINT"):
             return False
         code = _exit_code(status)

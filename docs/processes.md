@@ -11,7 +11,8 @@ procs = ProcessGroup("bringup", fail_on_output=r"Traceback")
 procs.on_exit(lambda name, status, died: ...)   # every exit, as it happens
 procs.start("sim:server", "./server", ready=r"listening", env={"RATE": "10"})
 procs.wait_for_condition(server_answers)     # raises ProcessFailure on any death
-procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
+procs.stop("sim:*")                  # a glob: every match at once; the group stays usable
+procs.close()                        # the end: stop the rest, let go of the group
 ```
 
 | Argument | Meaning |
@@ -21,7 +22,7 @@ procs.close()                        # SIGINT all at once, then SIGTERM, SIGKILL
 | `prefix=` | tmux window prefix (default `name`); `""`: bare window names |
 | `echo=`, `tty=` | Subprocesses: print output of matching names to `tty` (stdout) |
 | `fail_on_output=`, `allowed_exit_codes=`, `sigint_timeout=`, `sigterm_timeout=`, `setup=`, `log_dir=` | As in the plugin |
-| `keep_open=` | `close()` stops nothing |
+| `keep_open=` | `close()` stops nothing (in tests: nor `teardown_class`'s stops) |
 | `env=` | Variables for every process of the group (None unsets); see below |
 
 `on_exit(fn)` calls `fn(name, PaneStatus, died)` on every exit, from a
@@ -34,12 +35,25 @@ plugin's methods (`start`, `build`, `adopt`, `wait_for_line`, `mark`, `wait_for_
 | A failure | `ProcessFailure` (an `AssertionError`) | `pytest.fail` / `AssertionError` |
 | Mode | `tmux=` argument | `--tmux` / subprocess from the command line |
 | `build()` | Needs `tmux=` | Uses the run's session |
-| Owner, abort on a failed test | No | Yes |
+| Owner, `failed`, skip after a failed test | No | Yes |
+| Ended by | `close()`, or `with` | the plugin |
 
 Extras: `start(env=, sigint_timeout=, sigterm_timeout=, restart=, restart_delay=)` (a process's own environment,
-SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`), kept by `Process.start()`;
-`close()` still stops all at once, each escalating on its own deadline), `kill_all()` (SIGKILL everything now, e.g. a second Ctrl-C while
-`close()` waits; not a death). `close()` and `stop_all` stop every process in parallel.
+SIGINT and SIGTERM grace, reruns on failure (`lte-run --restart`, `wrap-mode.md`), kept by `Process.start()`).
+
+## Stopping and ending
+
+| call | does |
+|---|---|
+| `stop(name)` | SIGINT, then SIGTERM, SIGKILL; checked. A glob (`"sim:*"`): every running match at once, `{name: PaneStatus}` |
+| `stop_all()` | `stop()` on everything still running, in parallel, each on its own deadlines |
+| `Process.start(command=None)` | start it again after a stop; a new command if given |
+| `close()` | the end: `stop_all()`, then the group lets go: names freed, out of `check_health()`, `adopt()`'s tmux server killed; `start()` raises after it. Again: nothing |
+| `kill_all()` | SIGKILL everything now, e.g. a second Ctrl-C while `stop_all()` waits; not a death, not checked |
+
+`check=False` skips the check for one call; `allowed_exit_codes=ANY_EXIT`
+(or `"any"`) makes any end clean for the processes it covers. With
+`failed` set, no stop is checked.
 
 ## Environment
 

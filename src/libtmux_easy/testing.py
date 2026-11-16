@@ -4,8 +4,8 @@ Enable it in conftest.py:
 
     pytest_plugins = ["libtmux_easy.testing"]
 
-A test class brings its processes up in setup_class and down in
-teardown_class:
+A test class brings its processes up in setup_class; the plugin stops
+them after the class's last test (or teardown_class does, its own way):
 
     from libtmux_easy.testing import Processes, check_health
 
@@ -17,23 +17,24 @@ teardown_class:
             cls.procs.wait_for_condition(server_answers)   # any gate
 
         @classmethod
-        def teardown_class(cls):
-            cls.procs.close()      # fails unless each exits 0 on SIGINT
-                                   # (optional: see Processes, "Closing")
+        def teardown_class(cls):      # optional
+            cls.procs.stop("sim:*")   # your order first
+            cls.procs.stop_all()      # fails unless each exits 0 on SIGINT
 
         def test_x(self):
             with Processes() as procs:   # this test's own, stopped after it
                 procs.start("tools:probe", "./probe")
 
 A process that dies, or prints an output check's line, fails the test running
-when it happened. A failed test stops the class's processes at once and
-skips the rest of the class. A session script's processes: build() runs
+when it happened; health is checked before and after every test. A failed
+test skips the rest of the class, but its processes stay up until
+teardown_class; procs.failed says why, and stops are no longer checked. A session script's processes: build() runs
 its build(session) function, adopt() runs the script and adopts its panes.
 
 Where processes run: subprocesses (default; output to log files,
 --echo PATTERN: also to the terminal), --tmux (the dashboard,
-attached), --tmux --no-attach (a detached tmux session). --keep-open: never
-stop anything. --arg NAME=VALUE: read with arg().
+attached), --tmux --no-attach (a detached tmux session). --keep-open: no
+stop after the tests (the plugin's, teardown_class's) stops anything. --arg NAME=VALUE: read with arg().
 
 Reference: docs/pytest-plugin.md.
 """
@@ -52,7 +53,7 @@ from . import lte_dash
 from .tmuxcmd import option
 from . import processes
 from .processes import Process, ProcessFailure, _open, _TmuxBackend, _unique_prefix  # noqa: F401
-from .processes import ExitCodes, LineMatch, Mark, Match, OneOrMany, Only  # noqa: F401
+from .processes import ANY_EXIT, ExitCodes, LineMatch, Mark, Match, OneOrMany, Only  # noqa: F401
 from .status import PaneStatus
 from .tmux_lib import TmuxSession
 
@@ -235,7 +236,7 @@ def pytest_sessionfinish(session, exitstatus):
     """Close every group still open (unchecked). Kill the run's tmux session,
     or keep it: in dash mode, with --keep-open, or after a failure."""
     config = session.config
-    for procs in list(_open):  # never closed: don't leave them running
+    for procs in list(_open):  # never ended: don't leave them running
         procs.close(check=False)
     tmux = getattr(config, "lte_session", None)
     if tmux is None:
@@ -313,27 +314,28 @@ class Processes(processes.ProcessGroup):
     It is libtmux_easy.processes.ProcessGroup (the engine, for programs
     that aren't tests) tied to pytest: a test owns it, the mode (subprocess,
     tmux, dash) comes from the command line, and a failure is a pytest
-    failure. Same methods: start(), wait_for(), stop(), close(), ...
+    failure. Same methods: start(), wait_for_line(), stop(), stop_all(), ...
 
     Make one in setup_class:
 
         cls.procs = Processes(cls, fail_on_output=r"Traceback")
 
-    or in a test, for that test alone (closed at the end of the 'with', or
-    else after the test):
+    or in a test, for that test alone (stopped and checked at the end of
+    the 'with'; a failed test's, at once and unchecked):
 
         with Processes() as procs:
 
-    Closing: close() in teardown_class stops everything and fails unless
-    each process stopped cleanly (SIGINT was enough, with an allowed code).
-    Forget it, and the plugin still stops the group after the class's last
-    test, but with close(check=False): nothing is checked. A death while a
-    test runs fails that test either way.
+    Stopping: after the class's last test the plugin stops what still runs
+    and fails unless each stopped cleanly (SIGINT was enough, with an
+    allowed code). teardown_class is optional: for an order of your own,
+    stop() and stop_all() there. After a failed test, procs.failed says why,
+    and no stop is checked. A death while a test runs fails that test
+    either way. Not caring how they end: allowed_exit_codes=ANY_EXIT.
 
     :param owner: the test class (cls, in setup_class). None, in a test: that
-        test. A failed test of the owner stops the group at once (on_test_failure()
-        first); a class also skips its remaining tests. Names ('window:pane')
-        are unique within a class, across its groups; its tmux windows are
+        test. A failed test of a class skips its remaining tests; the
+        processes stay up until teardown_class. Names ('window:pane') are
+        unique within a class, across its groups; its tmux windows are
         '<Class>/<window>'.
     :param fail_on_output: stdout/stderr output that fails a process while
         it runs: a Match (a regex, or a function line -> problem message or
@@ -343,10 +345,8 @@ class Processes(processes.ProcessGroup):
     :param allowed_exit_codes: nonzero exit codes a process may end with
         when it is stopped (0 always may): an int for every process, an
         Only(...) rule for some, or a list of both. Death by signal N is
-        128+N, so 130 allows dying of SIGINT. E.g. [130, Only({2, 3}, name="pub:*")]
-    :param on_test_failure: called with no arguments when a test of the
-        owner fails, before the plugin stops the group: bring things down
-        your own way first
+        128+N, so 130 allows dying of SIGINT. ANY_EXIT: any end is clean.
+        E.g. [130, Only({2, 3}, name="pub:*")]
     :param log_dir: where the processes' logs go; None: a new temp dir named
         after the owner
     :param sigint_timeout: seconds a stopped process gets after SIGINT before
@@ -366,7 +366,6 @@ class Processes(processes.ProcessGroup):
         *,
         fail_on_output: Optional[OneOrMany[Union[Match, Only]]] = None,
         allowed_exit_codes: Optional[OneOrMany[Union[int, Only]]] = None,
-        on_test_failure: Optional[Callable[[], None]] = None,
         log_dir: Union[str, os.PathLike, None] = None,
         sigint_timeout: float = 5.0,
         sigterm_timeout: float = 5.0,
@@ -414,7 +413,6 @@ class Processes(processes.ProcessGroup):
             scope=scope,
             env=env,
         )
-        self.on_test_failure = on_test_failure
         config.lte_log_dirs.append(str(log_dir))
         self.owner = owner
 
@@ -478,9 +476,8 @@ def _lte_plugin(request, tmp_path_factory, lte_pane_setup):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
     """Fail the test itself, not just teardown, if a process died while it
-    ran, or one of its own groups doesn't close cleanly. (A failed test's
-    are stopped by pytest_runtest_makereport.) Processes() in the test is
-    owned by it."""
+    ran, or one of its own groups doesn't stop cleanly. Processes() in the
+    test is owned by it."""
     _plugin["item"] = item
     try:
         outcome = yield
@@ -495,46 +492,72 @@ def pytest_runtest_call(item):
             outcome.force_exception(exc)
 
 
-_aborted = {}  # test class -> why its processes were stopped
+_failed = {}  # test class -> why one of its tests failed: the rest is skipped
+
+
+def _first_line(excinfo):
+    """An exception's message, first line: what procs.failed shows."""
+    if excinfo is None:
+        return ""
+    text = str(excinfo.value).strip()
+    return text.splitlines()[0] if text else excinfo.type.__name__
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """A failed test (or setup) stops its class's and its own processes at
-    once, each group's on_test_failure() first. Not with --keep-open."""
+    """A failed test (or its setup): procs.failed says why. The test's own
+    groups stop at once, unchecked; its class's stay up until
+    teardown_class, and the rest of the class is skipped."""
     report = (yield).get_result()
-    if not report.failed or call.when == "teardown" or item.config.lte_keep_open:
+    if not report.failed or call.when == "teardown":
         return
     why = f"{item.name} failed"
+    line = _first_line(call.excinfo)
+    if line:
+        why += f": {line}"
     for procs in [p for p in _open if p.owner in (item, item.cls)]:
-        on_test_failure = getattr(procs, "on_test_failure", None)  # Processes only
-        if on_test_failure is not None:
-            try:
-                on_test_failure()
-            except Exception as exc:  # noqa: BLE001 -- still stop them below
-                item.warn(pytest.PytestWarning(f"on_test_failure() raised {exc!r}"))
-        procs._abort(why)
-        if procs.owner is not item:
-            _aborted[procs.owner] = why
+        if procs.failed is None:
+            procs.failed = why
+        if procs.owner is item:
+            procs.close(check=False)
+        else:
+            _failed.setdefault(item.cls, why)
 
 
-@pytest.hookimpl(tryfirst=True)
+@pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
-    """Skip what is left of a class whose processes were aborted."""
-    if item.cls in _aborted:
-        pytest.skip(f"processes stopped: {_aborted[item.cls]}")
+    """Skip what is left of a class after one of its tests failed. Else,
+    once setup_class and the fixtures ran, check health: a test never
+    starts on a broken system."""
+    if item.cls in _failed:
+        pytest.skip(f"after a failure: {_failed[item.cls]}")
+    outcome = yield
+    if outcome.excinfo is None:
+        try:
+            check_health()
+        except (AssertionError, pytest.fail.Exception) as exc:
+            outcome.force_exception(exc)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
-    """After a class's last test: stop a group its teardown_class didn't
-    close, e.g. because setup_class failed (pytest then skips the teardown)."""
-    yield
-    for procs in [p for p in _open if p.owner is item]:  # e.g. the test never ran
+    """After a class's last test: its teardown_class, then the plugin
+    stops what still runs, checked unless a test failed. With --keep-open,
+    neither stops anything. A group of the test's own still open (e.g. the
+    test never ran): stopped, unchecked."""
+    last = item.cls is not None and (nextitem is None or nextitem.cls is not item.cls)
+    ending = [p for p in _open if p.owner is item.cls] if last else []
+    for procs in ending:
+        procs._ending = True  # --keep-open: teardown_class's stops do nothing
+    outcome = yield
+    for procs in [p for p in _open if p.owner is item]:
         procs.close(check=False)
-    if nextitem is None or nextitem.cls is not item.cls:
-        for procs in [p for p in _open if p.owner is item.cls]:
-            procs.close(check=False)
+    for procs in ending:
+        try:
+            procs.close()
+        except (AssertionError, pytest.fail.Exception) as exc:
+            if outcome.excinfo is None:
+                outcome.force_exception(exc)
 
 
 def parametrize(argnames: str, argvalues: Sequence[Any]) -> Callable[[type], type]:

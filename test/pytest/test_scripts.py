@@ -39,7 +39,7 @@ class Checks:
     # the last two stop panes.
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_names(self):
         assert [n for n in self.procs.names if n != "script:script"] == ["sim:a", "sim:b", "ctl:job"]
@@ -141,7 +141,7 @@ class TestBuild:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_names(self):
         assert self.procs.names == ["sim:a", "sim:b", "ctl:job"]
@@ -189,7 +189,7 @@ class TestAdopt:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_names(self):
         assert [p.name for p in self.panes] == ["sim:a", "sim:b", "ctl:job"]
@@ -209,7 +209,7 @@ class TestStays:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_script_runs(self):
         assert self.procs["script"].status().running
@@ -232,7 +232,7 @@ class TestPlainTmux:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_plain_panes(self):
         assert self.procs.names == ["script:script", "w:0", "loop:0"]

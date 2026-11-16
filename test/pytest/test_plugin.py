@@ -25,7 +25,7 @@ class TestRun:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_output(self):
         self.procs.wait_for_line("w:ok", "hello_42", timeout=5)
@@ -128,7 +128,7 @@ class TestSrv:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_ready(self):
         assert "listening on 8080" in self.procs.output("w:srv")
@@ -313,7 +313,7 @@ class TestA:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_one(self):
         self.procs.wait_for_line("w:env", "dir=" + os.path.dirname(self.procs.log("w:env")) + " bash_env=no")
@@ -330,7 +330,7 @@ class TestA:
         time.sleep(1)
 
     def test_after_failure(self):
-        pass  # skipped: test_bad_line's failure stopped the class's processes
+        pass  # skipped: test_bad_line failed
 
 class TestLong:
     @classmethod
@@ -339,7 +339,7 @@ class TestLong:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_long(self):
         self.procs.start("w:dies", CMD + " die")
@@ -372,7 +372,7 @@ def test_setup_class(run, tmp_path, mode):
     assert "PASSED test_inner.py::TestA::test_own_processes" in out, out
     assert "FAILED test_inner.py::TestA::test_bad_line" in out, out
     assert "w:bad failed an output check" in out and "msg:     saw BAD" in out, out
-    assert "processes stopped: test_bad_line failed" in out, out
+    assert "after a failure: test_bad_line failed: w:bad failed an output check" in out, out
     assert "FAILED test_inner.py::TestLong::test_long" in out, out
     assert "w:dies died" in out and "exit:    3" in out, out
     assert "saw BAD" not in out.split("test_long")[1].split("short test summary")[0], out
@@ -437,7 +437,7 @@ class TestParams:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_n(self):
         self.procs.wait_for_line("w:p", f"n={self.n}")
@@ -451,7 +451,7 @@ class TestParamFails:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_fails_at_1(self):
         assert self.n == 2
@@ -459,26 +459,27 @@ class TestParamFails:
     def test_after(self):
         pass  # skipped at n=1 only
 
-class TestAbort:
+class TestFailed:
     @classmethod
     def setup_class(cls):
-        cls.procs = Processes(cls, on_test_failure=lambda: open("abort_called", "w").close())
+        cls.procs = Processes(cls)
         cls.procs.start("w:a", CMD, ready="hello_42")
 
     @classmethod
-    def teardown_class(cls):
-        cls.procs.close()
+    def teardown_class(cls):  # still up after the failure; no stop of its own
+        with open("teardown_saw", "w") as f:
+            f.write(f"{cls.procs.failed}|{cls.procs.status('w:a').running}")
 
     def test_fails(self):
-        assert False
+        assert False, "on purpose"
 
     def test_skipped(self):
         pass
 
-def test_after_abort():
+def test_after_failed_class():
     import libtmux_easy.testing as t
-    assert os.path.exists("abort_called")
-    assert not TestAbort.procs.status("w:a").running
+    assert open("teardown_saw").read() == "test_fails failed: on purpose|True"
+    assert not TestFailed.procs.status("w:a").running
     assert t._open == [], t._open
 """
 
@@ -495,23 +496,115 @@ def test_features(run, mode):
         "TestParams[n=1]::test_n",
         "TestParams[n=2]::test_n",
         "TestParamFails[n=2]::test_after",
-        "test_after_abort",
+        "test_after_failed_class",
     ):
         assert f"PASSED test_inner.py::{test}" in out, out
     for test in (
         "test_wrong_exit",
         "test_out_of_order",
-        "TestAbort::test_fails",
+        "TestFailed::test_fails",
         "TestParamFails[n=1]::test_fails_at_1",
     ):
         assert f"FAILED test_inner.py::{test}" in out, out
-    assert "processes stopped: test_fails failed" in out, out
-    assert "processes stopped: test_fails_at_1 failed" in out, out
+    assert "after a failure: test_fails failed: on purpose" in out, out
+    assert "after a failure: test_fails_at_1 failed" in out, out
     assert "w:job died" in out and "exit:    5 (expected: 0)" in out, out
     assert "w:job printed no matching line" in out and "r'three'" in out, out
     assert "after 'one'" in out, out
     assert "warning: no test read --arg unused" in out, out
     assert "ERROR" not in out, out
+
+
+STOP_TESTS = """
+import sys, time
+import pytest
+from libtmux_easy.testing import ANY_EXIT, Processes
+CMD = f"{sys.executable} proc.py"
+EXITS_1 = "trap 'exit 1' INT; echo up; while :; do sleep 0.1; done"
+
+def test_stop_a_glob_and_restart():
+    procs = Processes()
+    for name in ("sim:a", "sim:b", "x:c"):
+        procs.start(name, CMD, ready="hello_42")
+    assert sorted(procs.stop("sim:*")) == ["sim:a", "sim:b"]
+    assert procs.status("x:c").running
+    assert procs.stop("sim:*") == {}  # stopped already
+    with pytest.raises(ValueError, match="no process matches"):
+        procs.stop("nope:*")
+    procs["sim:a"].start(f"echo new; exec {CMD}")  # a new command
+    procs.wait_for_line("sim:a", "new")
+    assert sorted(procs.stop_all()) == ["sim:a", "x:c"]
+    procs.start("sim:b", CMD, ready="hello_42")  # still usable
+
+def test_any_exit():
+    procs = Processes(allowed_exit_codes=ANY_EXIT)
+    procs.start("w:one", EXITS_1, ready="up")
+    procs.start("w:deaf", "trap '' INT; echo up; sleep 60", ready="up", sigint_timeout=0.3)
+    procs.stop_all()
+
+def test_any_exit_per_start():
+    procs = Processes()
+    procs.start("w:one", EXITS_1, ready="up", allowed_exit_codes="any")
+    procs.stop("w:one")
+
+def test_unclean_stop_all():
+    procs = Processes()
+    procs.start("w:one", EXITS_1, ready="up")
+    procs.stop_all()
+
+def test_start_after_close():
+    procs = Processes()
+    procs.close()
+    with pytest.raises(ValueError, match="the group is closed"):
+        procs.start("w:x", CMD)
+
+class TestAutoStop:  # no teardown_class: the plugin's stop is checked
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.start("w:one", EXITS_1, ready="up")
+
+    def test_one(self):
+        pass
+
+class TestHealthBefore:
+    @classmethod
+    def setup_class(cls):
+        cls.procs = Processes(cls)
+        cls.procs.start("w:d", "echo up; sleep 0.5; exit 3", ready="up")
+
+    def teardown_method(self):
+        time.sleep(1)  # w:d dies between the tests
+
+    def test_a(self):
+        pass
+
+    def test_b(self):
+        pass  # its setup sees the death
+
+    def test_c(self):
+        pass  # skipped
+"""
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_stops(run, mode):
+    proc, out = run(STOP_TESTS, mode=mode)
+    for test in (
+        "test_stop_a_glob_and_restart",
+        "test_any_exit",
+        "test_any_exit_per_start",
+        "test_start_after_close",
+        "TestAutoStop::test_one",
+        "TestHealthBefore::test_a",
+    ):
+        assert f"PASSED test_inner.py::{test}" in out, out
+    assert "FAILED test_inner.py::test_unclean_stop_all" in out, out
+    assert "ERROR test_inner.py::TestAutoStop::test_one" in out, out  # at its teardown
+    assert "w:one did not stop cleanly" in out and "exit:    1 (allowed: 0)" in out, out
+    assert "ERROR test_inner.py::TestHealthBefore::test_b" in out, out
+    assert "w:d died" in out, out
+    assert "after a failure: test_b failed: w:d died" in out, out
 
 
 GROUP_ENV = """
@@ -527,7 +620,7 @@ class TestWithEnv:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_env(self):
         self.procs.start("w:a", SHOW)

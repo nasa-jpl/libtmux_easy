@@ -27,6 +27,20 @@ libtmux-easy (0.6.0) noble; urgency=medium
     returns a LineMatch (.line, .match, m[1], .group()); since= a mark()
     or an earlier LineMatch matches only later lines: mark, act, wait, or
     lines in order.
+  * Breaking: a failed test no longer stops its class's processes: they
+    stay up until teardown_class, and the rest of the class is skipped.
+    Processes(on_test_failure=) is gone; procs.failed says why a test
+    failed, and no stop is checked after a failure. Health is checked
+    before every test too. teardown_class is optional: the plugin stops
+    what is left after it, checked unless a test failed (was unchecked).
+  * Breaking: stop_all() stops every running process and the group stays
+    usable; close() ends it (the plugin's job in tests; start() raises
+    after). stop() takes a glob ("sim:*") and returns {name: PaneStatus}
+    for one. Process.start(command) reruns with a new command.
+    --keep-open makes teardown_class's stops do nothing.
+  * allowed_exit_codes=ANY_EXIT (or "any"): any end of a stopped process
+    is clean.
+  * TESTING.md: a plain-language overview of the test tools.
   * Breaking: modules named after their commands: dash/ is lte_dash/,
     launch is lte_session, starter is lte_defaults.
   * SIGINT's default grace is 5 s (was 10): stop_pane(), ProcessGroup,

@@ -24,7 +24,7 @@ class TestWeb:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()  # fails unless it exits 0 on SIGINT
+        cls.procs.stop_all()  # fails unless it exits 0 on SIGINT
 
     def test_get(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/") as reply:

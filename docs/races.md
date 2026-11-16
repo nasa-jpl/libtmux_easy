@@ -40,7 +40,7 @@ code. Tests named in the last column guard them.
 | race | rule | where |
 |---|---|---|
 | A process stopped right after it started died *of* SIGINT: its handler wasn't installed yet | wait for a `ready` line before stopping what must exit 0 | `test_features` (`ready="hello_42"`) |
-| Two processes die together; the second lands after the test failed and teardown reported it as an unclean shutdown | a failed test aborts the group (no shutdown checks) | `pytest_runtest_makereport` |
+| Two processes die together; the second lands after the test failed and teardown reported it as an unclean shutdown | after a failed test no stop is checked (`procs.failed`) | `pytest_runtest_makereport`, `ProcessGroup._stop` |
 | tmux mode: `wait_for` matched the typed command in the pane, before the process printed anything | read the `--tee` log, never `capture-pane` | `_TmuxBackend.lines()`; `test_features[tmux]` |
 | `--tmux` re-exec saw no tty: pytest had already swapped fd 0 for `/dev/null` | check `/dev/tty` and the foreground group; suspend capture (stdin too) before exec | `pytest_cmdline_main` |
 

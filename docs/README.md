@@ -16,7 +16,7 @@ Linux 6.x); don't re-research them.
 | [tmux-defaults.md](tmux-defaults.md) | starter tmux settings for a server with no config; the library's keys (`g`, `Q`) and how to change them |
 | [session-close.md](session-close.md) | every way to stop panes and close a session; `lte-close`, close actions, the close key |
 | [processes.md](processes.md) | `libtmux_easy.processes.ProcessGroup`: the process group without pytest |
-| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: options, `Processes`, how a test class runs, health and failure, logs, design |
+| [pytest-plugin.md](pytest-plugin.md) | `libtmux_easy.testing`: options, `Processes`, how a test class runs, failure flow, stopping, failure messages, logs, design. Overview: [TESTING.md](../TESTING.md) |
 | [testing-scripts.md](testing-scripts.md) | testing a tmux session script: layout, `build()`, `adopt()`; making a script easy to test |
 | [packaging.md](packaging.md) | installs, the `.deb`s, `uv.lock` and when to update it, CI and releases |
 | [releasing.md](releasing.md) | bumping the version and tagging a release |

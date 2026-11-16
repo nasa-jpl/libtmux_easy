@@ -15,9 +15,10 @@ pytest_plugins = ["libtmux_easy.testing"]
 | `basic/test_web.py` | `pytest demos/pytest/basic/test_web.py -v`: the smallest class |
 | `basic/test_tour.py` | `pytest demos/pytest/basic/test_tour.py -v`: everything else |
 
-A test class brings a system up in `setup_class`, its tests use it,
-`teardown_class` shuts it down. Add `LTE_DEMO_CRASH=1` to the tour to see a
-process die mid-test.
+A test class brings a system up in `setup_class`, its tests use it, and the
+plugin shuts it down after the last test (`teardown_class`, if any, first).
+Add `LTE_DEMO_CRASH=1` to the tour to see a process die mid-test. The
+plain-language overview: [TESTING.md](../../TESTING.md).
 
 ## How it fits together
 
@@ -25,11 +26,13 @@ process die mid-test.
 setup_class      cls.procs = Processes(cls, fail_on_output=)  an empty group
                  web = procs.start(name, cmd, ready=)  start; wait for a line; a handle
                  procs.wait_for_condition(fn)                  a gate: any code
-each test        a new instance of the class: state lives on cls
+each test        plugin checks every group first        a death: the test errors
+                 a new instance of the class: state lives on cls
                  web.wait_for_line/output/stop, procs.start
                  check_health()                        in long loops: fail now
 after each test  plugin checks every group             a death fails THIS test
-teardown_class   procs.close()                         stop; fail unless exit 0 on Ctrl-C
+teardown_class   optional: procs.stop("w:*") ...       your own order
+then             plugin stops the rest                 fail unless exit 0 on Ctrl-C
 ```
 
 - **Names** are `window:pane`. In tmux, `servers:web` is pane `web` in a
@@ -42,7 +45,7 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
   | `--echo PATTERN` | subprocesses | also output of matching processes, prefixed `[servers:web]`; `'*'`: all |
   | `--tmux` | panes under `lte-session`, attached | the dashboard; test output in the home pane |
   | `--tmux --no-attach` | panes in a detached tmux session, kept on failure | `tmux attach -t ...` (printed) |
-  | `--keep-open` | as `--tmux`, never stopped | the session stays until you leave it |
+  | `--keep-open` | as `--tmux`, not stopped after the tests | the session stays until you leave it |
 
 - **Logs**: each process's output goes to `<window>.<pane>.log` in pytest's
   tmp dir; the run ends with `process logs: <dir>`. Each process also gets
@@ -54,9 +57,9 @@ teardown_class   procs.close()                         stop; fail unless exit 0 
 - **Health**: each death or `fail_on_output` hit fails one test: the one running
   when it happened. Between checks it is only recorded, so long tests call
   `check_health()` (or wait with `wait_for_condition`, or a probe that checks).
-- **On failure**: a failed test stops its class's processes at once and
-  skips the rest; pass `on_test_failure=` to bring them down your way first.
-  `--keep-open` keeps them instead.
+- **On failure**: a failed test skips the rest of its class. The processes
+  stay up until `teardown_class`, where `procs.failed` says why; no stop is
+  checked after a failure. `--keep-open` keeps them up after the run too.
 - **Processes for one test**: `with Processes() as procs:` in the test.
   Stopped and checked at the end of the `with`; the class's keep running.
   Names are unique within a class.

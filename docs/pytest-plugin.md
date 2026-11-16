@@ -2,7 +2,8 @@
 
 A `launch_testing` replacement: a test brings up the processes it needs,
 talks to them, and **a process that dies fails the test**. Every process is
-a shell command. Demos: [demos/pytest](../demos/pytest); tests: `test/pytest/`. ROS 2 lives in a
+a shell command. The plain-language overview: [TESTING.md](../TESTING.md).
+Demos: [demos/pytest](../demos/pytest); tests: `test/pytest/`. ROS 2 lives in a
 separate project, `lte_launch_test`, built on this.
 
 ```python
@@ -22,8 +23,9 @@ class TestSystem:
         cls.procs.start("test:migrate", "./migrate", exits=0)  # finishes on its own
 
     @classmethod
-    def teardown_class(cls):
-        cls.procs.close()                     # stop; fail unless each stops cleanly
+    def teardown_class(cls):                  # optional: the plugin stops the rest after it
+        cls.procs.stop("test:*")              # your order first
+        cls.procs.stop_all()                  # fail unless each stops cleanly
 
     def test_long(self):
         while running():
@@ -42,7 +44,7 @@ class TestSystem:
 | (none) | subprocesses | test output; process output only in the logs |
 | `--tmux` | panes under `lte-session` (pytest reruns itself there), attached | the dashboard; test output in the home pane |
 | `--tmux --no-attach` | panes in a detached session `lte_test_<pid>`, kept on failure | test output; `tmux attach -t ...` is printed |
-| `--keep-open` | as `--tmux`, never stopped | inspect after the run |
+| `--keep-open` | as `--tmux`; stops after the tests (`teardown_class`'s, the plugin's) do nothing | inspect after the run |
 | `--arg NAME=VALUE` | | read with `arg(NAME, default)`, typed like the default; repeatable |
 | `--echo PATTERN` | subprocesses | also the output of processes whose `window:name` matches (fnmatch), prefixed `[window:name]`; `'*'`: all; repeatable |
 
@@ -54,8 +56,8 @@ join its session and dashboard.
 
 | where | owner | stopped |
 |---|---|---|
-| `Processes(cls, ...)` in `setup_class` | the class | `close()` in `teardown_class`; if setup fails, when the class ends |
-| `with Processes(...) as procs:` in a test | the test | at the end of the `with` (checked); without `with`, after the test |
+| `Processes(cls, ...)` in `setup_class` | the class | by the plugin after `teardown_class` (checked unless a test failed); `teardown_class` may stop some first |
+| `with Processes(...) as procs:` in a test | the test | at the end of the `with` (checked); without `with`, after the test; a failed test's: at once, unchecked |
 
 One class, the same arguments, nothing to import but `Processes`; no
 fixtures. Outside a test and without an owner (a fixture, `setup_class`),
@@ -79,10 +81,12 @@ pytest runs a class like this (*verified*, pytest 9):
 ```
 setup_class(cls)        once, before the first test
 for each test:
+                        the plugin checks every group (a death: test_x errors)
     t = TestX()         a NEW instance for every test
     t.test_x()
                         the plugin checks every group (a death fails test_x)
 teardown_class(cls)     once, after the last test
+                        the plugin stops what still runs
 ```
 
 | rule | so |
@@ -92,9 +96,9 @@ teardown_class(cls)     once, after the last test
 | shared objects stay shared | `self.procs.stop()` / `start()` in one test changes what later tests see. Tests run in file order |
 | no `__init__` | pytest doesn't collect a class that has one |
 | `setup_class` takes no fixtures | the plugin finds its config and temp dirs itself: `Processes(cls)` needs only the class |
-| `setup_class` raises | every test in the class ERRORs; pytest skips `teardown_class`; the plugin stops what was started when the class ends |
-| a test fails | the class's processes are stopped at once and its remaining tests SKIPPED (see Health and failure) |
-| no `close()` in `teardown_class` | the plugin still stops the group after the last test, but unchecked (`close(check=False)`): an unclean stop goes unnoticed. Deaths during tests fail them either way |
+| `setup_class` raises | every test in the class ERRORs; pytest skips `teardown_class`; the plugin stops what was started, unchecked, when the class ends |
+| a test fails | its remaining tests are SKIPPED; the processes stay up until `teardown_class` (see Failure flow) |
+| no `teardown_class` | fine: the plugin stops the group after the last test, checked unless a test failed |
 
 pytest runs the two methods as a class-scoped fixture internally. We use
 them, not a fixture, because they read as plain Python: two named
@@ -102,7 +106,7 @@ methods, no decorators, no `yield`.
 
 ## `Processes`
 
-`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, on_test_failure=None, log_dir=None, sigint_timeout=5, sigterm_timeout=5, env=None)`
+`Processes(owner=None, *, fail_on_output=None, allowed_exit_codes=None, log_dir=None, sigint_timeout=5, sigterm_timeout=5, env=None)`
 
 Tests use this one. `libtmux_easy.processes.ProcessGroup` is the engine it
 subclasses, for programs that aren't tests ([processes.md](processes.md)):
@@ -110,20 +114,20 @@ same methods, no test owner, mode set by `tmux=`.
 
 | argument | meaning |
 |---|---|
-| `owner` | the test class (`cls` in `setup_class`); none in a test: that test. Its failed tests abort the group |
+| `owner` | the test class (`cls` in `setup_class`); none in a test: that test. A failed test of a class skips the rest of it |
 | `fail_on_output` | stdout/stderr output that fails a process while it runs: a check for every process, an `Only(...)` rule for some, or a list of both. A check is a regex (string, or compiled for flags), searched in each line, or a function `line -> problem message or None`. A hit is a death. E.g. `[r"Traceback", Only(launch_death(), command="*ros2 launch*")]` |
-| `allowed_exit_codes` | nonzero exit codes a process may end with when stopped; 0 always may. An int for every process, an `Only(...)` rule for some, or a list of both. Death by signal N is 128+N: `130` allows SIGINT |
+| `allowed_exit_codes` | nonzero exit codes a process may end with when stopped; 0 always may. An int for every process, an `Only(...)` rule for some, or a list of both. Death by signal N is 128+N: `130` allows SIGINT. `ANY_EXIT` (or `"any"`): any end is clean |
 | `sigint_timeout` | seconds SIGINT gets before SIGTERM |
 | `sigterm_timeout` | seconds SIGTERM then gets before SIGKILL |
-| `on_test_failure` | called with no arguments when a test of the owner fails, before the plugin stops the group: bring things down your own way first |
 | `log_dir` | where the logs go; default `<basetemp>/<Class>N/`, `<Class>.<test>N/` or `<test>N/` |
 | `env` | variables for each of its processes (None unsets); `start(env=)` wins. The group's only: never `os.environ` ([processes.md](processes.md#environment)) |
 
 | method | does |
 |---|---|
 | `start(name, cmd, *, ready=, ready_timeout=30, fail_on_output=, exits=, allowed_exit_codes=, env=, sigint_timeout=, sigterm_timeout=)` | start; returns a `Process`. `ready`: wait for a matching line. `fail_on_output`, `allowed_exit_codes`: more for it, on top of the group's; plain values, no `Only`. `exits`: codes it may finish with on its own (no death). `env`: variables on top of the group's `env=` and its environment. `sigint_timeout`, `sigterm_timeout`: its own SIGINT and SIGTERM grace when stopped, kept on a restart |
-| `stop(name, *, check=True, sigint_timeout=, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly |
-| `close(check=True)` | stop everything still running; `check`: fail unless each stopped cleanly. Again: nothing |
+| `stop(name, *, check=True, sigint_timeout=, sigterm_timeout=)` | SIGINT, then SIGTERM, SIGKILL; the timeouts default to `start()`'s, else the group's; `check`: fail unless it stopped cleanly. A glob (`"sim:*"`) stops every running match at once and returns `{name: PaneStatus}` |
+| `stop_all(check=True)` | `stop()` on everything still running, in parallel. The group stays usable |
+| `failed` | why a test of the owner failed (`"test_x failed: assert ..."`), or `None`; stops aren't checked then |
 | `wait_for_line(name, regex, timeout, since=)` | a line matching, printed already or later (a `LineMatch`: `.line`, `m[1]`); `since`: only after a `mark()` or an earlier `LineMatch`; name `"*"`: any process |
 | `mark(name)` | where its output is now, for `since=`: mark, act, wait |
 | `wait_for_exit(name, timeout)` | an `exits=` process finishing; fails on a wrong code |
@@ -137,45 +141,54 @@ same methods, no test owner, mode set by `tmux=`.
 
 `Process`, from `start()` or `procs[name]`: the methods above for its name,
 without it: `stop()`, `kill()`, `wait_for_line(regex)`, `mark()`,
-`wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`; `start()`
-starts it again with the same command and options. It follows the name, so
-it stays valid after a stop and a new start.
+`wait_for_exit()`, `output()`, `log()`, `status()`, and `.name`;
+`start(command=None)` starts it again with the same options, and the same
+command unless given a new one. It follows the name, so it stays valid
+after a stop and a new start.
 
 ### Targeting: `Only`
 
 `Only(value, name="*", command=None)`: `value` (what `start()` would take)
-for only the processes both globs match. `name`: a glob on `window:pane`;
-`command`: a glob on its command line. Group arguments only; everything adds
-up.
+for only the processes both globs match.
 
 ```python
-from libtmux_easy.testing import Only, Processes
+from libtmux_easy.testing import ANY_EXIT, Only, Processes
 
 Processes(cls,
     fail_on_output=[
         r"Traceback",                                   # every process
         Only(launch_death(), command="*ros2 launch*"),  # launch processes
-        Only([r"ERROR", too_slow], name="sim:server"),
+        Only(r"(?i)fatal", name="sim:*"),               # the sim window's panes
+        Only([r"ERROR", too_slow], name="sim:server"),  # one process, two checks
     ],
-    allowed_exit_codes=[130, Only({2, 3}, name="pub:*")],
+    allowed_exit_codes=[130, Only({2, 3}, name="pub:*"), Only(ANY_EXIT, name="bag:*")],
 )
 procs.start("sim:client", "./client", fail_on_output=r"refused", allowed_exit_codes=2)
+
+def too_slow(line):                                     # a message for a bad line, else None
+    m = re.search(r"latency (\d+) ms", line)
+    return f"latency {m[1]} ms > 100" if m and int(m[1]) > 100 else None
 ```
 
-Failures name the process, then labelled lines:
+| argument | group (`Processes`, `ProcessGroup`) | `start()` |
+|---|---|---|
+| `fail_on_output` | `OneOrMany[Union[Match, Only[OneOrMany[Match]]]]` | `OneOrMany[Match]` |
+| `allowed_exit_codes` | `OneOrMany[Union[int, Only[ExitCodes]]]` | `ExitCodes` |
 
-```
-sim:server failed an output check
-  command: ./server --port 9000
-  line:    'step 812: latency 250 ms'
-  check:   too_slow
-  msg:     latency 250 ms > 100
-  log:     /tmp/.../sim_server.log
-```
-
-A regex hit shows `matched: r'...'` in place of `check:` and `msg:`. Deaths,
-unclean stops and timeouts use the same layout, with `exit:`, `stopped:`,
-`wanted:` or `waited:` and the last 8 lines of output.
+- `Match`: a regex (string, or compiled for its flags; no faster) or a
+  function `line -> message or None`. `ExitCodes`: an int, several, or
+  `ANY_EXIT`.
+- `name` globs `window:pane` (`"sim:*"`, `"*:server"`), as `--echo` does.
+  `command` globs the command given to `start()`: `"*ros2 launch*"`, since
+  the executable is `ros2` or `python3`.
+- An adopted pane's command is the command line it runs (from `/proc`),
+  which may differ from what the script typed: glob `"*ros2 launch*"`, not
+  `"ros2 launch*"`. `adopt()` prints each pane's.
+- Rules are picked once, when a process starts: nothing per line.
+- **Everything adds up**: plain values, every rule that applies, and
+  `start()`'s. 0 is always allowed.
+- **Wrong types fail at once**: an `Only` given to `start()`, or a
+  `{"*": ...}` dict, raises `TypeError` with an example of the right form.
 
 ## Testing a session script
 
@@ -191,19 +204,104 @@ Full guide: [testing-scripts.md](testing-scripts.md).
 Module functions: `check_health()` (every open group), `arg(name,
 default)`, `parametrize(names, values)`.
 
-## Health and failure
+## Failure flow
+
+![A test class's flow: a failure skips ahead to teardown_class](test-flow.svg)
 
 | when | what | outcome |
 |---|---|---|
 | a process exits, not stopped and not an expected `exits=` code | recorded (exit watch) | a death |
 | a `fail_on_output` hit | recorded (output watch) | a death |
+| before each test, after `setup_class` and fixtures | `pytest_runtest_setup` checks every open group | the test ERRORs without running |
 | in the test: `check()`, `check_health()`, `wait_for_condition`, `wait_for*` | checked | FAILED now |
 | after each test | `pytest_runtest_call` checks every open group | FAILED, with the last output and the log's path |
-| a test (or `setup_class`) fails | `pytest_runtest_makereport`: `on_test_failure()`, then `close(check=False)` on the class's and the test's groups | stopped at once, no checks; the rest of the class SKIPPED |
-| `teardown_class`: `close()` | SIGINT, escalating, in parallel | ERROR unless each stopped with an `allowed_exit_codes` code; nothing to do after an abort |
+| a test (or its setup) fails | `pytest_runtest_makereport` sets `procs.failed`; the test's own groups stop at once, unchecked | the rest of the class SKIPPED; the class's processes stay up |
+| after the last test | `teardown_class`, then the plugin's `close()` | ERROR at the last test's teardown unless each stopped cleanly; nothing is checked after a failure |
 
 Each problem is reported once, by the first check after it happened.
-`--keep-open` turns failure handling off: nothing is stopped.
+
+**After a failure, nothing reports unclean exits**: not `stop()`, not
+`stop_all()`, not the plugin's stop. The system may be broken; the output
+stays on the failure. `procs.failed` says why the first failed test failed
+(`"test_x failed: assert 1 == 2"`, `"test_x failed: sim:server died"`), or
+`None`:
+
+```python
+@classmethod
+def teardown_class(cls):
+    if cls.procs.failed:                         # still running: look around
+        subprocess.run(["ros2", "node", "list"])
+    cls.procs.stop("robot:*")                    # your order first
+    cls.procs.stop_all()                         # then the rest
+```
+
+| `teardown_class` | the plugin, after it |
+|---|---|
+| calls `stop_all()` | nothing left to stop |
+| defined, stops some or none | stops the rest, checked unless a test failed |
+| not defined | stops all, checked unless a test failed |
+| `setup_class` raised | stops all, unchecked |
+
+## Stopping
+
+| call | which | how | checked |
+|---|---|---|---|
+| `stop(name)` / `p.stop()` | one | SIGINT, then SIGTERM, then SIGKILL, each after its grace | yes |
+| `stop("sim:*")` | every running match, in parallel | same | yes, one failure listing each |
+| `stop_all()` | everything still running, in parallel | same | yes |
+| `kill(name)` | one | SIGKILL now | a death, unless in `expect_exit()` |
+
+- **Checked** means: SIGINT was enough, the code is allowed, and no
+  `fail_on_output` line came while stopping. Off for one call:
+  `check=False`. Off for some processes: `allowed_exit_codes=ANY_EXIT`
+  (any code, any way of stopping; a death during the tests still fails).
+- **The group stays usable**: `start()` after any stop. `p.start()` reruns
+  the same command, `p.start("./new")` a new one; output starts fresh.
+- **A glob** matching nothing raises `ValueError`; already stopped or exited
+  processes are left out.
+- **Order**: `stop_all()` stops everything at once. Stop the first ones in
+  `teardown_class`; no `stop_order=`, no reverse-start default.
+- **The end of a group** is done for you: by the plugin after
+  `teardown_class`, for a test's group at the end of its `with`. It drops
+  the group from health checks, frees its names, and kills `adopt()`'s tmux
+  server (kept after a failure). `start()` is refused after it. Programs
+  call it themselves: `ProcessGroup.close()` ([processes.md](processes.md)).
+- **`--keep-open`**: stops in `teardown_class` and the plugin's do nothing.
+  Stops inside tests still work.
+- `kill_all()` (SIGKILL everything now) is for programs on `ProcessGroup`,
+  e.g. lte_launch's second Ctrl-C; tests don't need it.
+
+## Failure messages
+
+A first line naming the process and what went wrong, labelled lines, the
+log, and for most the last 8 lines of output.
+
+| first line | from | labelled lines |
+|---|---|---|
+| `sim:server died` | an exit nobody asked for | `exit:` (and `expected:` for `exits=`) |
+| `sim:server failed an output check` | a `fail_on_output` hit | `line:`, then `matched: r'...'` or `check:` and `msg:` |
+| `... failed an output check (while stopping)` | a hit during a stop | as above |
+| `sim:server did not stop cleanly` | a checked stop | `stopped: SIGINT`, `exit: 3 (allowed: 0, 130)` |
+| `sim:server printed no matching line` | `ready=`, `wait_for_line()` | `wanted: r'listening' (within 30 s)`; with `since=`: `, after 'one'` or `, after the mark: line 12 on` |
+| `sim:server exited before a matching line` | a wait | `wanted:`, `exit:` |
+| `sim:server still running` | `wait_for_exit()`, `expect_exit()` | `waited: 10 s for its exit` |
+| `timed out waiting for server_answers` | `wait_for_condition()` | `waited: 10 s` |
+| `./start.sh made no tmux panes` | `adopt()` | |
+
+```
+sim:server failed an output check
+  command: ./server --port 9000
+  line:    'step 812: latency 250 ms'
+  check:   too_slow
+  msg:     latency 250 ms > 100
+  log:     /tmp/.../sim_server.log
+```
+
+When SIGINT was not enough: `stopped: SIGTERM (no exit 5 s after SIGINT)`,
+`exit: killed by signal 15`. A function check's name is its `__qualname__`
+without `.<locals>`: `launch_death.check`, `test_x.too_slow`, `<lambda>`.
+`TmuxSession.wait_for_output()` raises plain `TimeoutError` / `PaneExited`,
+one line, same wording.
 
 ## Logs
 
@@ -246,10 +344,12 @@ drop the overlay.
   `Processes()` works outside fixtures through `_plugin`, filled by a
   session autouse fixture before any `setup_class`.
 - **Ownership.** A group's `owner` (the class, or the test item) decides
-  which failures abort it and which tests are skipped after. `Processes()`
-  finds its test through `pytest_runtest_call`, which records the running
-  item and, after a passing test, closes (and checks) the test's groups
-  still open.
+  whose failure sets its `failed` and which tests are skipped after.
+  `Processes()` finds its test through `pytest_runtest_call`, which records
+  the running item and, after a passing test, closes (and checks) the
+  test's groups still open. `pytest_runtest_teardown` marks a class's groups
+  as ending before its last test's teardown (so `--keep-open` turns
+  `teardown_class`'s stops into no-ops), then closes them after it.
 - **`--tmux` attach.** `pytest_cmdline_main` (tryfirst) execs
   `python -m libtmux_easy.lte_session -- python -m pytest <same args>`. pytest
   already captures fds 0-2 there: the tty check uses `/dev/tty` and the

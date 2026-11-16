@@ -44,7 +44,7 @@ class TestDashboard:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_web_server_answers(self):
         self.procs.wait_for_condition(answers, timeout=5)  # a dead process fails it now

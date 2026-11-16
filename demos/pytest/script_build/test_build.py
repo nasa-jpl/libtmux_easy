@@ -35,7 +35,7 @@ class TestSystem:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_panes(self):
         assert self.procs.names == ["servers:web", "workers:ticker", "jobs:migrate"]
@@ -61,7 +61,7 @@ class TestMonitoring:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_alerts_on_a_crash(self):
         with self.procs.expect_exit("workers:ticker"):  # on purpose: no death

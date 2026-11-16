@@ -24,9 +24,12 @@ What it shows:
   allowed_exit_codes  a process that exits 2 on SIGINT, stopped cleanly
   test_long_run    a long test calling check_health(), so a death fails it
                    within half a second, not at the end
+  stop("workers:*")  a glob: stop a set at once, then start() each again
   Processes()      in a test: a process just that test needs, stopped after it
-  on_test_failure  bring things down your own way when a test fails
-  teardown_class   close(): stop everything, fail unless each stopped cleanly
+  a failure        skips the rest of the class; the processes stay up
+  teardown_class   optional: procs.failed says why a test failed; stop in
+                   your own order. The plugin then stops the rest, and fails
+                   unless each stopped cleanly (not after a failure)
   logs             each process's output in a file: 'process logs:' at the end
 """
 
@@ -76,7 +79,6 @@ class TestTour:
                 Only(worker_error, name="workers:*"),  # every worker, now or later
             ],
             env={"TOUR": "1"},  # for every process of the group
-            on_test_failure=lambda: print("a test failed: saving state first"),
         )
         # Stage 1. A name is 'window:pane': in tmux, window 'servers', pane 'web'.
         # start() returns a handle: cls.web.wait_for_line(...), cls.web.stop().
@@ -87,12 +89,6 @@ class TestTour:
         cls.w0, cls.w1 = (
             cls.procs.start(f"workers:w{n}", worker(f"w{n}"), ready=r"tick 0") for n in range(2)
         )
-
-    @classmethod
-    def teardown_class(cls):
-        if os.path.exists(CRASH_FILE):
-            os.remove(CRASH_FILE)
-        cls.procs.close()
 
     def test_wait_for_line(self):
         # Any line since its start counts, even one printed before the call.
@@ -151,6 +147,12 @@ class TestTour:
         assert status.exit_status.ok
         self.w1.start()  # the same command again; fresh output
 
+    def test_restart_a_set(self):
+        # A glob stops every match at once; each starts again, output fresh.
+        for name in self.procs.stop("workers:*"):
+            self.procs[name].start()
+        self.w0.wait_for_line(r"tick 0")
+
     def test_a_process_of_its_own(self):
         # A second group, for this test only: stopped and checked at the end
         # of the 'with'. The class's processes keep running. Names are
@@ -166,3 +168,14 @@ class TestTour:
                 open(CRASH_FILE, "w").close()
             check_health()  # or self.procs.check()
             time.sleep(0.5)
+
+    @classmethod
+    def teardown_class(cls):
+        # Optional. After a failure everything is still up: look around.
+        if cls.procs.failed:
+            up = [n for n in cls.procs.names if cls.procs.status(n).running]
+            print(f"{cls.procs.failed}; still running: {', '.join(up)}")
+        if os.path.exists(CRASH_FILE):
+            os.remove(CRASH_FILE)
+        cls.procs.stop("workers:*")  # your order: the workers first
+        # The plugin stops the rest (the server) after this, checked.

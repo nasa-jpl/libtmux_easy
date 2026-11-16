@@ -43,7 +43,7 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
 
     See [Dashboard](#dashboard) and [lte-session](#lte-session) for more information.
 
-4. **Pytest integration** - a **pytest plugin** that launches the processes a test needs and fails the test if one dies. A test class starts them in `setup_class`, waits until they are ready, and stops them in `teardown_class`:
+4. **Pytest integration** - a **pytest plugin** that launches the processes a test needs and fails the test if one dies. A test class starts them in `setup_class` and waits until they are ready; the plugin stops them after the last test:
 
     ```python
     # conftest.py
@@ -58,16 +58,15 @@ Built on top of the `libtmux` library, this library handles common boilerplate w
             cls.procs = Processes(cls)
             cls.procs.start("servers:web", "python3 -m http.server 8000", ready=r"Serving HTTP")
 
-        @classmethod
-        def teardown_class(cls):
-            cls.procs.close()
+        def test_serves(self):
+            ...
     ```
 
     - **fails on its own**: a test fails if a process exits early or prints a `fail_on_output` line, even when the test never checked;
     - **runs anywhere**: plain subprocesses by default, tmux panes with `--tmux`, or a live dashboard under `lte-session`;
     - **debuggable**: `--keep-open` leaves the processes running after the run, for attaching and poking at them.
 
-    See [Testing with pytest](#testing-with-pytest). The same group, without pytest, is
+    See [TESTING.md](TESTING.md) for an overview and [Testing with pytest](#testing-with-pytest). The same group, without pytest, is
     `libtmux_easy.processes.ProcessGroup`, for a launcher or a script: see
     [docs/processes.md](docs/processes.md).
 
@@ -250,32 +249,32 @@ class TestWeb:
         cls.procs = Processes(cls, fail_on_output=r"Traceback")   # a match fails the test
         cls.web = cls.procs.start("servers:web", "python3 -m http.server 8000", ready=r"Serving HTTP")
 
-    @classmethod
-    def teardown_class(cls):
-        cls.procs.close()      # errors unless each exits 0 on SIGINT
-
     def test_serves(self):
         ...      # self.web.output(), .wait_for_line(pattern), .stop()
+    # no teardown_class needed: the plugin stops everything after the last
+    # test, and errors unless each exits 0 on SIGINT
 ```
 
 pytest makes a new instance of the class for every test, so what the tests
 share goes on `cls`. A test fails if a process exits early or prints a
 `fail_on_output` line, even if the test never noticed; the rest of the class is
-then skipped. A test can start and stop its own: `with Processes() as
-procs:` in the test. Logs go to pytest's temp dir.
+then skipped, with the processes still up for `teardown_class` to look at. A
+test can start and stop its own: `with Processes() as procs:` in the test.
+Logs go to pytest's temp dir.
 
 | flags | processes run as | you see |
 |---|---|---|
 | (none) | subprocesses | test output; process output in the logs (`--echo PATTERN`: here too) |
 | `--tmux` | panes under `lte-session`, attached | the dashboard; test output in the home pane |
 | `--tmux --no-attach` | panes in a detached session, kept on failure | test output; `tmux attach -t ...` |
-| `--keep-open` | as `--tmux`, never stopped | inspect after the run |
+| `--keep-open` | as `--tmux`, not stopped after the tests | inspect after the run |
 
 To test a session script: `procs.build(launch.build)` runs its
 `build(session)` function, and `procs.adopt("python3 launch.py")` runs an
 unchanged script (libtmux_easy or plain tmux) and adopts the panes it made.
 Guide: [docs/testing-scripts.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/testing-scripts.md).
 
+Overview: [TESTING.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/TESTING.md).
 Demos: [demos/pytest](https://github.com/nasa-jpl/libtmux_easy/blob/main/demos/pytest).
 Reference: [docs/pytest-plugin.md](https://github.com/nasa-jpl/libtmux_easy/blob/main/docs/pytest-plugin.md).
 

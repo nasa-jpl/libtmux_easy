@@ -27,7 +27,7 @@ class TestLayout:
 
     @classmethod
     def teardown_class(cls):
-        cls.procs.close()
+        cls.procs.stop_all()
 
     def test_web(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2) as reply:
