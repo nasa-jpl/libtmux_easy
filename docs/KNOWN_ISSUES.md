@@ -37,6 +37,7 @@
 | `lte-run a && b` typed by hand supervises only `a` | `new_pane()` wraps in `bash -c` |
 | A fast command can record no target pid (`target_pids == ()`) | handled |
 | `kill()` only sends SIGHUP | `stop_all()` first |
+| Wrap mode: a shell loop of short-lived children (`while ...; do sleep 0.05; done`) can outlive SIGINT. lte-run signals the processes it sees; a child forked just after exits normally, and bash, seeing no SIGINT death, keeps looping. SIGTERM then ends it | `trap 'exit 130' INT` in the loop; a fix would run the command in its own process group and `killpg` it |
 | A Ctrl-C typed by hand counts as failed | none: intent is unknowable |
 | A command typed by hand without `lte-run` (shell pane, wrap pane), or a `respawn-pane` run in tmux (exec pane), is not a run: the status and `command` stay the last tracked run's | type `lte-run <cmd>` (a new run, its `command`), or `respawn_pane(pane, cmd)` |
 | Linux only (pidfds, `/proc`) | |

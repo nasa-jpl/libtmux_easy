@@ -54,7 +54,11 @@ def test_only_rules(tmp_path):
     procs = ProcessGroup(
         "rules",
         log_dir=str(tmp_path),
-        fail_on_output=[r"Traceback", Only(too_slow, name="a:*"), Only(r"BAD", command="echo BAD*")],
+        fail_on_output=[
+            r"Traceback",
+            Only(too_slow, name="a:*"),
+            Only(r"BAD", command="echo BAD*"),
+        ],
         allowed_exit_codes=[Only(3, name="b:*")],
     )
     try:
@@ -299,7 +303,8 @@ def test_marks(group, tmp_path):
     """wait_for_line(since=): a mark() or a LineMatch, only later lines; a
     mark from before a restart: all the new output."""
     flag = tmp_path / "flag"
-    cmd = f"echo go 1; while [ ! -f {flag} ]; do sleep 0.05; done; echo go 2; sleep 60"
+    # The trap: a loop of short sleeps can outlive SIGINT (KNOWN_ISSUES.md).
+    cmd = f"trap 'exit 130' INT; echo go 1; while [ ! -f {flag} ]; do sleep 0.05; done; echo go 2; sleep 60"
     procs = group("marks")
     p = procs.start("w:t", cmd)
     first = p.wait_for_line(r"go (\d)")
