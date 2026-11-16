@@ -71,7 +71,5 @@
 - Don't run two suites (or two tours) at once on the default tmux server:
   fixed session names collide, and `kill_existing=True` kills the other run's
   sessions.
-- Flaky: `test_session.py::test_status_after_session_closed` failed once in
-  a full libtmux 0.17 run ("lte-run event handler raised"); passes alone.
 - With DEBUG logging, libtmux emits ~400 KB of noise: `grep -v '^DEBUG'`.
 - Python's fallback log handler prints warnings with no "WARNING" prefix.

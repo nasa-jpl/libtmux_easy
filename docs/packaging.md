@@ -48,7 +48,7 @@ debian/smoke-test
 
 ## Pinned versions (`uv.lock`)
 
-`pyproject.toml` gives ranges (`libtmux>=0.17`). `uv.lock` pins the exact
+`pyproject.toml` gives ranges (`libtmux>=0.30`). `uv.lock` pins the exact
 version and hash of every package, per Python (3.8 gets older libtmux,
 Textual and pytest than 3.11+).
 
@@ -77,7 +77,7 @@ The lock changes only when you run `uv lock`. CI fails if it is stale.
 
 | job | does | fails when |
 |---|---|---|
-| `test` | `uv sync --locked`, then pytest, on Python 3.8, 3.10, 3.12, 3.13; plus libtmux 0.30.2 (Ubuntu 24.04's apt) and 0.17.0 (oldest supported) swapped in | a test fails; `uv.lock` is stale |
+| `test` | `uv sync --locked`, then pytest, on Python 3.8, 3.10, 3.12, 3.13; plus libtmux 0.30.2 (Ubuntu 24.04's apt, the oldest supported) swapped in | a test fails; `uv.lock` is stale |
 | `dist` | checks `dash-requirements.txt` against `uv.lock`; `uv build` (sdist, wheel); `twine check --strict` | pins out of date; metadata won't render on PyPI |
 | `deb` | `dpkg-buildpackage`; installs both `.deb`s (with apt's old `python3-textual`) and runs `debian/smoke-test` | build fails; the commands, `Processes` outside pytest or the dashboard don't work as installed |
 
