@@ -88,7 +88,7 @@ The lock changes only when you run `uv lock`. CI fails if it is stale.
 1. `version`: tag, `pyproject.toml` and `debian/changelog` must match.
 2. `ci`: all of `ci.yml`.
 3. `github`: a GitHub Release with the sdist, wheel and both `.deb`s.
-4. `pypi`: uploads the sdist and wheel (trusted publishing, no token).
+4. `pypi`: uploads the sdist and wheel at once (trusted publishing, no token, no approval).
 
 Run by hand (Actions, Release, Run workflow), it is a dry run: steps 1-2,
 then an upload to TestPyPI instead of 3-4.

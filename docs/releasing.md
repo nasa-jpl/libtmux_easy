@@ -64,11 +64,11 @@ The Release workflow then:
 1. checks the tag, `pyproject.toml` and `debian/changelog` agree;
 2. runs all of CI;
 3. creates the GitHub Release (sdist, wheel, both `.deb`s);
-4. waits for your approval, then uploads to PyPI.
+4. uploads to PyPI (the `pypi` environment; no approval step).
 
-## 6. Approve and check
+## 6. Check
 
-- Actions -> the Release run -> Review deployments -> approve `pypi`.
+- Actions -> the Release run: every job green.
 - `pipx install --force 'libtmux-easy[dash]'`, then `lte-run true`.
 - The GitHub Release page lists both `.deb`s.
 
